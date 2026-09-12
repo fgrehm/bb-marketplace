@@ -12,7 +12,7 @@ jobs:
     name: Validate marketplace metadata
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Validate JSON
         run: python3 -m json.tool marketplace.json >/dev/null
       - name: Validate plugin manifests
@@ -42,11 +42,11 @@ jobs:
       run:
         working-directory: plugins/${{ matrix.plugin }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 12.3.2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Install dependencies
