@@ -1,0 +1,14 @@
+.usage-page {
+  --usage-codex: #525252;
+  --usage-opencode-go: #d97757;
+  --usage-ollama-cloud: #059669;
+  --usage-pi: #a1a1aa;
+}
+
+.dark .usage-page,
+:root.dark .usage-page {
+  --usage-codex: #e6e6e6;
+  --usage-opencode-go: #d97757;
+  --usage-ollama-cloud: #6ee7b7;
+  --usage-pi: #a1a1aa;
+}

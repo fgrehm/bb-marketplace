@@ -1,0 +1,24 @@
+.favicon-upload { max-width: 760px; }
+.favicon-intro { display: flex; gap: 14px; align-items: center; margin-bottom: 22px; }
+.favicon-intro h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.favicon-intro p, .favicon-card p { margin: 0; color: var(--muted-foreground); font-size: 13px; line-height: 1.45; }
+.favicon-mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: var(--primary); color: var(--primary-foreground); font-size: 21px; }
+.favicon-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.favicon-card { border: 1px solid var(--border); border-radius: 12px; padding: 18px; background: color-mix(in srgb, var(--card) 70%, transparent); }
+.favicon-card.dark { background: color-mix(in srgb, #111827 55%, var(--card)); }
+.favicon-card-heading { display: flex; align-items: center; gap: 9px; font-size: 14px; margin-bottom: 8px; }
+.favicon-swatch { width: 10px; height: 10px; border-radius: 50%; background: #f5c542; }
+.dark .favicon-swatch { background: #818cf8; }
+.file-button { display: inline-flex; margin-top: 16px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--secondary); color: var(--secondary-foreground); }
+.file-button:hover { background: var(--accent); }
+.file-button input { display: none; }
+.filename { display: block; margin-top: 9px; color: var(--muted-foreground); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.favicon-preview { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px; border: 1px dashed var(--border); border-radius: 9px; background: color-mix(in srgb, var(--background) 60%, transparent); }
+.favicon-preview img { width: 48px; height: 48px; }
+.favicon-preview span { color: var(--muted-foreground); font-size: 11px; }
+.remove-button { display: inline-flex; margin-top: 10px; margin-left: 10px; padding: 7px 11px; border: 1px solid var(--destructive); border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; background: transparent; color: var(--destructive); }
+.remove-button:hover { background: color-mix(in srgb, var(--destructive) 10%, transparent); }
+.remove-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.upload-error { display: block; margin-top: 9px; color: var(--destructive); font-size: 11px; }
+.favicon-note { margin: 16px 0 0; color: var(--muted-foreground); font-size: 12px; }
+@media (max-width: 600px) { .favicon-cards { grid-template-columns: 1fr; } }

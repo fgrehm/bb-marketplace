@@ -1,0 +1,4 @@
+allowBuilds:
+  '@ataraxy-labs/sem': true
+  better-sqlite3: true
+  esbuild: true

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://getbb.app/schemas/marketplace.schema.json",
+  "schemaVersion": 1,
+  "name": "fgrehm-plugins",
+  "displayName": "fgrehm's Plugins",
+  "description": "Plugins I maintain for bb.",
+  "plugins": [
+    {
+      "id": "flux",
+      "displayName": "Flux",
+      "description": "A calm feed and reading room for collecting ideas alongside your BB work.",
+      "icon": "Explore",
+      "tags": ["feed", "reading", "web-clipping", "mobile"],
+      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "source": {
+        "git": {
+          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "subdir": "plugins/flux",
+          "range": "^0.1.0",
+          "tagPrefix": "flux/"
+        }
+      }
+    },
+    {
+      "id": "review-workspace",
+      "displayName": "Review Workspace",
+      "description": "Diff-first asynchronous review workspaces inside BB threads.",
+      "icon": "GitPullRequest",
+      "tags": ["review", "diff", "async", "workspace"],
+      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "source": {
+        "git": {
+          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "subdir": "plugins/review-workspace",
+          "range": "^0.1.0",
+          "tagPrefix": "review-workspace/"
+        }
+      }
+    },
+    {
+      "id": "bulk-archive",
+      "displayName": "Bulk Archive",
+      "description": "Select and archive multiple inactive BB threads from a mobile-first panel.",
+      "icon": "Archive",
+      "tags": ["threads", "archive", "mobile"],
+      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "source": {
+        "git": {
+          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "subdir": "plugins/bulk-archive",
+          "range": "^0.1.0",
+          "tagPrefix": "bulk-archive/"
+        }
+      }
+    },
+    {
+      "id": "pi-extras",
+      "displayName": "Pi Extras",
+      "description": "Shows Codex, OpenCode Go, and Ollama Cloud usage from Pi credentials.",
+      "icon": "ChartNoAxesCombined",
+      "tags": ["usage", "provider", "credentials"],
+      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "source": {
+        "git": {
+          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "subdir": "plugins/pi-extras",
+          "range": "^0.1.0",
+          "tagPrefix": "pi-extras/"
+        }
+      }
+    },
+    {
+      "id": "favicon",
+      "displayName": "Favicon",
+      "description": "Replaces the browser tab favicon with uploaded light/dark SVG artwork.",
+      "icon": "Image",
+      "tags": ["favicon", "ui", "branding"],
+      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "source": {
+        "git": {
+          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "subdir": "plugins/favicon",
+          "range": "^0.1.0",
+          "tagPrefix": "favicon/"
+        }
+      }
+    }
+  ]
+}

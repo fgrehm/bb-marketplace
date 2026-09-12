@@ -1,0 +1,42 @@
+{
+  "name": "bb-plugin-flux",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "bb": ">=0.40",
+    "bbPluginSdk": ">=0.4.34"
+  },
+  "bb": {
+    "name": "Flux",
+    "description": "A calm feed and reading room for collecting ideas alongside your BB work.",
+    "branding": {
+      "icon": "Explore"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "dependencies": {
+    "@hugeicons/core-free-icons": "^4.3.0",
+    "@hugeicons/react": "^1.1.10"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.34",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.2.5",
+    "@radix-ui/react-slot": "^1.2.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "hono": "^4.13.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.4.0",
+    "typescript": "^5.7.0",
+    "zod": "^4.3.6"
+  }
+}

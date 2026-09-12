@@ -1,0 +1,67 @@
+repos:
+  - repo: local
+    hooks:
+      - id: validate-json
+        name: validate JSON
+        entry: python3 -c 'import json, sys; [json.load(open(path)) for path in sys.argv[1:]]'
+        language: system
+        files: \.(json)$
+        groups: [quality]
+
+      - id: bulk-archive-typecheck
+        name: bulk-archive typecheck
+        entry: bash -c 'cd plugins/bulk-archive && pnpm run typecheck'
+        language: system
+        files: ^plugins/bulk-archive/
+        groups: [bulk-archive, typecheck]
+        pass_filenames: false
+
+      - id: favicon-typecheck
+        name: favicon typecheck
+        entry: bash -c 'cd plugins/favicon && pnpm run typecheck'
+        language: system
+        files: ^plugins/favicon/
+        groups: [favicon, typecheck]
+        pass_filenames: false
+
+      - id: flux-typecheck
+        name: flux typecheck
+        entry: bash -c 'cd plugins/flux && pnpm run typecheck'
+        language: system
+        files: ^plugins/flux/
+        groups: [flux, typecheck]
+        pass_filenames: false
+
+      - id: pi-extras-typecheck
+        name: pi-extras typecheck
+        entry: bash -c 'cd plugins/pi-extras && pnpm run lint'
+        language: system
+        files: ^plugins/pi-extras/
+        groups: [pi-extras, typecheck]
+        pass_filenames: false
+
+      - id: review-workspace-format
+        name: review-workspace format
+        entry: bash -c 'cd plugins/review-workspace && pnpm run lint'
+        language: system
+        files: ^plugins/review-workspace/
+        groups: [review-workspace, format]
+        pass_filenames: false
+
+      - id: review-workspace-tests
+        name: review-workspace tests
+        entry: bash -c 'cd plugins/review-workspace && pnpm test'
+        language: system
+        files: ^plugins/review-workspace/
+        groups: [review-workspace, test]
+        stages: [pre-push]
+        pass_filenames: false
+
+      - id: pi-extras-tests
+        name: pi-extras tests
+        entry: bash -c 'cd plugins/pi-extras && pnpm test'
+        language: system
+        files: ^plugins/pi-extras/
+        groups: [pi-extras, test]
+        stages: [pre-push]
+        pass_filenames: false

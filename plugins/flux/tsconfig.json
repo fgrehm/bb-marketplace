@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  "include": [
+    "server.ts",
+    "app.tsx",
+    "components/ui/button.tsx",
+    "components/ui/coarse-pointer-sizing.ts",
+    "components/ui/icon-extended.tsx",
+    "components/ui/icon-registry.ts",
+    "components/ui/icon.tsx",
+    "components/ui/motion.ts",
+    "lib/utils.ts"
+  ]
+}
