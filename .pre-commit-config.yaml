@@ -65,3 +65,20 @@ repos:
         groups: [pi-extras, test]
         stages: [pre-push]
         pass_filenames: false
+
+      - id: pi-settings-typecheck
+        name: pi-settings typecheck
+        entry: bash -c 'cd plugins/pi-settings && pnpm run lint'
+        language: system
+        files: ^plugins/pi-settings/
+        groups: [pi-settings, typecheck]
+        pass_filenames: false
+
+      - id: pi-settings-tests
+        name: pi-settings tests
+        entry: bash -c 'cd plugins/pi-settings && pnpm test'
+        language: system
+        files: ^plugins/pi-settings/
+        groups: [pi-settings, test]
+        stages: [pre-push]
+        pass_filenames: false

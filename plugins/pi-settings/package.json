@@ -20,6 +20,7 @@
   },
   "scripts": {
     "lint": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test settings.test.ts",
     "build": "bb plugin build"
   },
   "dependencies": {

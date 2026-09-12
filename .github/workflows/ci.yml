@@ -36,6 +36,8 @@ jobs:
             command: pnpm run typecheck
           - plugin: pi-extras
             command: pnpm run lint && pnpm test
+          - plugin: pi-settings
+            command: pnpm run lint && pnpm test
           - plugin: review-workspace
             command: pnpm run typecheck && pnpm run lint && pnpm test
     defaults:

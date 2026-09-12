@@ -64,6 +64,19 @@ BB plugins are full-trust code. Review a plugin's source before installing it.
 
 When adding or removing a plugin, update both `marketplace.json` and the root README. Marketplace releases will use plugin-specific tags such as `<id>/0.1.0`; no versioned releases have been cut yet.
 
+## New-plugin checklist
+
+When adding a plugin, complete every item below before considering the work done:
+
+1. Create a self-contained `plugins/<id>/` directory with a manifest, README, source entry points, lockfile, and appropriate tests.
+2. Keep the plugin ID, package name, manifest display name/description, plugin README, marketplace entry, and root README entry aligned.
+3. Add the plugin to `.pre-commit-config.yaml` with typecheck and test hooks where applicable.
+4. Add the plugin to `.github/workflows/ci.yml` so CI installs its lockfile and runs its checks.
+5. Run the plugin's typecheck, tests, formatter, and `bb plugin build`; do not edit generated `dist/` files manually.
+6. Run `prek run --all-files` and inspect `git diff --check`.
+7. Install or reload the plugin locally and verify its registered surfaces, name, icon, and disabled/error behavior.
+8. Document installation, permissions, configuration, and screenshots or usage examples when the plugin has a user-facing UI.
+
 ## Completion checklist
 
 - Run the affected plugin's typecheck and tests.

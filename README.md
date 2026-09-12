@@ -12,6 +12,7 @@ Install a plugin from the latest `main` branch:
 ```sh
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/flux
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/pi-extras
+bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/pi-settings
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/favicon
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/review-workspace
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/bulk-archive
