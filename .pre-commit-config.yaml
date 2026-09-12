@@ -76,7 +76,7 @@ repos:
 
       - id: pi-settings-tests
         name: pi-settings tests
-        entry: bash -c 'cd plugins/pi-settings && pnpm test'
+        entry: bash -c 'cd plugins/pi-settings && pnpm test && pnpm run test:components'
         language: system
         files: ^plugins/pi-settings/
         groups: [pi-settings, test]
