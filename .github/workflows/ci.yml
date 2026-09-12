@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-marketplace:
+    name: Validate marketplace metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JSON
+        run: python3 -m json.tool marketplace.json >/dev/null
+      - name: Validate plugin manifests
+        run: |
+          for manifest in plugins/*/package.json; do
+            python3 -m json.tool "$manifest" >/dev/null
+          done
+
+  plugins:
+    name: ${{ matrix.plugin }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plugin: bulk-archive
+            command: pnpm run typecheck
+          - plugin: favicon
+            command: pnpm run typecheck
+          - plugin: flux
+            command: pnpm run typecheck
+          - plugin: pi-extras
+            command: pnpm run lint && pnpm test
+          - plugin: review-workspace
+            command: pnpm run typecheck && pnpm run lint && pnpm test
+    defaults:
+      run:
+        working-directory: plugins/${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run checks
+        run: ${{ matrix.command }}

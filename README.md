@@ -94,7 +94,7 @@ prek install
 prek run --all-files
 ```
 
-Pre-commit hooks validate JSON, run plugin typechecks, and check Review Workspace formatting. The heavier plugin test suites run before pushes. Hooks are grouped by plugin and concern, for example `prek run --group flux` or `prek run --group format`.
+Pre-commit hooks validate JSON, run plugin typechecks, and check Review Workspace formatting. The heavier plugin test suites run before pushes. GitHub Actions runs the full plugin matrix on pushes and pull requests. Hooks are grouped by plugin and concern, for example `prek run --group flux` or `prek run --group format`.
 
 Requirements: node ≥ 22, pnpm, and a bb ≥ 0.42 install.
 
