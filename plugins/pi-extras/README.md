@@ -1,7 +1,7 @@
-# Extras
+# Pi Usage
 
-A local BB plugin that bundles Pi-related extras into a single sidebar panel
-with two tabs:
+A local BB plugin that bundles Pi usage views into a single sidebar panel with
+two tabs:
 
 - **Sessions** - estimated token usage and cost computed from local Pi
   sessions (`~/.pi/agent/sessions` and `~/.bb/pi-bridge-sessions`), adapted
@@ -10,9 +10,19 @@ with two tabs:
 - **Subscriptions** - subscription usage for Pi-managed Codex, OpenCode Go,
   and Ollama Cloud credentials.
 
-The plugin adds **Extras** to BB's main sidebar. It is not an agent provider
+The plugin adds **Pi Usage** to BB's main sidebar. It is not an agent provider
 and does not appear in the provider or model pickers. See
 `THIRD_PARTY_NOTICES.md` at the repository root for full attribution.
+
+## Screenshots
+
+### Sessions
+
+![Pi Usage sessions](docs/sessions.png)
+
+### Subscriptions
+
+![Pi Usage subscriptions](docs/subscriptions.png)
 
 ## Subscriptions tab
 

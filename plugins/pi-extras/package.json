@@ -8,7 +8,7 @@
     "bbPluginSdk": ">=0.4.34"
   },
   "bb": {
-    "name": "Pi Extras",
+    "name": "Pi Usage",
     "description": "Shows Codex, OpenCode Go, and Ollama Cloud usage from Pi credentials.",
     "branding": {
       "icon": "ChartNoAxesCombined"

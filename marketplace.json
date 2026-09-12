@@ -55,7 +55,7 @@
     },
     {
       "id": "pi-extras",
-      "displayName": "Pi Extras",
+      "displayName": "Pi Usage",
       "description": "Shows Codex, OpenCode Go, and Ollama Cloud usage from Pi credentials.",
       "icon": "ChartNoAxesCombined",
       "tags": ["usage", "provider", "credentials"],

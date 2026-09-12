@@ -37,7 +37,7 @@ bb marketplace add https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/
 
 A proof-of-concept feed aggregator and reading room with fake data. It tests a calmer, alternative UX while keeping a visible path back to normal BB navigation, which is important for mobile.
 
-### [Extras](plugins/pi-extras) - `pi-extras`
+### [Pi Usage](plugins/pi-extras) - `pi-extras`
 
 Pi-focused usage extras in a single sidebar panel with two tabs:
 
