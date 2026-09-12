@@ -1,0 +1,36 @@
+{
+  "name": "bb-plugin-pi-settings",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.41",
+    "bbPluginSdk": ">=0.4.34"
+  },
+  "bb": {
+    "name": "Pi Settings",
+    "description": "Configure global Pi model defaults and update Pi catalogs and plugins.",
+    "branding": {
+      "icon": "Settings"
+    },
+    "server": "./server.ts",
+    "host": "./host.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "build": "bb plugin build"
+  },
+  "dependencies": {
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.56",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.20.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^5.9.3"
+  }
+}

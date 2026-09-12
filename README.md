@@ -39,6 +39,8 @@ A proof-of-concept feed aggregator and reading room with fake data. It tests a c
 
 ### [Pi Usage](plugins/pi-extras) - `pi-extras`
 
+### [Pi Settings](plugins/pi-settings) - `pi-settings`
+
 Pi-focused usage extras in a single sidebar panel with two tabs:
 
 - **Sessions** - estimated token usage and cost computed from local Pi session

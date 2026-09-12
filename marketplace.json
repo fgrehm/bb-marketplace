@@ -70,6 +70,22 @@
       }
     },
     {
+      "id": "pi-settings",
+      "displayName": "Pi Settings",
+      "description": "Configure global Pi model defaults and update Pi catalogs and plugins.",
+      "icon": "Settings",
+      "tags": ["pi", "settings", "models"],
+      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "source": {
+        "git": {
+          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "subdir": "plugins/pi-settings",
+          "range": "^0.1.0",
+          "tagPrefix": "pi-settings/"
+        }
+      }
+    },
+    {
       "id": "favicon",
       "displayName": "Favicon",
       "description": "Replaces the browser tab favicon with uploaded light/dark SVG artwork.",
