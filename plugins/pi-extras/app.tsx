@@ -96,7 +96,7 @@ function ExtrasPage() {
   const [tab, setTab] = useState<Tab>("sessions");
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <nav aria-label="Extras sections" className="flex gap-1 border-b border-border px-4 pt-2 md:px-5">
+      <nav aria-label="Pi Usage sections" className="flex gap-1 border-b border-border px-4 pt-2 md:px-5">
         {TABS.map((entry) => (
           <button
             key={entry.id}
@@ -119,7 +119,7 @@ function ExtrasPage() {
 export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "pi-extras",
-    title: "Extras",
+    title: "Pi Usage",
     icon: "ChartNoAxesCombined",
     path: "usage",
     component: ExtrasPage,
