@@ -322,7 +322,7 @@ export function UsagePage() {
               />
             </section>
 
-            <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_16rem]">
+            <section className="flex flex-col gap-3">
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-sm font-medium text-foreground">
@@ -397,13 +397,13 @@ export function UsagePage() {
                     </tbody>
                   </table>
                 ) : breakdown === "project" ? (
-                  <table className="w-full text-sm">
+                  <table className="w-full table-fixed text-sm">
                     <thead>
                       <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                        <th className="py-2 font-normal">Project</th>
-                        <th className="py-2 text-right font-normal">Cost</th>
-                        <th className="py-2 text-right font-normal">Share</th>
-                        <th className="py-2 text-right font-normal">Tokens</th>
+                        <th className="w-auto py-2 pr-4 font-normal">Project</th>
+                        <th className="w-24 py-2 text-right font-normal">Cost</th>
+                        <th className="w-24 py-2 text-right font-normal">Share</th>
+                        <th className="w-28 py-2 text-right font-normal">Tokens</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -422,20 +422,20 @@ export function UsagePage() {
                             key={`${project.projectPath}\0${project.project}`}
                             className="border-b border-border/50"
                           >
-                            <td className="py-2 text-foreground">
+                            <td className="max-w-0 truncate py-2 pr-4 text-foreground">
                               <ProjectLabel
                                 name={project.project}
                                 path={project.projectPath}
                                 threadId={project.threadId}
                               />
                             </td>
-                            <td className="py-2 text-right text-foreground tabular-nums">
+                            <td className="whitespace-nowrap py-2 text-right text-foreground tabular-nums">
                               {formatUsd(project.costUsd)}
                             </td>
-                            <td className="py-2 text-right text-muted-foreground tabular-nums">
+                            <td className="whitespace-nowrap py-2 text-right text-muted-foreground tabular-nums">
                               {formatPercent(project.costShare)}
                             </td>
-                            <td className="py-2 text-right text-muted-foreground tabular-nums">
+                            <td className="whitespace-nowrap py-2 text-right text-muted-foreground tabular-nums">
                               {formatTokens(project.totalTokens)}
                             </td>
                           </tr>
@@ -495,31 +495,12 @@ export function UsagePage() {
                 )}
               </div>
 
-              <div className="flex flex-col gap-2 text-sm">
-                <h2 className="text-sm font-medium text-foreground">Cost quality</h2>
-                <QualityRow
-                  label="Provider reported"
-                  value={formatPercent(merged.costQuality.providerReportedShare)}
-                />
-                <QualityRow
-                  label="Model priced"
-                  value={formatPercent(merged.costQuality.modelPricedShare)}
-                />
-                <QualityRow
-                  label="Unpriced"
-                  value={formatPercent(merged.costQuality.unpricedShare)}
-                />
-                <QualityRow
-                  label="Cache savings"
-                  value={formatUsd(merged.costQuality.cacheSavingsUsd)}
-                />
-                <p className="pt-2 text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                   {merged.cache.summaryHit
                     ? `Cache hit in ${formatCount(merged.scanDurationMs)}ms`
                     : `Scanned in ${formatCount(merged.scanDurationMs)}ms · ${formatCount(merged.cache.fileHits)} cached files · ${formatCount(merged.cache.filesParsed)} parsed`}{" "}
                   · rates {merged.pricing.status}
-                </p>
-              </div>
+              </p>
             </section>
           </>
         ) : null}
@@ -567,15 +548,6 @@ function Metric({
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="text-lg text-foreground tabular-nums">{value}</span>
       <span className="text-xs text-muted-foreground">{detail}</span>
-    </div>
-  );
-}
-
-function QualityRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-muted-foreground">
-      <span>{label}</span>
-      <span className="tabular-nums text-foreground">{value}</span>
     </div>
   );
 }
