@@ -30,6 +30,7 @@
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.4.56",
     "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.20.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
