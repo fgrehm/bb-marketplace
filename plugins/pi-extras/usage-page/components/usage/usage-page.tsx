@@ -116,7 +116,10 @@ export function UsagePage() {
     [merged],
   );
 
-  const visibleProviders = useMemo(() => [...PROVIDER_ORDER], []);
+  const visibleProviders = useMemo(
+    () => PROVIDER_ORDER.filter((provider) => provider !== "pi"),
+    [],
+  );
 
   const orderedProviders = useMemo(() => {
     if (!merged) return [];
@@ -127,7 +130,10 @@ export function UsagePage() {
           ? b.costUsd - a.costUsd
           : b.totalTokens - a.totalTokens,
       )
-      .filter((provider) => visible.has(provider.provider));
+      .filter(
+        (provider) =>
+          provider.provider !== "pi" && visible.has(provider.provider),
+      );
   }, [merged, metric, visibleProviders]);
 
   const recentDays = useMemo(
@@ -588,7 +594,7 @@ function UsageSkeleton() {
             <div className="my-1.5 h-8 w-36 rounded-sm bg-muted" />
             <div className="h-3 w-28 rounded-sm bg-muted" />
           </div>
-          {PROVIDER_ORDER.map((provider) => (
+          {PROVIDER_ORDER.filter((provider) => provider !== "pi").map((provider) => (
             <div key={provider} className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-sm text-foreground">
