@@ -95,8 +95,9 @@ test("uses fake HTTP responses and marks only rejected credentials as expired", 
     fetch: async (url, init) => {
       const headers = new Headers(init?.headers);
       calls.push({ url, authorization: headers.get("authorization") });
-      if (url.includes("chatgpt.com")) return new Response("", { status: 401 });
-      if (url.includes("opencode.ai")) return Response.json({ usage: { rolling: { percent: 12, resetsAt: "2026-09-03T15:00:00Z" } } });
+      const hostname = new URL(url).hostname;
+      if (hostname === "chatgpt.com") return new Response("", { status: 401 });
+      if (hostname === "opencode.ai") return Response.json({ usage: { rolling: { percent: 12, resetsAt: "2026-09-03T15:00:00Z" } } });
       return Response.json({ limits: { monthly: { usage: 0.25 } } });
     },
   });
