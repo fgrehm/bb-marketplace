@@ -61,6 +61,6 @@
     "tailwind-merge": "^3.6.0",
     "typescript": "^5.9.3",
     "vaul": "^1.1.2",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   }
 }
