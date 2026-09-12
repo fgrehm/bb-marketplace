@@ -16,14 +16,15 @@ import type {
  * v5: Codex adjacent-only signature dedupe; Claude structured dedupe keys;
  *     reject malformed Codex cache splits.
  * v6: persist workspace cwd / projectPath on each record.
+ * v9: prefer assistant provider over session wrapper provider.
  */
-export const USAGE_SCAN_CACHE_VERSION = 8 as const; // v8: per-provider breakdown from Pi session metadata.
+export const USAGE_SCAN_CACHE_VERSION = 9 as const; // v9: prefer assistant provider over session wrapper provider.
 
 /**
  * v4: homogeneous pricing-source buckets; v5: include projectPath;
  * v8: per-provider breakdown from Pi session metadata.
  */
-export const USAGE_BASE_CACHE_VERSION = 8 as const;
+export const USAGE_BASE_CACHE_VERSION = 9 as const;
 
 export interface CachedFile {
   size: number;
