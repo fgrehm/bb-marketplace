@@ -34,8 +34,13 @@ export function mightCarryUsage(
   line: string,
   provider: UsageProviderKind,
 ): boolean {
-  return line.includes('"usage"') || line.includes('"cost"');
-  return line.includes('"token_count"') || line.includes('"turn_context"') || line.includes('"session_meta"');
+  return (
+    line.includes('"usage"') ||
+    line.includes('"cost"') ||
+    line.includes('"token_count"') ||
+    line.includes('"turn_context"') ||
+    line.includes('"session_meta"')
+  );
 }
 
 export function parsePiLine(
@@ -115,7 +120,7 @@ export function parsePiLine(
         : null;
 
   return {
-    provider: sessionProvider(record.provider ?? message.provider),
+    provider: sessionProvider(message.provider ?? record.provider),
     timestampMs,
     model,
     sessionId:
