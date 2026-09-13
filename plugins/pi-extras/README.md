@@ -15,11 +15,15 @@ The plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Settings. It 
 
 ### Sessions
 
-![Pi Usage sessions](docs/sessions.png)
+![Pi Usage sessions](docs/sessions.webp)
 
 ### Subscriptions
 
-![Pi Usage subscriptions](docs/subscriptions.png)
+![Pi Usage subscriptions](docs/subscriptions.webp)
+
+### Settings
+
+![Pi settings](docs/settings.webp)
 
 ## Subscriptions tab
 

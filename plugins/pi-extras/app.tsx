@@ -76,7 +76,7 @@ function CredentialsPage() {
 
   return (
     <main className="h-full min-h-0 overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-5">
+      <div className="w-full space-y-4 p-4 md:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm text-muted-foreground">Subscription usage from credentials stored by Pi.{usage?.hostName ? ` Primary machine: ${usage.hostName}.` : ""}</p>

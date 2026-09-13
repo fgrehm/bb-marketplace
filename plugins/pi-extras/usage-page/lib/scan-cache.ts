@@ -17,14 +17,16 @@ import type {
  *     reject malformed Codex cache splits.
  * v6: persist workspace cwd / projectPath on each record.
  * v9: prefer assistant provider over session wrapper provider.
+ * v10: invalidate v9 caches that may predate corrected provider parsing.
  */
-export const USAGE_SCAN_CACHE_VERSION = 9 as const; // v9: prefer assistant provider over session wrapper provider.
+export const USAGE_SCAN_CACHE_VERSION = 10 as const;
 
 /**
  * v4: homogeneous pricing-source buckets; v5: include projectPath;
  * v8: per-provider breakdown from Pi session metadata.
+ * v10: invalidate bases derived from stale v9 file records.
  */
-export const USAGE_BASE_CACHE_VERSION = 9 as const;
+export const USAGE_BASE_CACHE_VERSION = 10 as const;
 
 export interface CachedFile {
   size: number;
