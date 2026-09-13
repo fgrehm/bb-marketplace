@@ -7,6 +7,15 @@ const usageWindowSchema = z.object({
   resetsAt: z.string().nullable(),
 }).strict();
 
+const piSettingsSchema = z.object({
+  defaultProvider: z.string().nullable(),
+  defaultModel: z.string().nullable(),
+  defaultThinkingLevel: z.enum(["minimal", "low", "medium", "high"]).nullable(),
+  enabledModels: z.array(z.string()),
+}).strict();
+
+const updateSchema = z.object({ target: z.enum(["models", "plugins"]) }).strict();
+
 const usageSourceSchema = z.object({
   id: z.enum(["codex", "opencode-go", "ollama-cloud"]),
   label: z.string(),
@@ -20,6 +29,9 @@ export const piExtrasHostContract = defineRpcContract({
     input: z.object({}).strict(),
     output: z.object({ sources: z.array(usageSourceSchema) }).strict(),
   },
+  readSettings: { input: z.object({}).strict(), output: piSettingsSchema },
+  writeSettings: { input: piSettingsSchema, output: piSettingsSchema },
+  update: { input: updateSchema, output: z.object({ output: z.string() }).strict() },
 });
 
 export const piExtrasRpcContract = defineRpcContract({
@@ -30,4 +42,7 @@ export const piExtrasRpcContract = defineRpcContract({
       sources: z.array(usageSourceSchema),
     }).strict(),
   },
+  readSettings: { input: z.object({}).strict(), output: piSettingsSchema },
+  writeSettings: { input: piSettingsSchema, output: piSettingsSchema },
+  update: { input: updateSchema, output: z.object({ output: z.string() }).strict() },
 });

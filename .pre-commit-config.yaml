@@ -59,26 +59,9 @@ repos:
 
       - id: pi-extras-tests
         name: pi-extras tests
-        entry: bash -c 'cd plugins/pi-extras && pnpm test'
+        entry: bash -c 'cd plugins/pi-extras && pnpm test && pnpm run test:components'
         language: system
         files: ^plugins/pi-extras/
         groups: [pi-extras, test]
-        stages: [pre-push]
-        pass_filenames: false
-
-      - id: pi-settings-typecheck
-        name: pi-settings typecheck
-        entry: bash -c 'cd plugins/pi-settings && pnpm run lint'
-        language: system
-        files: ^plugins/pi-settings/
-        groups: [pi-settings, typecheck]
-        pass_filenames: false
-
-      - id: pi-settings-tests
-        name: pi-settings tests
-        entry: bash -c 'cd plugins/pi-settings && pnpm test && pnpm run test:components'
-        language: system
-        files: ^plugins/pi-settings/
-        groups: [pi-settings, test]
         stages: [pre-push]
         pass_filenames: false

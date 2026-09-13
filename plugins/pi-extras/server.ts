@@ -36,6 +36,21 @@ export default function plugin(bb: BbPluginApi): void {
   }
 
   bb.rpc.register(piExtrasRpcContract, {
+    async readSettings() {
+      const hostId = (await bb.sdk.system.config()).primaryHostId;
+      if (!hostId) throw new Error("No primary BB machine is configured.");
+      return host.call("readSettings", {}, { hostId });
+    },
+    async writeSettings(input) {
+      const hostId = (await bb.sdk.system.config()).primaryHostId;
+      if (!hostId) throw new Error("No primary BB machine is configured.");
+      return host.call("writeSettings", input, { hostId });
+    },
+    async update(input) {
+      const hostId = (await bb.sdk.system.config()).primaryHostId;
+      if (!hostId) throw new Error("No primary BB machine is configured.");
+      return host.call("update", input, { hostId, signal: AbortSignal.timeout(130_000) });
+    },
     async refreshUsage(input) {
       const force = input?.force === true;
       if (

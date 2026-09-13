@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readSettings, runPiUpdate, writeSettings } from "./settings.ts";
+import { readSettings, runPiUpdate, writeSettings } from "./pi-settings.ts";
 
 test("reads and writes selected global settings without dropping unrelated fields", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-settings-"));

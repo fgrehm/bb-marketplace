@@ -55,8 +55,8 @@
     },
     {
       "id": "pi-extras",
-      "displayName": "Pi Usage",
-      "description": "Shows Codex, OpenCode Go, and Ollama Cloud usage from Pi credentials.",
+      "displayName": "Pi",
+      "description": "Shows Pi usage and configures global Pi model settings and updates.",
       "icon": "ChartNoAxesCombined",
       "tags": ["usage", "provider", "credentials"],
       "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
@@ -66,22 +66,6 @@
           "subdir": "plugins/pi-extras",
           "range": "^0.1.0",
           "tagPrefix": "pi-extras/"
-        }
-      }
-    },
-    {
-      "id": "pi-settings",
-      "displayName": "Pi Settings",
-      "description": "Configure global Pi model defaults and update Pi catalogs and plugins.",
-      "icon": "Settings",
-      "tags": ["pi", "settings", "models"],
-      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
-      "source": {
-        "git": {
-          "url": "https://github.com/fgrehm/bb-marketplace.git",
-          "subdir": "plugins/pi-settings",
-          "range": "^0.1.0",
-          "tagPrefix": "pi-settings/"
         }
       }
     },

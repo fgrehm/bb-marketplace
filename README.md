@@ -12,7 +12,6 @@ Install a plugin from the latest `main` branch:
 ```sh
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/flux
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/pi-extras
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/pi-settings
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/favicon
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/review-workspace
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/bulk-archive
@@ -39,8 +38,6 @@ bb marketplace add https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/
 A proof-of-concept feed aggregator and reading room with fake data. It tests a calmer, alternative UX while keeping a visible path back to normal BB navigation, which is important for mobile.
 
 ### [Pi Usage](plugins/pi-extras) - `pi-extras`
-
-### [Pi Settings](plugins/pi-settings) - `pi-settings`
 
 Pi-focused usage extras in a single sidebar panel with two tabs:
 

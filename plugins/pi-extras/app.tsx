@@ -4,6 +4,7 @@ import type { piExtrasRpcContract } from "./contract";
 import type { UsageSource } from "./usage";
 import { UsagePage } from "./usage-page/components/usage/usage-page";
 import { ProviderMark } from "./usage-page/components/usage/providers";
+import { PiSettingsPanel } from "./settings-panel";
 import "./usage-page/app.css";
 
 type Tab = "sessions" | "subscriptions";
@@ -117,6 +118,12 @@ function ExtrasPage() {
 }
 
 export default definePluginApp((app) => {
+  app.slots.settingsSection({
+    id: "pi-settings",
+    title: "Pi Settings",
+    description: "Configure global Pi model defaults and updates.",
+    component: PiSettingsPanel,
+  });
   app.slots.navPanel({
     id: "pi-extras",
     title: "Pi Usage",

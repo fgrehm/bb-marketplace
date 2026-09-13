@@ -1,7 +1,6 @@
 # Pi Usage
 
-A local BB plugin that bundles Pi usage views into a single sidebar panel with
-two tabs:
+A local BB plugin that bundles Pi usage views into a single sidebar panel and adds global Pi configuration under BB Settings.
 
 - **Sessions** - estimated token usage and cost computed from local Pi
   sessions (`~/.pi/agent/sessions` and `~/.bb/pi-bridge-sessions`), adapted
@@ -10,9 +9,7 @@ two tabs:
 - **Subscriptions** - subscription usage for Pi-managed Codex, OpenCode Go,
   and Ollama Cloud credentials.
 
-The plugin adds **Pi Usage** to BB's main sidebar. It is not an agent provider
-and does not appear in the provider or model pickers. See
-`THIRD_PARTY_NOTICES.md` at the repository root for full attribution.
+The plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Settings. It is not an agent provider and does not appear in the provider or model pickers. See `THIRD_PARTY_NOTICES.md` at the repository root for full attribution.
 
 ## Screenshots
 
@@ -36,6 +33,10 @@ file is reported as an error. Codex authentication failures are shown as
 expired and should be refreshed through Pi.
 
 The Codex and Ollama usage endpoints are undocumented and may change.
+
+## Settings
+
+The Settings entry manages global Pi defaults for provider, model, thinking level, and enabled model patterns. It can also refresh model catalogs and update Pi extensions, with command output shown in the UI. The plugin preserves unrelated Pi settings and never reads or changes credentials.
 
 ## Development
 
