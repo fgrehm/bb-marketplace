@@ -10,7 +10,7 @@ export function PiSettingsPanel() {
   const [draft, setDraft] = useState<PiSettings | null>(null);
   const [message, setMessage] = useState("");
   const [updateOutput, setUpdateOutput] = useState("");
-  const [updating, setUpdating] = useState<"models" | "plugins" | null>(null);
+  const [updating, setUpdating] = useState<"models" | "plugins" | "pinned" | null>(null);
 
   useEffect(() => {
     void rpc.call("readSettings", {}).then((value) => {
@@ -32,13 +32,18 @@ export function PiSettingsPanel() {
       setMessage(String(error));
     }
   };
-  const update = async (target: "models" | "plugins") => {
+  const update = async (target: "models" | "plugins" | "pinned") => {
     setUpdating(target);
     setMessage("");
     setUpdateOutput("");
     try {
       const result = await rpc.call("update", { target });
-      setMessage(target === "models" ? "Model catalogs refreshed" : "Pi extensions updated");
+      const labels = target === "models"
+        ? ["Model catalogs refreshed", "Model refresh failed"]
+        : target === "plugins"
+          ? ["Pi extensions updated", "Pi extension update failed"]
+          : ["Pinned packages updated", "Pinned package update failed"];
+      setMessage(labels[result.ok ? 0 : 1]!);
       setUpdateOutput(result.output || "No output.");
     } catch (error) {
       setMessage(String(error));

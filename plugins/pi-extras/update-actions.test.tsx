@@ -9,12 +9,12 @@ describe("UpdateActions", () => {
     const onUpdate = vi.fn();
     render(<UpdateActions updating={"models"} onUpdate={onUpdate} />);
     expect(screen.getByRole("button", { name: "Refreshing..." })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: "Update plugins" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Update extensions" })).toHaveProperty("disabled", true);
   });
   it("calls the requested update", () => {
     const onUpdate = vi.fn();
     render(<UpdateActions updating={null} onUpdate={onUpdate} />);
-    fireEvent.click(screen.getByRole("button", { name: "Update plugins" }));
-    expect(onUpdate).toHaveBeenCalledWith("plugins");
+    fireEvent.click(screen.getByRole("button", { name: "Update pinned packages" }));
+    expect(onUpdate).toHaveBeenCalledWith("pinned");
   });
 });

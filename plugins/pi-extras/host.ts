@@ -9,6 +9,6 @@ export default experimental_defineHostEntry({
     readUsage: async () => readPiUsage(),
     readSettings: async () => readSettings(),
     writeSettings: async (next) => writeSettings(next),
-    update: async ({ target }) => ({ output: await runPiUpdate(target) }),
+    update: async ({ target }) => runPiUpdate(target),
   },
 });
