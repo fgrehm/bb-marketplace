@@ -112,9 +112,8 @@ function Reader({ story, onBack }: { story: Story; onBack: () => void }) {
   );
 }
 
-function FluxPage({ onExit }: { onExit?: () => void; subPath?: string }) {
+function FluxPage() {
   const navigate = useBbNavigate();
-  const exit = onExit ?? (() => navigate.toCompose());
   const [feed, setFeed] = useState<Feed>("all");
   const [stories, setStories] = useState(STORIES);
   const [activeStory, setActiveStory] = useState<Story | null>(null);
@@ -128,7 +127,7 @@ function FluxPage({ onExit }: { onExit?: () => void; subPath?: string }) {
       <header className="border-b border-border px-5 py-5 sm:px-8">
         <div className="mx-auto flex max-w-5xl items-start justify-between gap-4">
           <div><p className="text-xs font-medium uppercase tracking-[0.2em] text-primary">A calmer internet</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">Flux</h1><p className="mt-1 text-sm text-muted-foreground">Your reading room for ideas worth keeping.</p></div>
-          <div className="flex items-center gap-2"><Button variant="outline" size="sm" onClick={exit}><Icon name="GridView" className="size-4" /> <span className="hidden sm:inline">Back to BB</span></Button><Button size="icon" variant="ghost" aria-label="Refresh feed" onClick={() => setStories([...STORIES])}><Icon name="RotateCcw" className="size-4" /></Button></div>
+          <div className="flex items-center gap-2"><Button variant="outline" size="sm" onClick={() => navigate.toCompose()}><Icon name="GridView" className="size-4" /> <span className="hidden sm:inline">Back to BB</span></Button><Button size="icon" variant="ghost" aria-label="Refresh feed" onClick={() => setStories([...STORIES])}><Icon name="RotateCcw" className="size-4" /></Button></div>
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto w-full max-w-5xl px-5 py-6 sm:px-8 sm:py-8">
@@ -142,21 +141,6 @@ function FluxPage({ onExit }: { onExit?: () => void; subPath?: string }) {
   );
 }
 
-function FluxOverlay() {
-  const navigate = useBbNavigate();
-  const [visible, setVisible] = useState(true);
-  if (!visible) return null;
-  return (
-    <div className="fixed inset-0 z-[100] bg-background pt-[env(safe-area-inset-top)]">
-      <FluxPage onExit={() => { setVisible(false); navigate.toCompose(); }} />
-    </div>
-  );
-}
-
 export default definePluginApp((app) => {
   app.slots.navPanel({ id: "flux", title: "Flux", icon: "Explore", path: "feed", component: FluxPage });
-  // The current SDK types predate this experimental runtime slot, but the BB
-  // host already supports it. Keep the cast local until the SDK pin catches up.
-  const experimentalSlots = app.slots as unknown as { experimental_appOverlay?: (registration: { id: string; component: typeof FluxOverlay }) => void };
-  experimentalSlots.experimental_appOverlay?.({ id: "flux-fullscreen", component: FluxOverlay });
 });
