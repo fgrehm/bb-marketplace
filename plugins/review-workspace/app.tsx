@@ -1201,6 +1201,9 @@ function ReviewSummary({
 
 function ReviewPanel({ threadId }: { threadId: string }) {
   const rpc = useRpc<typeof rpcContract>();
+  // Full-screen mode: the panel spans the whole viewport (the BB tab it
+  // normally lives in is only a slice of the page).
+  const [fullscreen, setFullscreen] = useState(false);
   const navigate = useBbNavigate();
   const [review, setReview] = useState<Review | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
@@ -1949,7 +1952,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   }
 
   return (
-    <main className="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground">
+    <main
+      className={`flex min-h-0 flex-col overflow-hidden bg-background text-foreground ${fullscreen ? "fixed inset-0 z-50" : "h-full"}`}
+    >
       <header className="flex shrink-0 items-center gap-2 border-b bg-card px-3 py-2 lg:px-4">
         <Button
           size="sm"
@@ -2077,6 +2082,16 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 : review
                   ? "Refresh"
                   : "Open review"}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className={COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS}
+          onClick={() => setFullscreen((current) => !current)}
+          aria-pressed={fullscreen}
+          aria-label={fullscreen ? "Exit full screen" : "Full screen"}
+        >
+          <Icon name={fullscreen ? "Minimize2" : "Maximize2"} />
         </Button>
       </header>
       {error ? (
