@@ -889,6 +889,152 @@ function RoundupCard({ onOpen }: { onOpen: (item: Item) => void }) {
 
 }
 
+function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (item: Item) => void; onSet: (id: string, state: SavedState) => void; onExit: () => void }) {
+  const startIndex = Math.max(0, items.findIndex((item) => item.id === lastActedItemId));
+  const [index, setIndex] = useState(startIndex);
+  const [dx, setDx] = useState(0);
+  const [toast, setToast] = useState<string | null>(null);
+  const undoStack = useRef<Array<{ id: string; state: SavedState; label: string }>>([]);
+  const acted = useRef({ ingested: 0, later: 0, dropped: 0 });
+  const lastSet = useRef(onSet);
+  lastSet.current = onSet;
+
+  const finished = index >= items.length;
+  const item = items[index] as Item;
+
+  if (finished) {
+    const { ingested, later, dropped } = acted.current;
+    return (
+      <div className="grid min-h-0 flex-1 place-items-center px-5">
+        <div className="max-w-md text-center">
+          <p className="text-3xl max-md:pointer-coarse:text-4xl font-semibold tracking-tight">Queue emptied.</p>
+          <p className="mt-3 text-sm text-muted-foreground">
+            {items.length === 0 ? "Nothing was queued for this sweep." : `${ingested} ingested · ${later} later · ${dropped} dropped in this round.`}
+          </p>
+          <div className="mt-6 flex justify-center gap-2">
+            <Button variant="outline" size="sm" className="h-9 max-md:pointer-coarse:h-10" onClick={onExit}>Back to feed</Button>
+            {items.length > 0 && <Button size="sm" className="h-9 max-md:pointer-coarse:h-10" onClick={() => setIndex(0)}>Keep sweeping</Button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const apply = (state: SavedState, advance = true) => {
+    const current = items[index];
+    if (!current) return;
+    undoStack.current.push({ id: current.id, state: current.saved, label: current.title ?? current.fullName ?? "item" });
+    if (current.saved !== state) {
+      if (state === "saved") acted.current.ingested += 1;
+      else if (state === "dropped") acted.current.dropped += 1;
+      else if (state === "later") acted.current.later += 1;
+    }
+    lastSet.current(current.id, state);
+    lastActedItemId = current.id;
+    setToast(`"${current.title ?? current.fullName}" → ${state}`);
+    if (advance) setIndex((i) => i + 1);
+  };
+
+  const step = (delta: number) => setIndex((i) => Math.max(0, Math.min(items.length - 1, i + delta)));
+
+  // Sweep keys: space/s ingest, backspace/x/d drop, l later, arrows skip,
+  // o read, u undo, esc exits the sprint.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === " " || event.key === "s") { event.preventDefault(); apply("saved"); return; }
+      if (event.key === "Backspace" || event.key === "d" || event.key === "x") { event.preventDefault(); apply("dropped"); return; }
+      if (event.key === "l") { event.preventDefault(); apply("later"); return; }
+      if (event.key === "o" || event.key === "Enter") { const current = items[index]; if (current) { event.preventDefault(); onOpen(current); } return; }
+      if (event.key === "ArrowRight") { event.preventDefault(); step(1); return; }
+      if (event.key === "ArrowLeft" || event.key === "b") { event.preventDefault(); step(-1); return; }
+      if (event.key === "u" || event.key === "z") {
+        const prev = undoStack.current.pop();
+        if (prev) {
+          lastSet.current(prev.id, prev.state);
+          const target = items.findIndex((it) => it.id === prev.id);
+          if (target >= 0) setIndex(target);
+          setToast(`undid: "${prev.label}"`);
+        }
+        return;
+      }
+      if (event.key === "Escape") { event.preventDefault(); onExit(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, index]);
+
+  const touch = useRef<{ x: number; y: number; edge: boolean } | null>(null);
+  const onTouchStart = (event: React.TouchEvent) => {
+    if (event.touches.length !== 1) return;
+    const t = event.touches[0];
+    touch.current = { x: t.clientX, y: t.clientY, edge: t.clientX < 32 || t.clientX > window.innerWidth - 32 };
+  };
+  const onTouchMove = (event: React.TouchEvent) => {
+    if (!touch.current) return;
+    const dx = event.touches[0].clientX - touch.current.x;
+    const dy = event.touches[0].clientY - touch.current.y;
+    setDx(Math.abs(dx) > Math.abs(dy) ? Math.max(-160, Math.min(160, dx)) : 0);
+  };
+  const onTouchEnd = () => {
+    if (!touch.current?.edge) {
+      if (dx > 130) apply("saved");
+      else if (dx < -130) apply("dropped");
+    }
+    touch.current = null;
+    setDx(0);
+  };
+
+  return (
+    <div className="flex min-h-[calc(100%-56px)] flex-1 flex-col">
+      <div className="px-4 pt-1">
+        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+          <button type="button" onClick={onExit} className="inline-flex items-center gap-1 hover:text-foreground"><Icon name="ChevronLeft" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> exit sweep</button>
+          <span className="font-mono">{index + 1} / {items.length}</span>
+        </div>
+        <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div className="h-full bg-primary transition-[width] duration-200" style={{ width: `${Math.round(((index + 1) / items.length) * 100)}%` }} />
+        </div>
+      </div>
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-3">
+        <span className="absolute inset-0 grid place-items-center bg-emerald-500/15 text-sm font-medium text-emerald-400" style={{ opacity: dx > 24 ? Math.min(1, dx / 120) : 0 }}>✓ Ingest</span>
+        <span className="absolute inset-0 grid place-items-center bg-muted text-sm font-medium text-muted-foreground" style={{ opacity: dx < -24 ? Math.min(1, -dx / 120) : 0 }}>✕ Drop</span>
+        <article
+          className="relative flex w-full max-w-xl flex-col gap-4 rounded-2xl border border-border bg-card p-5 max-md:pointer-coarse:p-6 shadow-lg"
+          style={{ touchAction: "pan-y", transform: `translateX(${dx}px)` }}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+        >
+          <div className="flex min-w-0 items-center gap-2.5 text-xs text-muted-foreground">
+            <SourceMark item={item} />
+            <span className="min-w-0 truncate font-medium text-foreground">{item.source}</span>
+            <span>·</span>
+            <span>{item.time}</span>
+            <span className="ml-auto rounded-full bg-muted px-2 py-0.5">{KIND_META[item.kind].label}</span>
+          </div>
+          <button type="button" className="text-left" onClick={() => onOpen(item)}>
+            <h2 className="text-2xl max-md:pointer-coarse:text-3xl font-semibold leading-snug tracking-tight">{item.title ?? item.fullName}</h2>
+            {(item.body || item.description) ? <p className="mt-2 line-clamp-3 text-sm max-md:pointer-coarse:text-base leading-6 text-muted-foreground">{item.body || item.description}</p> : null}
+          </button>
+          <div className="flex flex-wrap items-center gap-3 border-t border-border/70 pt-3 text-[11px] text-muted-foreground">
+            <span><kbd className="font-mono">space</kbd>/<kbd className="font-mono">s</kbd> ingest & next</span>
+            <span><kbd className="font-mono">backspace</kbd> drop</span>
+            <span><kbd className="font-mono">l</kbd> later</span>
+            <span><kbd className="font-mono">→</kbd> skip</span>
+            <span><kbd className="font-mono">o</kbd> read</span>
+            <span><kbd className="font-mono">u</kbd> undo</span>
+          </div>
+        </article>
+      </div>
+      <div className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-2.5 text-xs text-muted-foreground backdrop-blur">
+        {toast ?? "space = ingest & next · backspace = drop · arrows skip past · esc exits"}
+        {toast && <button type="button" className="ml-3 underline hover:text-foreground" onClick={() => { const prev = undoStack.current.pop(); if (prev) { lastSet.current(prev.id, prev.state); const target = items.findIndex((it) => it.id === prev.id); if (target >= 0) setIndex(target); setToast(`undid: "${prev.label}"`); } }}>undo</button>}
+      </div>
+    </div>
+  );
+}
+
 function SourcesDrawer({ open, onClose, sources, onToggle, onRemove, onAddFeed, onIngest, notice }: {
   open: boolean;
   onClose: () => void;
@@ -1045,7 +1191,7 @@ function FluxPage({ subPath }: { subPath?: string }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [view, setView] = useState<"cards" | "triage">("cards");
+  const [view, setView] = useState<"cards" | "triage" | "sweep">("cards");
 
   const activeItem = useMemo(() => {
     const route = decodeURIComponent((subPath ?? "").replace(/^\/+|\/+$/g, ""));
@@ -1074,6 +1220,15 @@ function FluxPage({ subPath }: { subPath?: string }) {
     }
     return groups.filter(([, items]) => items.length > 0);
   }, [visible]);
+
+  const sweepItems = useMemo(() => {
+    const enabled = new Set(sources.filter((source) => source.enabled).map((source) => source.name));
+    return items.filter((item) => {
+      if (!enabled.has(item.source)) return false;
+      if (!matchesKind(item, feed)) return false;
+      return item.saved !== "dropped";
+    });
+  }, [items, sources, feed]);
 
   const setState = (id: string, state: SavedState) => setItems((current) => current.map((item) => item.id === id ? { ...item, saved: state } : item));
   const toggleSaved = (id: string) => setItems((current) => current.map((item) => item.id === id ? { ...item, saved: item.saved === "saved" ? "new" : "saved" } : item));
@@ -1157,7 +1312,8 @@ function FluxPage({ subPath }: { subPath?: string }) {
               {([
                 ["cards", "GridView"],
                 ["triage", "ListView"],
-              ] as Array<["cards" | "triage", "GridView" | "ListView"]>).map(([mode, icon]) => (
+                ["sweep", "Zap"],
+              ] as Array<["cards" | "triage" | "sweep", "GridView" | "ListView" | "Zap"]>).map(([mode, icon]) => (
                 <button key={mode} type="button" aria-pressed={view === mode} aria-label={mode === "cards" ? "Card view" : "Triage view"} onClick={() => setView(mode)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md transition-colors", view === mode ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
                   <Icon name={icon} className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} />
                 </button>
@@ -1175,7 +1331,9 @@ function FluxPage({ subPath }: { subPath?: string }) {
               <button key={id} type="button" onClick={() => setFeed(id)} className={cn("shrink-0 rounded-full px-3.5 py-1.5 max-md:pointer-coarse:px-4 max-md:pointer-coarse:py-2 text-[13px] max-md:pointer-coarse:text-sm transition-colors", feed === id ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>{label}</button>
             ))}
           </nav>
-          {view === "triage" ? (
+          {view === "sweep" ? (
+            <SweepView items={sweepItems} onOpen={openItem} onSet={setState} onExit={() => setView("triage")} />
+          ) : view === "triage" ? (
             <TriageView items={visible} onOpen={(item) => openItem(item)} onSet={setState} activeKindLabel={FEED_TABS.find(([id]) => id === feed)?.[1] ?? "All"} />
           ) : (
             <>
