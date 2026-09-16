@@ -902,6 +902,33 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
   const finished = index >= items.length;
   const item = items[index] as Item;
 
+  // Sweep keys: space/s ingest, backspace/x/d drop, l later, arrows skip,
+  // o read, u undo, esc exits the sprint.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === " " || event.key === "s") { event.preventDefault(); apply("saved"); return; }
+      if (event.key === "Backspace" || event.key === "d" || event.key === "x") { event.preventDefault(); apply("dropped"); return; }
+      if (event.key === "l") { event.preventDefault(); apply("later"); return; }
+      if (event.key === "o" || event.key === "Enter") { const current = items[index]; if (current) { event.preventDefault(); onOpen(current); } return; }
+      if (event.key === "ArrowRight") { event.preventDefault(); step(1); return; }
+      if (event.key === "ArrowLeft" || event.key === "b") { event.preventDefault(); step(-1); return; }
+      if (event.key === "u" || event.key === "z") {
+        const prev = undoStack.current.pop();
+        if (prev) {
+          lastSet.current(prev.id, prev.state);
+          const target = items.findIndex((it) => it.id === prev.id);
+          if (target >= 0) setIndex(target);
+          setToast(`undid: "${prev.label}"`);
+        }
+        return;
+      }
+      if (event.key === "Escape") { event.preventDefault(); onExit(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, index]);
+
   if (finished) {
     const { ingested, later, dropped } = acted.current;
     return (
@@ -936,33 +963,6 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
   };
 
   const step = (delta: number) => setIndex((i) => Math.max(0, Math.min(items.length - 1, i + delta)));
-
-  // Sweep keys: space/s ingest, backspace/x/d drop, l later, arrows skip,
-  // o read, u undo, esc exits the sprint.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === " " || event.key === "s") { event.preventDefault(); apply("saved"); return; }
-      if (event.key === "Backspace" || event.key === "d" || event.key === "x") { event.preventDefault(); apply("dropped"); return; }
-      if (event.key === "l") { event.preventDefault(); apply("later"); return; }
-      if (event.key === "o" || event.key === "Enter") { const current = items[index]; if (current) { event.preventDefault(); onOpen(current); } return; }
-      if (event.key === "ArrowRight") { event.preventDefault(); step(1); return; }
-      if (event.key === "ArrowLeft" || event.key === "b") { event.preventDefault(); step(-1); return; }
-      if (event.key === "u" || event.key === "z") {
-        const prev = undoStack.current.pop();
-        if (prev) {
-          lastSet.current(prev.id, prev.state);
-          const target = items.findIndex((it) => it.id === prev.id);
-          if (target >= 0) setIndex(target);
-          setToast(`undid: "${prev.label}"`);
-        }
-        return;
-      }
-      if (event.key === "Escape") { event.preventDefault(); onExit(); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, index]);
 
   const touch = useRef<{ x: number; y: number; edge: boolean } | null>(null);
   const onTouchStart = (event: React.TouchEvent) => {
