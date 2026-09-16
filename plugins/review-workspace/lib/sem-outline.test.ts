@@ -173,17 +173,18 @@ describe("entityContentPatch", () => {
     expect(deleted!.patch).toContain("- a");
   });
 
-  it("returns null without content and reports truncation past maxLines", () => {
+  it("returns null for missing and unchanged content", () => {
     expect(entityContentPatch(null, null, "src/a.ts")).toBeNull();
-    const built = entityContentPatch(
-      "a\nb\nc\nd\ne",
-      "a\nb\nc\nd\ne",
-      "src/a.ts",
-      {
-        maxLines: 2,
-      },
-    );
-    // identical content renders as one hunk capped to maxLines
+    // moved/reordered entities have no content change: nothing to render
+    expect(entityContentPatch("a\nb", "a\nb", "src/a.ts")).toBeNull();
+  });
+
+  it("reports truncation past maxLines", () => {
+    const before = Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n");
+    const after = before.replace("line 9", "line nine");
+    const built = entityContentPatch(before, after, "src/a.ts", {
+      maxLines: 2,
+    });
     expect(built!.truncated).toBe(true);
     expect(built!.patch.split("\n")).toHaveLength(3 + 1 + 2);
   });

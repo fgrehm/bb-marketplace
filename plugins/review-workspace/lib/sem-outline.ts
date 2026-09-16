@@ -114,6 +114,20 @@ export function entityContentDiff(
   return lcsLines(before.split("\n"), after.split("\n"));
 }
 
+// Mirrors entityContentPatch's notion of "is there anything to render":
+// one-sided content (added/deleted entities) counts as a change, identical
+// two-sided content (moved/reordered) does not.
+export function entityHasContentChange(
+  before: string | null | undefined,
+  after: string | null | undefined,
+): boolean {
+  if (before == null && after == null) return false;
+  if (before == null || after == null) return true;
+  return lcsLines(before.split("\n"), after.split("\n")).some(
+    (line) => line.marker !== " ",
+  );
+}
+
 // Synthesize a unified diff for a single entity so its expanded view renders
 // through the same Pierre FileDiff surface as the file diff. Context runs
 // longer than `contextLines` split into separate hunks, git-style, so a
@@ -142,6 +156,9 @@ export function entityContentPatch(
         ? before.split("\n").map((text) => ({ marker: "-" as const, text }))
         : lcsLines(before.split("\n"), after.split("\n"));
   if (!lines.length) return null;
+  // No content change (moved/reordered entities): there is nothing to
+  // render; callers show a "no content changes" note instead.
+  if (!lines.some((line) => line.marker !== " ")) return null;
 
   const header =
     `diff --git a/${filePath} b/${filePath}\n` +
@@ -168,16 +185,6 @@ export function entityContentPatch(
   }
   if (start !== -1) hunks.push([start, end]);
 
-  // Whole-diff fallback: no changed lines means the entity moved wholesale
-  // (pure reorder); render the first maxLines lines as one hunk.
-  const hunkRanges = hunks.length
-    ? hunks.map(([s, e]) => [
-        Math.max(0, s - contextLines),
-        Math.min(lines.length, e + contextLines + 1),
-      ])
-    : [[0, Math.min(lines.length, maxLines)]];
-  const fallbackTruncated = !hunks.length && lines.length > maxLines;
-
   // Line numbers of the first kept line per side, computed up front.
   const numbering: Array<[number, number]> = [];
   {
@@ -193,7 +200,10 @@ export function entityContentPatch(
   let truncated = false;
   let emitted = 0;
   const parts: string[] = [header];
-  for (const [from, to] of hunkRanges) {
+  for (const [from, to] of hunks.map(([s, e]) => [
+    Math.max(0, s - contextLines),
+    Math.min(lines.length, e + contextLines + 1),
+  ])) {
     if (emitted >= maxLines) {
       truncated = true;
       break;
@@ -214,7 +224,7 @@ export function entityContentPatch(
     }
     emitted += capped.length;
   }
-  return { patch: parts.join("\n"), truncated: truncated || fallbackTruncated };
+  return { patch: parts.join("\n"), truncated };
 }
 
 // sem diff emits per-line entity ids for granular entities (properties,

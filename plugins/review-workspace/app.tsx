@@ -26,6 +26,7 @@ import {
   entityAnchor,
   entityContentDiff,
   entityContentPatch,
+  entityHasContentChange,
   isModuleLevelNoise,
   stableEntityId,
 } from "./lib/sem-outline";
@@ -848,6 +849,16 @@ const EntityContentDiffView = memo(function EntityContentDiffView({
     );
     return built ? getSingularPatch(built.patch) : null;
   }, [entity]);
+  const hasContentChange = entityHasContentChange(
+    entity.beforeContent,
+    entity.afterContent,
+  );
+  if (!hasContentChange)
+    return (
+      <p className="mb-2 text-[11px] text-muted-foreground">
+        No content changes - the entity moved or was reordered.
+      </p>
+    );
   if (!parsed)
     return (
       <p className="mb-2 text-[11px] text-muted-foreground">
@@ -975,7 +986,7 @@ function EntityExplorer({
                       <span className="truncate font-mono text-[11px]">
                         <strong>{entity.entityName}</strong>
                       </span>
-                      {contentDiff.length ? (
+                      {added + removed > 0 ? (
                         <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
                           <span className="text-green-700 dark:text-green-300">
                             +{added}
@@ -1033,16 +1044,18 @@ function EntityExplorer({
                         </p>
                       ) : (
                         <>
-                          <p className="text-[11px] text-muted-foreground">
-                            {impact.total} affected entit
-                            {impact.total === 1 ? "y" : "ies"}
-                            {impact.depth > 1
-                              ? ` (${impact.depth} levels deep)`
-                              : ""}
-                            {impact.tests.length
-                              ? `, ${impact.tests.length} test suite${impact.tests.length === 1 ? "" : "s"}`
-                              : ""}
-                          </p>
+                          {impact.total > 0 ? (
+                            <p className="text-[11px] text-muted-foreground">
+                              {impact.total} affected entit
+                              {impact.total === 1 ? "y" : "ies"}
+                              {impact.depth > 1
+                                ? ` (${impact.depth} levels deep)`
+                                : ""}
+                              {impact.tests.length
+                                ? `, ${impact.tests.length} test suite${impact.tests.length === 1 ? "" : "s"}`
+                                : ""}
+                            </p>
+                          ) : null}
                           {impact.dependents.length ? (
                             <ul className="mt-1 space-y-0.5">
                               {impact.dependents
@@ -1064,15 +1077,6 @@ function EntityExplorer({
                               No dependents found outside this revision.
                             </p>
                           )}
-                          {impact.tests.length ? (
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              affected tests:{" "}
-                              {impact.tests
-                                .slice(0, 3)
-                                .map((test) => test.name)
-                                .join(", ")}
-                            </p>
-                          ) : null}
                         </>
                       )}
                     </div>
