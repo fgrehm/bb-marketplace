@@ -125,6 +125,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
   const [custom, setCustom] = useState("");
   const [acceptedDrafts, setAcceptedDrafts] = useState(DRAFTS);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const question = QUESTIONS[questionIndex];
 
   const selected = useMemo(() => {
@@ -165,8 +166,11 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
 
   const finish = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await onComplete({ answers, acceptedDrafts, notebook: buildNotebook(answers, acceptedDrafts), completedAt: Date.now() });
+    } catch (cause) {
+      setSaveError(cause instanceof Error ? cause.message : "The librarian could not save this profile.");
     } finally {
       setSaving(false);
     }
@@ -231,6 +235,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
         <ProfileSection title="Drafted from your material, needs your yes">{DRAFTS.map((draft) => { const active = acceptedDrafts.includes(draft); return <button type="button" key={draft} onClick={() => setAcceptedDrafts((current) => active ? current.filter((entry) => entry !== draft) : [...current, draft])} className={cn("rounded-full border px-3 py-1.5 text-sm", active ? "border-emerald-500/50 text-emerald-400" : "border-border text-muted-foreground line-through")}>{active ? '✓' : '×'} {draft}</button>; })}</ProfileSection>
         <ProfileSection title="Happily missed">{answers.missList.length ? answers.missList.map((value) => <span key={value} className="rounded-full border border-border px-3 py-1.5 text-sm text-muted-foreground line-through">{value}</span>) : <span className="text-sm text-muted-foreground">Nothing named yet.</span>}</ProfileSection>
         <div className="mt-8 rounded-2xl border border-border bg-card p-5"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Source priors</p><div className="mt-4 grid gap-2 text-sm"><p>Pragmatic Engineer <span className="float-right text-muted-foreground">ingest by default</span></p><p>kottke.org <span className="float-right text-muted-foreground">skim titles, keep the strange ones</span></p><p>TechCrunch <span className="float-right text-muted-foreground">titles only</span></p><p>A TARDE <span className="float-right text-muted-foreground">keep Salvador local news</span></p></div></div>
+        {saveError && <p role="alert" className="mt-6 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">Could not save the notebook: {saveError}</p>}
         <div className="mt-8 flex flex-wrap gap-2"><Button disabled={saving} onClick={() => void finish()}>{saving ? 'Saving…' : 'Looks right, start hoarding'}</Button><Button variant="outline" onClick={() => { setPhase("interview"); setQuestionIndex(0); }}>Ask again</Button><Button variant="ghost" onClick={onSkip}>Decide later</Button></div>
       </section>
     </main>
@@ -244,6 +249,7 @@ function ProfileSection({ title, children }: { title: string; children: React.Re
 export function NotebookPanel({ profile, open, onClose, onSave, onReinterview }: { profile: LibrarianProfile; open: boolean; onClose: () => void; onSave: (notebook: string) => Promise<void>; onReinterview: () => void }) {
   const [draft, setDraft] = useState(profile.notebook);
   const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   useEffect(() => {
     if (open) setDraft(profile.notebook);
   }, [open, profile.notebook]);
@@ -253,7 +259,7 @@ export function NotebookPanel({ profile, open, onClose, onSave, onReinterview }:
       <aside className="flex h-full w-full max-w-2xl flex-col border-l border-border bg-background shadow-2xl">
         <header className="flex items-start gap-3 border-b border-border p-5"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-400">Yours to edit</p><h2 className="mt-1 text-xl font-semibold">Librarian's notebook</h2><p className="mt-1 text-xs text-muted-foreground">Stored by JOMO, readable as plain markdown.</p></div><button type="button" className="ml-auto rounded-md p-2 hover:bg-muted" onClick={onClose} aria-label="Close notebook"><Icon name="X" className="size-4" /></button></header>
         <textarea value={draft} onChange={(event) => setDraft(event.target.value)} className="min-h-0 flex-1 resize-none bg-card/40 p-5 font-mono text-sm leading-7 outline-none" spellCheck={false} />
-        <footer className="flex flex-wrap items-center gap-2 border-t border-border p-4"><Button disabled={saving} onClick={() => { setSaving(true); void onSave(draft).finally(() => setSaving(false)); }}>{saving ? 'Saving…' : 'Save notebook'}</Button><Button variant="outline" onClick={onReinterview}>The librarian lost the plot</Button><span className="ml-auto text-xs text-muted-foreground">Nothing acts without a visible rule.</span></footer>
+        <footer className="flex flex-wrap items-center gap-2 border-t border-border p-4"><Button disabled={saving} onClick={() => { setSaving(true); setStatus(null); void onSave(draft).then(() => setStatus("Notebook saved.")).catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : "Save failed.")).finally(() => setSaving(false)); }}>{saving ? 'Saving…' : 'Save notebook'}</Button><Button variant="outline" onClick={onReinterview}>The librarian lost the plot</Button>{status && <span role="status" className="text-xs text-muted-foreground">{status}</span>}<span className="ml-auto text-xs text-muted-foreground">Nothing acts without a visible rule.</span></footer>
       </aside>
     </div>
   );

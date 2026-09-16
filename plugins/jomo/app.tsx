@@ -1213,13 +1213,16 @@ function inferKindFromUrl(rawUrl: string): { kind: ItemKind; label: string } {
   return { kind: "article", label: "article" };
 }
 
-function RoundupCard({ onOpen }: { onOpen: (item: Item) => void }) {
+function RoundupCard({ items, onOpen }: { items: Item[]; onOpen: (item: Item) => void }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
+  const skipped = items.filter((item) => item.saved === "dropped").length;
+  const hoarded = items.filter((item) => item.saved === "saved").length;
+  const resting = items.filter((item) => item.saved === "saved" || item.saved === "later").length;
   const roundPicks = [
-    ITEMS.find((item) => item.id === "mayfly-chat"),
-    ITEMS.find((item) => item.id === "trinitron"),
-    ITEMS.find((item) => item.source === "A TARDE"),
+    items.find((item) => item.id === "mayfly-chat"),
+    items.find((item) => item.id === "trinitron"),
+    items.find((item) => item.source === "A TARDE"),
   ].filter((item): item is Item => Boolean(item));
   const bullets: Array<{ item: Item; text: string }> = [
     { item: roundPicks[0], text: "Mayfly Chat: transient conversations that leave durable artifacts behind" },
@@ -1233,7 +1236,7 @@ function RoundupCard({ onOpen }: { onOpen: (item: Item) => void }) {
         <button type="button" aria-label="Dismiss roundup" onClick={() => setDismissed(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center text-muted-foreground hover:text-foreground")}><Icon name="X" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
       </div>
       <div className="px-4 pb-1">
-        <p className="text-base font-medium text-foreground">You skipped 206 items today. Nothing in them needed you.</p>
+        <p className="text-base font-medium text-foreground">You skipped {skipped} items in this round. Nothing in them needed you.</p>
         <p className="mt-1 text-[13px] text-muted-foreground">Three borderline ones, just in case, but you would have been fine not knowing.</p>
       </div>
       <ul className="mt-1 divide-y divide-border/60">
@@ -1247,7 +1250,7 @@ function RoundupCard({ onOpen }: { onOpen: (item: Item) => void }) {
         ))}
       </ul>
       <div className="flex items-center justify-between border-t border-border/60 px-4 py-2 text-[11px] text-muted-foreground">
-        <span>Hoard grew by 14 · 1,208 items resting · nothing expires quietly</span>
+        <span>Hoard grew by {hoarded} · {resting} items resting · nothing expires quietly</span>
         <span className="inline-flex items-center gap-1 opacity-60"><Icon name="Repeat" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> refreshed after each sweep</span>
       </div>
     </section>
@@ -1554,6 +1557,8 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const [profile, setProfile] = useState<LibrarianProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileReload, setProfileReload] = useState(0);
   const [setupDismissed, setSetupDismissed] = useState(false);
   const [interviewOpen, setInterviewOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
@@ -1567,16 +1572,21 @@ function JomoPage({ subPath }: { subPath?: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    setProfileLoaded(false);
+    setProfileError(null);
     void rpc.call("onboarding_get", {}).then(({ profile: stored }) => {
       if (!cancelled) {
         setProfile(stored);
         setProfileLoaded(true);
       }
-    }).catch(() => {
-      if (!cancelled) setProfileLoaded(true);
+    }).catch((cause: unknown) => {
+      if (!cancelled) {
+        setProfileError(cause instanceof Error ? cause.message : "The librarian could not open its notebook.");
+        setProfileLoaded(true);
+      }
     });
     return () => { cancelled = true; };
-  }, [rpc]);
+  }, [profileReload, rpc]);
 
   const completeOnboarding = async (next: LibrarianProfile) => {
     await rpc.call("onboarding_save", next);
@@ -1695,6 +1705,10 @@ function JomoPage({ subPath }: { subPath?: string }) {
 
   if (!profileLoaded) return <div className="grid h-full place-items-center bg-background text-sm text-muted-foreground">Waking the librarian…</div>;
 
+  if (profileError && !setupDismissed) {
+    return <div className="grid h-full place-items-center bg-background px-5"><div className="max-w-md rounded-2xl border border-border bg-card p-6 text-center"><Icon name="AlertCircle" className="mx-auto size-6 text-amber-400" /><h2 className="mt-3 text-lg font-semibold">The librarian could not open its notebook.</h2><p className="mt-2 text-sm text-muted-foreground">{profileError}</p><div className="mt-5 flex justify-center gap-2"><Button onClick={() => setProfileReload((current) => current + 1)}>Try again</Button><Button variant="outline" onClick={() => setSetupDismissed(true)}>Continue without it</Button></div></div></div>;
+  }
+
   if (interviewOpen || (!profile && !setupDismissed)) {
     return <Onboarding onComplete={completeOnboarding} onSkip={() => { setSetupDismissed(true); setInterviewOpen(false); }} />;
   }
@@ -1707,7 +1721,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight">jomo</h1>
-            <p className="hidden sm:block text-xs text-muted-foreground">A reading room for ideas worth keeping — articles, videos, posts, and repos in one calm queue.</p>
+            <p className="hidden sm:block text-xs text-muted-foreground">Today · {items.filter((item) => item.day === "today" && item.saved === "new").length} new across {sources.filter((source) => source.enabled).length} sources</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="inline-flex rounded-lg border border-border p-0.5" role="tablist" aria-label="Feed layout">
@@ -1716,7 +1730,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
                 ["triage", "ListView"],
                 ["sweep", "Zap"],
               ] as Array<["cards" | "triage" | "sweep", "GridView" | "ListView" | "Zap"]>).map(([mode, icon]) => (
-                <button key={mode} type="button" aria-pressed={view === mode} aria-label={mode === "cards" ? "Card view" : "Triage view"} onClick={() => setView(mode)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md transition-colors", view === mode ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                <button key={mode} type="button" aria-pressed={view === mode} aria-label={mode === "cards" ? "Card view" : mode === "triage" ? "Triage view" : "Sweep mode"} onClick={() => setView(mode)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md transition-colors", view === mode ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
                   <Icon name={icon} className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} />
                 </button>
               ))}
@@ -1740,7 +1754,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
             <TriageView items={visible} onOpen={(item) => openItem(item)} onSet={setState} activeKindLabel={FEED_TABS.find(([id]) => id === feed)?.[1] ?? "All"} />
           ) : (
             <>
-          <RoundupCard onOpen={openItem} />
+          <RoundupCard items={items} onOpen={openItem} />
           {byDay.length === 0 && <p className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nothing here yet.</p>}
           {byDay.map(([label, dayItems]) => (
             <section key={label} className="mb-2">
