@@ -1269,8 +1269,21 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
   const lastSet = useRef(onSet);
   lastSet.current = onSet;
 
+  const articleRef = useRef<HTMLElement | null>(null);
   const finished = index >= items.length;
   const item = items[index] as Item;
+
+  const apply = (state: SavedState, advance = true) => {
+    const current = items[index];
+    if (!current) return;
+    undoStack.current.push({ id: current.id, state: current.saved, label: current.title ?? current.fullName ?? "item" });
+    lastSet.current(current.id, state);
+    lastActedItemId = current.id;
+    setToast(`"${current.title ?? current.fullName}" → ${state}`);
+    if (advance) setIndex((i) => i + 1);
+  };
+
+  const step = (delta: number) => setIndex((i) => Math.max(0, Math.min(items.length - 1, i + delta)));
 
   // Sweep keys: space/s ingest, backspace/x/d drop, l later, arrows skip,
   // o read, u undo, esc exits the sprint.
@@ -1299,6 +1312,76 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, index]);
 
+  // Match triage-row gesture ownership: keep intentional 32px edge swipes for
+  // BB navigation, but claim horizontal card gestures with a non-passive
+  // listener before the app shell can turn them into left-nav drags.
+  useEffect(() => {
+    const el = articleRef.current;
+    if (!el) return;
+    let start: { x: number; y: number } | null = null;
+    let edge = false;
+    let offset = 0;
+    let claimed = false;
+    let pointerId: number | null = null;
+
+    const releasePointer = () => {
+      if (pointerId !== null) {
+        try { el.releasePointerCapture(pointerId); } catch { /* noop */ }
+        pointerId = null;
+      }
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      start = { x: touch.clientX, y: touch.clientY };
+      edge = touch.clientX < 32 || touch.clientX > window.innerWidth - 32;
+      claimed = false;
+      if (!edge) event.stopPropagation();
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!start) return;
+      const horizontal = event.touches[0].clientX - start.x;
+      const vertical = event.touches[0].clientY - start.y;
+      offset = Math.abs(horizontal) > Math.abs(vertical) ? Math.max(-160, Math.min(160, horizontal)) : 0;
+      if (edge) return;
+      if (!claimed && Math.abs(horizontal) > 8 && Math.abs(horizontal) > Math.abs(vertical)) claimed = true;
+      if (claimed) { event.preventDefault(); event.stopPropagation(); }
+      setDx(offset);
+    };
+    const onTouchEnd = () => {
+      if (!edge) {
+        if (offset > 130) apply("saved");
+        else if (offset < -130) apply("dropped");
+      }
+      start = null;
+      edge = false;
+      offset = 0;
+      claimed = false;
+      releasePointer();
+      setDx(0);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      edge = event.clientX < 32 || event.clientX > window.innerWidth - 32;
+      if (edge) return;
+      pointerId = event.pointerId;
+      try { el.setPointerCapture(event.pointerId); } catch { /* already captured */ }
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd);
+    el.addEventListener("touchcancel", onTouchEnd);
+    el.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+      el.removeEventListener("pointerdown", onPointerDown);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, index]);
+
   if (finished) {
     return (
       <div className="jomo-enter grid min-h-0 flex-1 place-items-center px-5">
@@ -1310,39 +1393,6 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
       </div>
     );
   }
-
-  const apply = (state: SavedState, advance = true) => {
-    const current = items[index];
-    if (!current) return;
-    undoStack.current.push({ id: current.id, state: current.saved, label: current.title ?? current.fullName ?? "item" });
-    lastSet.current(current.id, state);
-    lastActedItemId = current.id;
-    setToast(`"${current.title ?? current.fullName}" → ${state}`);
-    if (advance) setIndex((i) => i + 1);
-  };
-
-  const step = (delta: number) => setIndex((i) => Math.max(0, Math.min(items.length - 1, i + delta)));
-
-  const touch = useRef<{ x: number; y: number; edge: boolean } | null>(null);
-  const onTouchStart = (event: React.TouchEvent) => {
-    if (event.touches.length !== 1) return;
-    const t = event.touches[0];
-    touch.current = { x: t.clientX, y: t.clientY, edge: t.clientX < 32 || t.clientX > window.innerWidth - 32 };
-  };
-  const onTouchMove = (event: React.TouchEvent) => {
-    if (!touch.current) return;
-    const dx = event.touches[0].clientX - touch.current.x;
-    const dy = event.touches[0].clientY - touch.current.y;
-    setDx(Math.abs(dx) > Math.abs(dy) ? Math.max(-160, Math.min(160, dx)) : 0);
-  };
-  const onTouchEnd = () => {
-    if (!touch.current?.edge) {
-      if (dx > 130) apply("saved");
-      else if (dx < -130) apply("dropped");
-    }
-    touch.current = null;
-    setDx(0);
-  };
 
   return (
     <div className="jomo-enter flex min-h-[calc(100%-56px)] flex-1 flex-col">
@@ -1359,11 +1409,9 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
         <span className="absolute inset-0 grid place-items-center bg-emerald-500/15 text-sm font-medium text-emerald-400" style={{ opacity: dx > 24 ? Math.min(1, dx / 120) : 0 }}>✓ Ingest</span>
         <span className="absolute inset-0 grid place-items-center bg-muted text-sm font-medium text-muted-foreground" style={{ opacity: dx < -24 ? Math.min(1, -dx / 120) : 0 }}>✕ Drop</span>
         <article
+          ref={articleRef}
           className="relative flex w-full max-w-xl flex-col gap-4 rounded-2xl border border-border bg-card p-5 max-md:pointer-coarse:p-6 shadow-lg"
           style={{ touchAction: "pan-y", transform: `translateX(${dx}px)` }}
-          onTouchStart={onTouchStart}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
         >
           <div className="flex min-w-0 items-center gap-2.5 text-xs text-muted-foreground">
             <SourceMark item={item} />
