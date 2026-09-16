@@ -23,6 +23,7 @@
   "include": [
     "server.ts",
     "app.tsx",
+    "librarian-desk.tsx",
     "onboarding.tsx",
     "components/ui/button.tsx",
     "components/ui/coarse-pointer-sizing.ts",

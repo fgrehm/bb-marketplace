@@ -11,6 +11,7 @@ The plugin owns a full-bleed nav-panel page with:
 
 - A first-run librarian interview: five skippable questions, a draft material-analysis pass, explicit profile review, and a persistent, editable Markdown notebook.
 - A JOMO report that frames the roundup as proof that missing out was safe, not another list of arrivals.
+- A mock Librarian Desk for conversational link hoarding, staged feed subscriptions, and cited questions over the fake archive. Every mutation requires confirmation.
 - A triage list over a multi-kind feed (articles, videos, posts, repos,
   releases, papers) with keyboard and swipe actions plus undo.
 - Sweep mode: a one-card-at-a-time title-skimming sprint with an end summary,

@@ -3,6 +3,7 @@ import { definePluginApp, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { LibrarianDesk } from "./librarian-desk";
 import { NotebookPanel, Onboarding, type LibrarianProfile } from "./onboarding";
 import type { rpcContract } from "./server";
 import "./jomo.css";
@@ -927,6 +928,7 @@ const STATE_CYCLE: Record<SavedState, SavedState> = { new: "later", later: "save
 
 /** Remembered across reader round-trips so triage focus resumes where you acted. */
 let lastActedItemId: string | null = null;
+let adHocSequence = 0;
 
 function TriageRow({ item, focused, onOpen, onSet, registerRef }: {
   item: Item;
@@ -1549,6 +1551,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const [profileReload, setProfileReload] = useState(0);
   const [setupDismissed, setSetupDismissed] = useState(false);
   const [utilityOpen, setUtilityOpen] = useState(false);
+  const [deskOpen, setDeskOpen] = useState(false);
   const [interviewOpen, setInterviewOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
   const [feed, setFeed] = useState<Feed>("all");
@@ -1665,40 +1668,46 @@ function JomoPage({ subPath }: { subPath?: string }) {
     showNotice(`Added "${name}" — flip it on when you want fetching to start`);
   };
 
-  const ingestLink = (rawUrl: string) => {
+  const captureLink = (rawUrl: string, saved: SavedState): boolean => {
     const url = rawUrl.trim();
-    if (!items.some((item) => item.source === url)) {
-      const { kind, label } = inferKindFromUrl(url);
-      let host = url;
-      let slugTail = url;
-      try {
-        const parsed = new URL(url);
-        host = parsed.hostname.replace(/^www\./, "");
-        slugTail = parsed.pathname.split("/").filter(Boolean).pop() ?? parsed.hostname;
-      } catch { /* keep raw */ }
-      const title = slugTail.replace(/[-_]+/g, " ").replace(/\.(html?|xml|md)$/i, "").replace(/\b[a-z]/g, (c) => c.toUpperCase()) || host;
-      const sourceName = sourceNameForHost(host);
-      const item: Item = {
-        id: `adhoc-${Date.now()}`,
-        kind,
-        source: sourceName,
-        sourceColor: colorFromString(sourceName),
-        author: sourceName,
-        title,
-        body: `${url} — capture pending; the backend thread owns the real fetch + extraction`,
-        time: new Date().toTimeString().slice(0, 5),
-        day: "today",
-        tags: [`#ingested`],
-        saved: "new",
-        minutes: kind === "video" ? undefined : 6,
-        duration: kind === "video" ? "--:-- wait on the fetch beat" : undefined,
-        views: kind === "video" ? " Pending capture" : undefined,
-      };
-      setItems((current) => [item, ...current]);
-      showNotice(`Captured ${label} → "${title}"`);
-      return;
-    }
-    showNotice("That link is already in the queue");
+    if (items.some((item) => item.body.includes(url))) return false;
+    const { kind } = inferKindFromUrl(url);
+    let host = url;
+    let slugTail = url;
+    try {
+      const parsed = new URL(url);
+      host = parsed.hostname.replace(/^www\./, "");
+      slugTail = parsed.pathname.split("/").filter(Boolean).pop() ?? parsed.hostname;
+    } catch { /* keep raw */ }
+    const title = slugTail.replace(/[-_]+/g, " ").replace(/\.(html?|xml|md)$/i, "").replace(/\b[a-z]/g, (c) => c.toUpperCase()) || host;
+    const sourceName = sourceNameForHost(host);
+    const item: Item = {
+      id: `adhoc-${Date.now()}-${adHocSequence++}`,
+      kind,
+      source: sourceName,
+      sourceColor: colorFromString(sourceName),
+      author: sourceName,
+      title,
+      body: `${url} — mock capture; no network request was made`,
+      time: new Date().toTimeString().slice(0, 5),
+      day: "today",
+      tags: ["#mock-capture"],
+      saved,
+      minutes: kind === "video" ? undefined : 6,
+      duration: kind === "video" ? "--:-- mock capture" : undefined,
+      views: kind === "video" ? "No network request" : undefined,
+    };
+    setItems((current) => [item, ...current]);
+    return true;
+  };
+
+  const ingestLink = (rawUrl: string) => {
+    const { label } = inferKindFromUrl(rawUrl);
+    showNotice(captureLink(rawUrl, "new") ? `Mock ${label} added to today's queue` : "That link is already in the mock hoard");
+  };
+
+  const hoardLinks = (urls: string[]) => {
+    for (const url of urls) captureLink(url, "saved");
   };
 
   if (!profileLoaded) return <div className="grid h-full place-items-center bg-background text-sm text-muted-foreground">Waking the librarian…</div>;
@@ -1710,6 +1719,8 @@ function JomoPage({ subPath }: { subPath?: string }) {
   if (interviewOpen || (!profile && !setupDismissed)) {
     return <Onboarding onComplete={completeOnboarding} onSkip={() => { setSetupDismissed(true); setInterviewOpen(false); }} />;
   }
+
+  if (deskOpen) return <LibrarianDesk items={items} onClose={() => setDeskOpen(false)} onOpenItem={(id) => { setDeskOpen(false); const item = items.find((entry) => entry.id === id); if (item) openItem(item); }} onHoardLinks={hoardLinks} onSubscribe={addFeed} />;
 
   if (activeItem) return <Reader item={activeItem} onBack={closeReader} onToggleSaved={() => toggleSaved(activeItem.id)} />;
 
@@ -1735,7 +1746,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
               ))}
             </div>}
             <button type="button" aria-expanded={utilityOpen} aria-label="Open JOMO menu" onClick={() => setUtilityOpen((current) => !current)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-full bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground")}><Icon name="Explore" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
-            {utilityOpen && <><button type="button" aria-label="Close JOMO menu" className="fixed inset-0 z-30 cursor-default" onClick={() => setUtilityOpen(false)} /><div className="jomo-enter absolute right-12 top-11 z-40 w-56 rounded-2xl bg-card p-1.5 shadow-xl ring-1 ring-border/60"><button type="button" onClick={() => { setUtilityOpen(false); setDrawerOpen(true); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Icon name="Plus" className="size-4" /> Sources & mock capture</button><button type="button" onClick={() => { setUtilityOpen(false); if (profile) setNotebookOpen(true); else setInterviewOpen(true); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Icon name="Explore" className="size-4" /> {profile ? "Librarian's notebook" : "Meet the librarian"}</button></div></>}
+            {utilityOpen && <><button type="button" aria-label="Close JOMO menu" className="fixed inset-0 z-30 cursor-default" onClick={() => setUtilityOpen(false)} /><div className="jomo-enter absolute right-12 top-11 z-40 w-60 rounded-2xl bg-card p-1.5 shadow-xl ring-1 ring-border/60"><button type="button" onClick={() => { setUtilityOpen(false); setDeskOpen(true); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-foreground hover:bg-muted"><Icon name="MessageSquare" className="size-4 text-amber-400" /> Talk to the librarian</button><button type="button" onClick={() => { setUtilityOpen(false); setDrawerOpen(true); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Icon name="Plus" className="size-4" /> Sources & mock capture</button><button type="button" onClick={() => { setUtilityOpen(false); if (profile) setNotebookOpen(true); else setInterviewOpen(true); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Icon name="Explore" className="size-4" /> {profile ? "Librarian's notebook" : "Meet the librarian"}</button></div></>}
             <Button variant="outline" size="sm" className="h-8 max-md:pointer-coarse:h-10" onClick={() => navigate.toCompose()}><Icon name="GridView" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> <span className="hidden sm:inline">Back to BB</span></Button>
           </div>
         </div>
@@ -1754,6 +1765,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
                 <p className="text-sm text-muted-foreground">The rest of the round is resting in the hoard.</p>
                 <p className="mt-1 text-xs text-muted-foreground/70">No badge, no deadline, no need to catch up.</p>
                 <div className="mt-6 flex flex-wrap justify-center gap-2">
+                  <Button onClick={() => setDeskOpen(true)}><Icon name="MessageSquare" className="size-4" /> Talk to the librarian</Button>
                   <Button variant="outline" onClick={() => setView("cards")}>Browse the hoard</Button>
                   <Button variant="ghost" onClick={() => setView("sweep")}>Take a quiet sweep</Button>
                 </div>

@@ -4,6 +4,7 @@ This release is an offline UI prototype with four connected surfaces:
 
 - A first-run librarian interview with five skippable questions.
 - A draft taste-profile review and persistent, human-editable Markdown notebook.
+- A mock Librarian Desk that stages link hoarding and feed subscriptions, then answers archive questions with citations into the sample items.
 - A 300+ item feed with cards, keyboard triage, swipe actions, undo, filters, and a one-item-at-a-time sweep mode.
 - A JOMO report that shows why missing the rest was safe.
 
