@@ -2581,7 +2581,23 @@ function ReviewHeaderAction({
   isCompactViewport: boolean;
 }) {
   const navigate = useBbNavigate();
-  if (isCompactViewport) return null;
+  if (isCompactViewport) {
+    // Compact (phone) header action row: 28px icon-only control that opens
+    // the same full-page review panel.
+    return (
+      <Button
+        size="icon"
+        variant="ghost"
+        className="size-7"
+        aria-label="Open Review Workspace"
+        onClick={() =>
+          navigate.toPluginPanel("review", { subPath: `review/${threadId}` })
+        }
+      >
+        <Icon name="GitPullRequest" className="size-4" />
+      </Button>
+    );
+  }
   return (
     <Button
       size="sm"

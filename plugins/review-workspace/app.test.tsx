@@ -785,3 +785,26 @@ describe("review target picker (specific commit)", () => {
     slot.lifecycle.unmount();
   });
 });
+
+describe("thread header action (compact viewport)", () => {
+  it("renders an icon control that opens the full review panel", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const headerAction = app.threadHeaderActions[0]!;
+    const slot = renderSlot(headerAction, {
+      threadId: "thread-ui",
+      projectId: "project-ui",
+      isCompactViewport: true,
+    });
+
+    const button = await slot.findByRole("button", {
+      name: "Open Review Workspace",
+    });
+    button.click();
+    expect(slot.inspection.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "review",
+      options: { subPath: "review/thread-ui" },
+    });
+    slot.lifecycle.unmount();
+  });
+});
