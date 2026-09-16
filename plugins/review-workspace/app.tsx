@@ -1955,7 +1955,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     <main
       className={`flex min-h-0 flex-col overflow-hidden bg-background text-foreground ${fullscreen ? "fixed inset-0 z-50" : "h-full"}`}
     >
-      <header className="flex shrink-0 items-center gap-2 border-b bg-card px-3 py-2 lg:px-4">
+      <header className="flex flex-wrap shrink-0 items-center gap-2 border-b bg-card px-3 py-2 lg:px-4">
         <Button
           size="sm"
           variant="ghost"
@@ -2017,7 +2017,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           onChange={(event) =>
             setTargetKind(event.target.value as typeof targetKind)
           }
-          className="h-8 rounded-md border bg-background px-1 text-xs"
+          className="h-8 max-w-48 rounded-md border bg-background px-1 text-xs"
         >
           <option value="uncommitted">Uncommitted changes</option>
           <option value="commit">Specific commit</option>
@@ -2039,7 +2039,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                   : ""
               }
               onChange={(event) => setTargetValue(event.target.value)}
-              className="h-8 max-w-64 rounded-md border bg-background px-1 text-xs"
+              className="h-8 min-w-0 max-w-64 flex-1 rounded-md border bg-background px-1 text-xs"
             >
               <option value="">Pick a commit...</option>
               {recentCommits.commits.map((commit) => (
