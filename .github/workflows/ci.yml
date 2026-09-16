@@ -32,7 +32,7 @@ jobs:
             command: pnpm run typecheck
           - plugin: favicon
             command: pnpm run typecheck
-          - plugin: flux
+          - plugin: jomo
             command: pnpm run typecheck
           - plugin: pi-extras
             command: pnpm run lint && pnpm test && pnpm run test:components

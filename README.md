@@ -10,7 +10,7 @@ from bb's plugin marketplaces as a third-party catalog.
 Install a plugin from the latest `main` branch:
 
 ```sh
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/flux
+bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/jomo
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/pi-extras
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/favicon
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/review-workspace
@@ -33,9 +33,9 @@ bb marketplace add https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/
 
 ## Plugins
 
-### [Flux](plugins/flux) - `flux`
+### [jomo](plugins/jomo) - `jomo`
 
-A proof-of-concept feed aggregator and reading room with fake data. It tests a calmer, alternative UX while keeping a visible path back to normal BB navigation, which is important for mobile.
+The joy of missing out: a proof-of-concept feed hoard and reading room with fake data. You skim, you keep for now or for future research, and the roundup card proves that missing out was safe. It tests a calmer, alternative UX while keeping a visible path back to normal BB navigation, which is important for mobile.
 
 ### [Pi Usage](plugins/pi-extras) - `pi-extras`
 
@@ -94,7 +94,7 @@ prek install
 prek run --all-files
 ```
 
-Pre-commit hooks validate JSON, run plugin typechecks, and check Review Workspace formatting. The heavier plugin test suites run before pushes. GitHub Actions runs the full plugin matrix on pushes and pull requests. Hooks are grouped by plugin and concern, for example `prek run --group flux` or `prek run --group format`.
+Pre-commit hooks validate JSON, run plugin typechecks, and check Review Workspace formatting. The heavier plugin test suites run before pushes. GitHub Actions runs the full plugin matrix on pushes and pull requests. Hooks are grouped by plugin and concern, for example `prek run --group jomo` or `prek run --group format`.
 
 Requirements: node ≥ 22, pnpm, and a bb ≥ 0.42 install.
 

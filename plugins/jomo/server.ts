@@ -6,5 +6,5 @@ import { type BbPluginApi } from "@get-bb/plugin-sdk";
  * Readability, and BB thread actions once the interaction is proven.
  */
 export default async function plugin(bb: BbPluginApi) {
-  bb.log.info("Flux loaded with fake feed data");
+  bb.log.info("jomo loaded with fake feed data");
 }

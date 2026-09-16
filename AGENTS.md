@@ -42,7 +42,7 @@ Install the repository's prek hooks once per checkout:
 prek install
 ```
 
-After that, `git commit` runs the pre-commit checks automatically, including the Review Workspace formatting check. `git push` runs the heavier pre-push test suites. GitHub Actions runs the full plugin matrix on pushes and pull requests. Format files explicitly with the plugin's documented formatter command before committing. Use `prek run --all-files` only when you intentionally want to check the entire repository outside a commit. Plugin-specific groups are available with commands such as `prek run --group flux` and `prek run --group format`.
+After that, `git commit` runs the pre-commit checks automatically, including the Review Workspace formatting check. `git push` runs the heavier pre-push test suites. GitHub Actions runs the full plugin matrix on pushes and pull requests. Format files explicitly with the plugin's documented formatter command before committing. Use `prek run --all-files` only when you intentionally want to check the entire repository outside a commit. Plugin-specific groups are available with commands such as `prek run --group jomo` and `prek run --group format`.
 
 ## Source installation
 

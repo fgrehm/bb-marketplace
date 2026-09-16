@@ -24,12 +24,12 @@ repos:
         groups: [favicon, typecheck]
         pass_filenames: false
 
-      - id: flux-typecheck
-        name: flux typecheck
-        entry: bash -c 'cd plugins/flux && pnpm run typecheck'
+      - id: jomo-typecheck
+        name: jomo typecheck
+        entry: bash -c 'cd plugins/jomo && pnpm run typecheck'
         language: system
-        files: ^plugins/flux/
-        groups: [flux, typecheck]
+        files: ^plugins/jomo/
+        groups: [jomo, typecheck]
         pass_filenames: false
 
       - id: pi-extras-typecheck

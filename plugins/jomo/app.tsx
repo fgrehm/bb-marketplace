@@ -238,7 +238,7 @@ const ITEMS: Item[] = [
     reposts: "154",
   },
   {
-    id: "repo-flux",
+    id: "repo-jomo",
     kind: "repo",
     source: "GitHub",
     sourceColor: "#3f3f46",
@@ -249,7 +249,7 @@ const ITEMS: Item[] = [
     tags: ["#plugins", "#BB"],
     saved: "saved",
     fullName: "fgrehm/bb-marketplace",
-    description: "Independently installable BB plugins: Flux, Review Workspace, favicon, and friends.",
+    description: "Independently installable BB plugins: jomo, Review Workspace, favicon, and friends.",
     stars: "143",
     language: "TypeScript",
     langColor: "#3178c6",
@@ -857,7 +857,7 @@ function RoundupCard({ onOpen }: { onOpen: (item: Item) => void }) {
     .map((id) => ITEMS.find((item) => item.id === id))
     .filter((item): item is Item => Boolean(item));
   const bullets: Array<{ item: Item; text: string }> = [
-    { item: roundPicks[0], text: "plugin-sdk ships navPanel ordering + toCompose() wiring — the pieces Flux itself leans on today" },
+    { item: roundPicks[0], text: "plugin-sdk ships navPanel ordering + toCompose() wiring — the pieces jomo itself leans on today" },
     { item: roundPicks[1], text: "the survivor pattern for agent-in-workspace products: one room, context and action together" },
     { item: roundPicks[2], text: "visual walkthrough of WAL concurrency; 28 min, worth the watch before the next server talk" },
   ];
@@ -1088,10 +1088,10 @@ function SourcesDrawer({ open, onClose, sources, onToggle, onRemove, onAddFeed, 
 
         {tab === "links" ? (
           <div className="mt-4">
-            <label className="text-xs text-muted-foreground" htmlFor="flux-ingest-url">Paste any URL — Flux captures it as today's queue</label>
+            <label className="text-xs text-muted-foreground" htmlFor="jomo-ingest-url">Paste any URL — jomo captures it as today's queue</label>
             <div className="mt-2 flex gap-2">
               <input
-                id="flux-ingest-url"
+                id="jomo-ingest-url"
                 value={linkUrl}
                 onChange={(event) => setLinkUrl(event.target.value)}
                 onKeyDown={(event) => { if (event.key === "Enter" && linkLooksValid) { onIngest(linkUrl); setLinkUrl(""); } }}
@@ -1106,10 +1106,10 @@ function SourcesDrawer({ open, onClose, sources, onToggle, onRemove, onAddFeed, 
           </div>
         ) : (
           <div className="mt-4">
-            <label className="text-xs text-muted-foreground" htmlFor="flux-feed-url">New feed — give it a display name and the feed URL</label>
+            <label className="text-xs text-muted-foreground" htmlFor="jomo-feed-url">New feed — give it a display name and the feed URL</label>
             <div className="mt-2 flex flex-col gap-2">
               <input
-                id="flux-feed-url"
+                id="jomo-feed-url"
                 value={feedUrl}
                 onChange={(event) => setFeedUrl(event.target.value)}
                 placeholder="https://example.com/feed.xml"
@@ -1183,7 +1183,7 @@ const FEED_TABS: Array<[Feed, string]> = [
   ["saved", "Library"],
 ];
 
-function FluxPage({ subPath }: { subPath?: string }) {
+function JomoPage({ subPath }: { subPath?: string }) {
   const navigate = useBbNavigate();
   const [feed, setFeed] = useState<Feed>("all");
   const [items, setItems] = useState(ITEMS);
@@ -1304,7 +1304,7 @@ function FluxPage({ subPath }: { subPath?: string }) {
       <header className="border-b border-border px-3 max-sm:pointer-coarse:px-4 py-3 max-sm:pointer-coarse:py-4 sm:px-8">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight">Flux</h1>
+            <h1 className="text-xl font-semibold tracking-tight">jomo</h1>
             <p className="hidden sm:block text-xs text-muted-foreground">A reading room for ideas worth keeping — articles, videos, posts, and repos in one calm queue.</p>
           </div>
           <div className="flex items-center gap-2">
@@ -1367,5 +1367,5 @@ function FluxPage({ subPath }: { subPath?: string }) {
 }
 
 export default definePluginApp((app) => {
-  app.slots.navPanel({ id: "flux", title: "Flux", icon: "Explore", path: "feed", component: FluxPage });
+  app.slots.navPanel({ id: "jomo", title: "jomo", icon: "Explore", path: "feed", component: JomoPage });
 });

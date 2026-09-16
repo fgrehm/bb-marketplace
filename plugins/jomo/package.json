@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-flux",
+  "name": "bb-plugin-jomo",
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
@@ -11,8 +11,8 @@
     "bbPluginSdk": ">=0.4.34"
   },
   "bb": {
-    "name": "Flux",
-    "description": "A calm feed and reading room for collecting ideas alongside your BB work.",
+    "name": "jomo",
+    "description": "The joy of missing out: a hoard, not an inbox. A calm feed and reading room for collecting ideas alongside your BB work.",
     "branding": {
       "icon": "Explore"
     },
