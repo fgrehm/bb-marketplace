@@ -217,17 +217,22 @@ export async function runEntityImpact(
     };
   }
   try {
-    // sem diff emits granular ids (properties, orphan chunks) that are not
-    // individually indexed by `sem impact`: only their nearest ancestor entity
-    // resolves. Walk the id from its exact form (minus `@L<n>` line suffixes)
-    // up through ancestor segments; fall back to name+file.
-    // Candidate ids must keep the `path::type::name…` shape: stripping down
-    // to a bare file path (or sem's `path::orphan` intermediate) is never
-    // indexed, and would surface "Entity 'app.tsx' not found" instead of a
-    // clean fallback.
+    // sem diff emits granular ids (properties, orphan chunks) with a `@L<n>`
+    // line suffix; stable ids drop it. sem impact --entity-id resolves the
+    // raw suffixed id and uniquely-named stable ids; when two same-named
+    // entities share a file the stable form is ambiguous, so try the raw id
+    // first, then the stable id, then stable ancestors. Fall back to
+    // name+file last. Candidate ids must keep the `path::type::name…`
+    // shape: stripping down to a bare file path (or sem's `path::orphan`
+    // intermediate) is never indexed, and would surface "Entity 'app.tsx'
+    // not found" instead of a clean fallback.
+    const rawId = entityId;
+    const stable = stableEntityId(entityId);
     const candidates: string[] = [];
-    let candidate = stableEntityId(entityId);
-    if (candidate.split("::").length >= 3) candidates.push(candidate);
+    if (rawId.split("::").length >= 3) candidates.push(rawId);
+    if (stable !== rawId && stable.split("::").length >= 3)
+      candidates.push(stable);
+    let candidate = stable;
     for (let hops = 0; hops < 3; hops++) {
       const idx = candidate.lastIndexOf("::");
       if (idx <= 0) break;
