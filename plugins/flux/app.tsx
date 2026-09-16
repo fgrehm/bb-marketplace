@@ -577,36 +577,96 @@ function TriageRow({ item, focused, onOpen, onSet, registerRef }: {
   registerRef: (el: HTMLDivElement | null) => void;
 }) {
   const [dx, setDx] = useState(0);
-  const touch = useRef<{ x: number; y: number } | null>(null);
+  const divRef = useRef<HTMLDivElement | null>(null);
+
+  // Gesture isolation: native, non-passive listeners so preventDefault is
+  // honored, stopPropagation keeps the touch away from document-level
+  // listeners (the app's left-nav drawer), and pointer capture takes the
+  // gesture away from pointer-based handlers. Edge zone (32px) stays with
+  // the app nav on purpose.
+  useEffect(() => {
+    const el = divRef.current;
+    if (!el) return;
+    let start: { x: number; y: number } | null = null;
+    let edge = false;
+    let offset = 0;
+    let claimed = false;
+    let pointerId: number | null = null;
+
+    const releasePointer = () => {
+      if (pointerId !== null) {
+        try { el.releasePointerCapture(pointerId); } catch { /* noop */ }
+        pointerId = null;
+      }
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      start = { x: touch.clientX, y: touch.clientY };
+      edge = touch.clientX < 32 || touch.clientX > window.innerWidth - 32;
+      claimed = false;
+      if (!edge) event.stopPropagation();
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (!start) return;
+      const dx = event.touches[0].clientX - start.x;
+      const dy = event.touches[0].clientY - start.y;
+      offset = Math.abs(dx) > Math.abs(dy) ? Math.max(-140, Math.min(140, dx)) : 0;
+      if (edge) return;
+      if (!claimed && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) claimed = true;
+      if (claimed) { event.preventDefault(); event.stopPropagation(); }
+      setDx(offset);
+    };
+
+    const onTouchEnd = () => {
+      if (!edge) {
+        if (offset > 110) onSet("saved");
+        else if (offset < -110) onSet("dropped");
+      }
+      offset = 0; start = null; edge = false; claimed = false;
+      releasePointer();
+      setDx(0);
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      edge = event.clientX < 32 || event.clientX > window.innerWidth - 32;
+      if (edge) return;
+      pointerId = event.pointerId;
+      try { el.setPointerCapture(event.pointerId); } catch { /* already captured */ }
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd);
+    el.addEventListener("touchcancel", onTouchEnd);
+    el.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+      el.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [onSet, onOpen]);
 
   return (
     <div className="relative overflow-hidden rounded-xl">
-      <span className="absolute inset-0 grid place-items-center bg-emerald-500/15 text-xs font-medium text-emerald-400 opacity" style={{ opacity: dx > 24 ? Math.min(1, dx / 90) : 0 }}>✓ Save</span>
+      <span className="absolute inset-0 grid place-items-center bg-emerald-500/15 text-xs font-medium text-emerald-400" style={{ opacity: dx > 24 ? Math.min(1, dx / 90) : 0 }}>✓ Save</span>
       <span className="absolute inset-0 grid place-items-center bg-muted text-xs font-medium text-muted-foreground" style={{ opacity: dx < -24 ? Math.min(1, -dx / 90) : 0 }}>✕ Drop</span>
       <div
-        ref={registerRef}
+        ref={(el) => { divRef.current = el; registerRef(el); }}
         tabIndex={-1}
         onClick={onOpen}
         onFocus={() => undefined}
-        onTouchStart={(event) => { touch.current = { x: event.touches[0].clientX, y: event.touches[0].clientY }; }}
-        onTouchMove={(event) => {
-          if (!touch.current) return;
-          const dx = event.touches[0].clientX - touch.current.x;
-          const dy = event.touches[0].clientY - touch.current.y;
-          setDx(Math.abs(dx) > Math.abs(dy) ? Math.max(-140, Math.min(140, dx)) : 0);
-        }}
-        onTouchEnd={() => {
-          if (dx > 110) onSet("saved");
-          else if (dx < -110) onSet("dropped");
-          setDx(0);
-        }}
+        style={{ touchAction: "pan-y", transform: `translateX(${dx}px)` }}
         className={cn(
           "relative flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card px-3 max-md:pointer-coarse:px-4 py-2.5 max-md:pointer-coarse:py-3 transition-[border-color,transform,opacity] border-l-4",
           STATE_ACCENT[item.saved],
           focused && "border-border/0 ring-2 ring-primary/60",
           item.saved === "dropped" && "line-through decoration-muted-foreground/60",
         )}
-        style={{ transform: `translateX(${dx}px)` }}
       >
         <StateButton state={item.saved} onCycle={() => onSet(STATE_CYCLE[item.saved])} />
         <div className="min-w-0 flex-1">
@@ -701,7 +761,7 @@ function TriageView({ items, onOpen, onSet, activeKindLabel }: { items: Item[]; 
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 space-y-1">
+      <div className="min-h-0 max-h-full flex-1 space-y-1 overflow-y-auto">
         {items.map((item, index) => (
           <TriageRow
             key={item.id}
