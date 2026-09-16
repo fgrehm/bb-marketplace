@@ -1961,14 +1961,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
             </button>
           </div>
         </details>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void refresh({ target: buildRefreshTarget() })}
-          disabled={busy}
-        >
-          {busy ? "Working..." : review ? "Refresh" : "Open review"}
-        </Button>
         <select
           aria-label="Review target"
           value={targetKind}
@@ -1977,19 +1969,39 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           }
           className="h-8 rounded-md border bg-background px-1 text-xs"
         >
-          <option value="uncommitted">Uncommitted</option>
-          <option value="commit">Commit</option>
+          <option value="uncommitted">Uncommitted changes</option>
+          <option value="commit">Specific commit</option>
           <option value="branch">Branch vs base</option>
         </select>
         {targetKind !== "uncommitted" ? (
           <input
             value={targetValue}
             onChange={(event) => setTargetValue(event.target.value)}
-            placeholder={targetKind === "commit" ? "commit sha" : "base branch"}
+            placeholder={
+              targetKind === "commit" ? "paste commit sha" : "base branch"
+            }
             aria-label={targetKind === "commit" ? "Commit sha" : "Base branch"}
-            className="h-8 w-28 rounded-md border bg-background px-2 text-xs"
+            className="h-8 w-44 rounded-md border bg-background px-2 font-mono text-xs"
           />
         ) : null}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void refresh({ target: buildRefreshTarget() })}
+          disabled={
+            busy || (targetKind !== "uncommitted" && !targetValue.trim())
+          }
+        >
+          {busy
+            ? "Working..."
+            : targetKind === "commit"
+              ? "Review commit"
+              : targetKind === "branch"
+                ? "Review branch"
+                : review
+                  ? "Refresh"
+                  : "Open review"}
+        </Button>
       </header>
       {error ? (
         <p className="m-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">

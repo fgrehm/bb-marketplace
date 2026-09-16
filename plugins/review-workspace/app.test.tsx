@@ -2,6 +2,7 @@
 Element.prototype.scrollIntoView =
   Element.prototype.scrollIntoView ?? (() => {});
 import { describe, expect, it, vi } from "vitest";
+import { fireEvent } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 vi.mock("@/components/ui/icon", () => ({
@@ -729,6 +730,58 @@ describe("entity summary flow (semantic entry)", () => {
     });
     slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await slot.findByText(/sem is unavailable: sem binary not found/);
+    slot.lifecycle.unmount();
+  });
+});
+
+describe("review target picker (specific commit)", () => {
+  it("requires a sha and passes the commit target to refresh", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = reviewFixture();
+    const refreshCalls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          refreshReview: async (input: any) => {
+            refreshCalls.push(input);
+            return {
+              review: {
+                ...review,
+                id: "22222222-2222-4222-8222-222222222222",
+                snapshot: "commit-ui",
+              },
+            };
+          },
+        } as any,
+      },
+    );
+
+    const select = await slot.findByRole("combobox", {
+      name: "Review target",
+    });
+    fireEvent.change(select, { target: { value: "commit" } });
+    const reviewButton = slot.getByRole("button", { name: "Review commit" });
+    // no sha yet -> the button must not silently fall back to uncommitted
+    expect(reviewButton.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(slot.getByLabelText("Commit sha"), {
+      target: { value: "846e364c9db491759b7f391cd1ebb622e943badc" },
+    });
+    expect(reviewButton.hasAttribute("disabled")).toBe(false);
+    reviewButton.click();
+    await vi.waitFor(() => {
+      expect(refreshCalls).toContainEqual({
+        threadId: "thread-ui",
+        target: {
+          type: "commit",
+          sha: "846e364c9db491759b7f391cd1ebb622e943badc",
+        },
+      });
+    });
     slot.lifecycle.unmount();
   });
 });
