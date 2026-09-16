@@ -2467,20 +2467,40 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               />
             </aside>
           </div>
-          <div className="fixed bottom-3 left-3 right-3 z-20 flex items-center gap-3 rounded-md border bg-card/95 p-2 shadow-lg backdrop-blur lg:hidden">
-            <div className="min-w-0 flex-1">
-              <strong className="block truncate text-xs">
-                {pendingCount} pending comment{pendingCount === 1 ? "" : "s"}
-              </strong>
-              <small className="text-[11px] text-muted-foreground">
-                {review.viewedPaths.length} of {review.files.length} files
-                viewed
-              </small>
-            </div>
-            <Button size="sm" onClick={() => setMobilePanel("batch")}>
-              Review feedback
-            </Button>
-          </div>
+          <nav
+            className="fixed bottom-0 left-0 right-0 z-20 flex items-stretch border-t bg-card/95 backdrop-blur lg:hidden"
+            aria-label="Review sections"
+            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+          >
+            <button
+              type="button"
+              onClick={() => setMobilePanel(null)}
+              aria-current={mobilePanel === null ? "page" : undefined}
+              className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${mobilePanel === null ? "text-foreground" : "text-muted-foreground"}`}
+            >
+              <Icon name="FileDiff" className="size-4" />
+              Diff
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobilePanel("batch")}
+              aria-current={mobilePanel === "batch" ? "page" : undefined}
+              className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${mobilePanel === "batch" ? "text-foreground" : "text-muted-foreground"}`}
+            >
+              <span className="relative">
+                <Icon name="MessageSquare" className="size-4" />
+                {pendingCount > 0 ? (
+                  <span
+                    aria-label={`${pendingCount} pending comments`}
+                    className="absolute -right-2 -top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold leading-none text-primary-foreground"
+                  >
+                    {pendingCount}
+                  </span>
+                ) : null}
+              </span>
+              Feedback
+            </button>
+          </nav>
           {mobilePanel === "compose" && selection ? (
             <div className="fixed inset-0 z-40 flex items-start bg-black/40 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:hidden">
               <div className="max-h-[85dvh] w-full overflow-auto rounded-xl border bg-background p-4 shadow-2xl">
