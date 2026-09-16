@@ -7,9 +7,9 @@
   "plugins": [
     {
       "id": "jomo",
-      "displayName": "jomo",
+      "displayName": "JOMO",
       "description": "The joy of missing out: a hoard, not an inbox. A calm feed and reading room for collecting ideas alongside your BB work.",
-      "icon": "Explore",
+      "icon": "Leaf",
       "tags": ["feed", "reading", "web-clipping", "mobile"],
       "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
       "source": {

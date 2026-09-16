@@ -11,10 +11,10 @@
     "bbPluginSdk": ">=0.4.34"
   },
   "bb": {
-    "name": "jomo",
+    "name": "JOMO",
     "description": "The joy of missing out: a hoard, not an inbox. A calm feed and reading room for collecting ideas alongside your BB work.",
     "branding": {
-      "icon": "Explore"
+      "icon": "Leaf"
     },
     "server": "./server.ts",
     "app": "./app.tsx"
