@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { definePluginApp, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { NotebookPanel, Onboarding, type LibrarianProfile } from "./onboarding";
+import type { rpcContract } from "./server";
 import {
   COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
   COARSE_POINTER_ICON_SIZE_SHRINK_CLASS,
@@ -1214,22 +1216,25 @@ function inferKindFromUrl(rawUrl: string): { kind: ItemKind; label: string } {
 function RoundupCard({ onOpen }: { onOpen: (item: Item) => void }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
-  const roundPicks = ["release-sdk", "agentic-ux", "sqlite-reads"]
-    .map((id) => ITEMS.find((item) => item.id === id))
-    .filter((item): item is Item => Boolean(item));
+  const roundPicks = [
+    ITEMS.find((item) => item.id === "mayfly-chat"),
+    ITEMS.find((item) => item.id === "trinitron"),
+    ITEMS.find((item) => item.source === "A TARDE"),
+  ].filter((item): item is Item => Boolean(item));
   const bullets: Array<{ item: Item; text: string }> = [
-    { item: roundPicks[0], text: "plugin-sdk ships navPanel ordering + toCompose() wiring — the pieces jomo itself leans on today" },
-    { item: roundPicks[1], text: "the survivor pattern for agent-in-workspace products: one room, context and action together" },
-    { item: roundPicks[2], text: "visual walkthrough of WAL concurrency; 28 min, worth the watch before the next server talk" },
+    { item: roundPicks[0], text: "Mayfly Chat: transient conversations that leave durable artifacts behind" },
+    { item: roundPicks[1], text: "The Trinitron restoration matches your keep-every-retro-repair rule" },
+    { item: roundPicks[2], text: roundPicks[2].title ?? "Salvador local news from A TARDE" },
   ];
   return (
     <section className="mb-6 overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card">
       <div className="flex items-center justify-between px-4 pt-3">
-        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-primary">Roundup · last sweep</p>
+        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-amber-400">JOMO report · today</p>
         <button type="button" aria-label="Dismiss roundup" onClick={() => setDismissed(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center text-muted-foreground hover:text-foreground")}><Icon name="X" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
       </div>
       <div className="px-4 pb-1">
-        <p className="text-[13px] text-muted-foreground">Three highlights from this round of feeds, as briefed by your assistant thread.</p>
+        <p className="text-base font-medium text-foreground">You skipped 206 items today. Nothing in them needed you.</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">Three borderline ones, just in case, but you would have been fine not knowing.</p>
       </div>
       <ul className="mt-1 divide-y divide-border/60">
         {bullets.map(({ item, text }) => (
@@ -1242,8 +1247,8 @@ function RoundupCard({ onOpen }: { onOpen: (item: Item) => void }) {
         ))}
       </ul>
       <div className="flex items-center justify-between border-t border-border/60 px-4 py-2 text-[11px] text-muted-foreground">
-        <span>4 bullets would be noise; ≤3 is the format. Generated after each sweep.</span>
-        <span className="inline-flex items-center gap-1 opacity-60"><Icon name="Repeat" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> next sweep refreshes this</span>
+        <span>Hoard grew by 14 · 1,208 items resting · nothing expires quietly</span>
+        <span className="inline-flex items-center gap-1 opacity-60"><Icon name="Repeat" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> refreshed after each sweep</span>
       </div>
     </section>
   );
@@ -1546,6 +1551,12 @@ const FEED_TABS: Array<[Feed, string]> = [
 
 function JomoPage({ subPath }: { subPath?: string }) {
   const navigate = useBbNavigate();
+  const rpc = useRpc<typeof rpcContract>();
+  const [profile, setProfile] = useState<LibrarianProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [setupDismissed, setSetupDismissed] = useState(false);
+  const [interviewOpen, setInterviewOpen] = useState(false);
+  const [notebookOpen, setNotebookOpen] = useState(false);
   const [feed, setFeed] = useState<Feed>("all");
   const [items, setItems] = useState(ITEMS);
   const [sources, setSources] = useState(SOURCES);
@@ -1553,6 +1564,30 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const [view, setView] = useState<"cards" | "triage" | "sweep">("cards");
+
+  useEffect(() => {
+    let cancelled = false;
+    void rpc.call("onboarding_get", {}).then(({ profile: stored }) => {
+      if (!cancelled) {
+        setProfile(stored);
+        setProfileLoaded(true);
+      }
+    }).catch(() => {
+      if (!cancelled) setProfileLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [rpc]);
+
+  const completeOnboarding = async (next: LibrarianProfile) => {
+    await rpc.call("onboarding_save", next);
+    setProfile(next);
+    setInterviewOpen(false);
+  };
+
+  const saveNotebook = async (notebook: string) => {
+    const result = await rpc.call("notebook_save", { notebook });
+    if (result.saved) setProfile((current) => current ? { ...current, notebook } : current);
+  };
 
   const activeItem = useMemo(() => {
     const route = decodeURIComponent((subPath ?? "").replace(/^\/+|\/+$/g, ""));
@@ -1658,6 +1693,12 @@ function JomoPage({ subPath }: { subPath?: string }) {
     showNotice("That link is already in the queue");
   };
 
+  if (!profileLoaded) return <div className="grid h-full place-items-center bg-background text-sm text-muted-foreground">Waking the librarian…</div>;
+
+  if (interviewOpen || (!profile && !setupDismissed)) {
+    return <Onboarding onComplete={completeOnboarding} onSkip={() => { setSetupDismissed(true); setInterviewOpen(false); }} />;
+  }
+
   if (activeItem) return <Reader item={activeItem} onBack={closeReader} onToggleSaved={() => toggleSaved(activeItem.id)} />;
 
   return (
@@ -1681,6 +1722,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
               ))}
             </div>
             <button type="button" aria-label="Capture a link or manage sources" onClick={() => setDrawerOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Plus" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
+            {profile ? <button type="button" aria-label="Open librarian's notebook" onClick={() => setNotebookOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Explore" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button> : <button type="button" aria-label="Meet the librarian" onClick={() => setInterviewOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Explore" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>}
             <Button variant="outline" size="sm" className="h-8 max-md:pointer-coarse:h-10" onClick={() => navigate.toCompose()}><Icon name="GridView" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> <span className="hidden sm:inline">Back to BB</span></Button>
           </div>
         </div>
@@ -1713,6 +1755,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
           )}
         </div>
       </div>
+      {profile && <NotebookPanel profile={profile} open={notebookOpen} onClose={() => setNotebookOpen(false)} onSave={saveNotebook} onReinterview={() => { setNotebookOpen(false); setInterviewOpen(true); }} />}
       <SourcesDrawer
         open={drawerOpen}
         onClose={() => { setDrawerOpen(false); setNotice(null); }}

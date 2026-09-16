@@ -23,6 +23,7 @@
   "include": [
     "server.ts",
     "app.tsx",
+    "onboarding.tsx",
     "components/ui/button.tsx",
     "components/ui/coarse-pointer-sizing.ts",
     "components/ui/icon-extended.tsx",

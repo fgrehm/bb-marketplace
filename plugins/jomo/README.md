@@ -9,6 +9,8 @@ extraction, or persistence lands.
 
 The plugin owns a full-bleed nav-panel page with:
 
+- A first-run librarian interview: five skippable questions, a draft material-analysis pass, explicit profile review, and a persistent, editable Markdown notebook.
+- A JOMO report that frames the roundup as proof that missing out was safe, not another list of arrivals.
 - A triage list over a multi-kind feed (articles, videos, posts, repos,
   releases, papers) with keyboard and swipe actions plus undo.
 - Sweep mode: a one-card-at-a-time title-skimming sprint with an end summary,
@@ -41,7 +43,4 @@ whose model of your interests is earned in a first-run interview plus analysis
 of material you already have, then kept alive by everyday triage actions; the
 roundup card grows into a JOMO report: proof that missing out was safe.
 
-Likely next steps are large-volume ingest UX (300+ links per round), the
-onboarding interview, and backend persistence. AI surfaces stay render-only
-outcomes; the librarian never mutates state without an explicit rule the user
-set.
+The current fake round contains more than 300 items so the ingest UX is tested at its real scale. Likely next steps are bulk queue operators, a backlog/reservoir view, and eventual feed persistence. AI surfaces stay render-only outcomes; the librarian never mutates state without an explicit rule the user set.
