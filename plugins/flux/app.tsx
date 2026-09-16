@@ -850,6 +850,45 @@ function inferKindFromUrl(rawUrl: string): { kind: ItemKind; label: string } {
   return { kind: "article", label: "article" };
 }
 
+function RoundupCard({ onOpen }: { onOpen: (item: Item) => void }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  const roundPicks = ["release-sdk", "agentic-ux", "sqlite-reads"]
+    .map((id) => ITEMS.find((item) => item.id === id))
+    .filter((item): item is Item => Boolean(item));
+  const bullets: Array<{ item: Item; text: string }> = [
+    { item: roundPicks[0], text: "plugin-sdk ships navPanel ordering + toCompose() wiring — the pieces Flux itself leans on today" },
+    { item: roundPicks[1], text: "the survivor pattern for agent-in-workspace products: one room, context and action together" },
+    { item: roundPicks[2], text: "visual walkthrough of WAL concurrency; 28 min, worth the watch before the next server talk" },
+  ];
+  return (
+    <section className="mb-6 overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card">
+      <div className="flex items-center justify-between px-4 pt-3">
+        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-primary">Roundup · last sweep</p>
+        <button type="button" aria-label="Dismiss roundup" onClick={() => setDismissed(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center text-muted-foreground hover:text-foreground")}><Icon name="X" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
+      </div>
+      <div className="px-4 pb-1">
+        <p className="text-[13px] text-muted-foreground">Three highlights from this round of feeds, as briefed by your assistant thread.</p>
+      </div>
+      <ul className="mt-1 divide-y divide-border/60">
+        {bullets.map(({ item, text }) => (
+          <li key={item.id}>
+            <button type="button" onClick={() => onOpen(item)} className="flex w-full items-start gap-3 px-4 py-2.5 text-left hover:bg-muted/40">
+              <span className="mt-1.5 size-1.5 shrink-0 rounded-full" style={{ backgroundColor: item.sourceColor }} />
+              <span className="min-w-0"><span className="block text-[13px] max-md:pointer-coarse:text-[15px] leading-5">{text}</span><span className="text-[11px] text-muted-foreground">{item.source} · {item.title ?? item.fullName}</span></span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="flex items-center justify-between border-t border-border/60 px-4 py-2 text-[11px] text-muted-foreground">
+        <span>4 bullets would be noise; ≤3 is the format. Generated after each sweep.</span>
+        <span className="inline-flex items-center gap-1 opacity-60"><Icon name="Repeat" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> next sweep refreshes this</span>
+      </div>
+    </section>
+  );
+
+}
+
 function SourcesDrawer({ open, onClose, sources, onToggle, onRemove, onAddFeed, onIngest, notice }: {
   open: boolean;
   onClose: () => void;
@@ -1140,6 +1179,7 @@ function FluxPage({ subPath }: { subPath?: string }) {
             <TriageView items={visible} onOpen={(item) => openItem(item)} onSet={setState} activeKindLabel={FEED_TABS.find(([id]) => id === feed)?.[1] ?? "All"} />
           ) : (
             <>
+          <RoundupCard onOpen={openItem} />
           {byDay.length === 0 && <p className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nothing here yet.</p>}
           {byDay.map(([label, dayItems]) => (
             <section key={label} className="mb-2">
