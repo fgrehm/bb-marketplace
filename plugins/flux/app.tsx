@@ -7,6 +7,7 @@ import {
   COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
   COARSE_POINTER_ICON_SIZE_SHRINK_CLASS,
   COARSE_POINTER_TEXT_SM_CLASS,
+  COARSE_POINTER_TOOLBAR_ACTION_BUTTON_CLASS,
 } from "@/components/ui/coarse-pointer-sizing";
 
 type ItemKind = "article" | "video" | "post" | "repo" | "release" | "paper";
@@ -287,10 +288,10 @@ function SaveButton({ item, onToggle }: { item: Item; onToggle: () => void }) {
       type="button"
       className="inline-flex items-center gap-1 rounded-md p-2 hover:bg-muted"
       onClick={onToggle}
-      aria-label="Save item"
+      aria-label="Ingest item"
     >
       <Icon name="Star" className={cn(COARSE_POINTER_ICON_SIZE_SHRINK_CLASS, item.saved === "saved" && "fill-current")} />
-      <span className="text-[11px] max-md:pointer-coarse:hidden">{item.saved === "saved" ? "Saved" : item.saved === "later" ? "Later" : "Save"}</span>
+      <span className="text-[11px] max-md:pointer-coarse:hidden">{item.saved === "saved" ? "Ingested" : item.saved === "later" ? "Later" : "Ingest"}</span>
     </button>
   );
 }
@@ -373,8 +374,8 @@ function PostCard({ item, onOpen, onSave }: { item: Item; onOpen: () => void; on
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-3 border-t border-border/70 px-3 max-md:pointer-coarse:px-4 py-1.5 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1 p-1"><Icon name="Star" className="size-3.5 max-md:pointer-coarse:size-5" /> {item.likes}</span>
-        <span className="inline-flex items-center gap-1 p-1"><Icon name="Repeat" className="size-3.5 max-md:pointer-coarse:size-5" /> {item.reposts}</span>
+        <span className="inline-flex items-center p-1">{item.likes} likes</span>
+        <span className="inline-flex items-center p-1">{item.reposts} reposts</span>
         <span className="ml-auto"><SaveButton item={item} onToggle={onSave} /></span>
       </div>
     </article>
@@ -395,8 +396,8 @@ function RepoCard({ item, onOpen, onSave }: { item: Item; onOpen: () => void; on
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-3 border-t border-border/70 px-3 max-md:pointer-coarse:px-4 py-1.5 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1 p-1"><Icon name="Star" className="size-3.5 max-md:pointer-coarse:size-5" /> {item.stars}</span>
-        {item.issues && <span className="inline-flex items-center gap-1 p-1"><Icon name="CircleQuestion" className="size-3.5 max-md:pointer-coarse:size-5" /> {item.issues} issues</span>}
+        <span className="inline-flex items-center p-1">{item.stars} stars</span>
+        {item.issues && <span className="inline-flex items-center p-1">{item.issues} open issues</span>}
         <span className="inline-flex items-center gap-1.5">
           <span className="size-2.5 rounded-full" style={{ backgroundColor: item.langColor }} />
           {item.language}
@@ -427,7 +428,7 @@ function ReleaseCard({ item, onOpen, onSave }: { item: Item; onOpen: () => void;
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-3 border-t border-border/70 px-3 max-md:pointer-coarse:px-4 py-1.5 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1 p-1"><Icon name="GitBranch" className="size-3.5 max-md:pointer-coarse:size-5" /> main</span>
+        <span className="inline-flex items-center p-1">{item.stars} stars</span>
         <span className="inline-flex items-center gap-1.5">
           <span className="size-2.5 max-md:pointer-coarse:size-3.5 rounded-full" style={{ backgroundColor: item.langColor }} />
           {item.language}
@@ -653,7 +654,7 @@ function TriageRow({ item, focused, onOpen, onSet, registerRef }: {
 
   return (
     <div className="relative overflow-hidden rounded-xl">
-      <span className="absolute inset-0 grid place-items-center bg-emerald-500/15 text-xs font-medium text-emerald-400" style={{ opacity: dx > 24 ? Math.min(1, dx / 90) : 0 }}>✓ Save</span>
+      <span className="absolute inset-0 grid place-items-center bg-emerald-500/15 text-xs font-medium text-emerald-400" style={{ opacity: dx > 24 ? Math.min(1, dx / 90) : 0 }}>✓ Ingest</span>
       <span className="absolute inset-0 grid place-items-center bg-muted text-xs font-medium text-muted-foreground" style={{ opacity: dx < -24 ? Math.min(1, -dx / 90) : 0 }}>✕ Drop</span>
       <div
         ref={(el) => { divRef.current = el; registerRef(el); }}
@@ -776,12 +777,214 @@ function TriageView({ items, onOpen, onSet, activeKindLabel }: { items: Item[]; 
       <div className="sticky bottom-0 mt-3 border-t border-border bg-background/95 px-1 py-2.5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" /> {counts.new + counts.later} in queue</span>
-          <span className="inline-flex items-center gap-1.5 text-emerald-400">✓ {counts.saved} saved</span>
+          <span className="inline-flex items-center gap-1.5 text-emerald-400">✓ {counts.saved} ingested</span>
           <span className="inline-flex items-center gap-1.5 text-amber-400">◔ {counts.later} later</span>
-          <span className="hidden sm:inline-flex items-center gap-1">{toast ?? (undoStack.current.length ? "press u to undo" : "j/k move · s save · l later · x drop · o read")}</span>
+          <span className="hidden sm:inline-flex items-center gap-1">{toast ?? (undoStack.current.length ? "press u to undo" : "j/k move · s ingest · l later · x drop · o read")}</span>
           {toast && <button type="button" className="underline hover:text-foreground" onClick={() => { const prev = undoStack.current.pop(); if (prev) { lastSet.current(prev.id, prev.state); setToast(`undid: "${prev.label}"`); } }}>undo</button>}
         </div>
       </div>
+    </div>
+  );
+}
+
+type RssSourceKind = "rss" | "mastodon" | "github" | "youtube";
+
+type Source = {
+  id: string;
+  name: string;
+  url: string;
+  kind: RssSourceKind;
+  color: string;
+  enabled: boolean;
+  lastFetch: string;
+};
+
+const SOURCE_KIND_META: Record<RssSourceKind, { label: string; icon: React.ComponentProps<typeof Icon>["name"] }> = {
+  rss: { label: "RSS feed", icon: "Globe" },
+  mastodon: { label: "Account", icon: "MessageSquare" },
+  github: { label: "GitHub", icon: "GithubLogo" },
+  youtube: { label: "YouTube", icon: "Play" },
+};
+
+const SOURCES: Source[] = [
+  { id: "exe-dev", name: "exe.dev", url: "https://blog.exe.dev/feed", kind: "rss", color: "#0ea5e9", enabled: true, lastFetch: "12 min ago" },
+  { id: "pragmatic", name: "The Pragmatic Engineer", url: "https://newsletter.pragmaticengineer.com/feed", kind: "rss", color: "#f59e0b", enabled: true, lastFetch: "26 min ago" },
+  { id: "kottke", name: "kottke.org", url: "https://feeds.kottke.org/main", kind: "rss", color: "#18a999", enabled: true, lastFetch: "26 min ago" },
+  { id: "hackaday", name: "Hackaday", url: "https://hackaday.com/feed", kind: "rss", color: "#84cc16", enabled: true, lastFetch: "1 hr ago" },
+  { id: "lex", name: "GitHub releases", url: "https://github.com/ facebook/lexical", kind: "github", color: "#3f3f46", enabled: true, lastFetch: "2 hr ago" },
+  { id: "social-informal", name: "@renata@informal.social", url: "https://informal.social/users/renata.rss", kind: "mastodon", color: "#7c3aed", enabled: true, lastFetch: "34 min ago" },
+  { id: "social-liw", name: "@liw@fosstodon.org", url: "https://fosstodon.org/users/liw.rss", kind: "mastodon", color: "#059669", enabled: true, lastFetch: "1 hr ago" },
+  { id: "yt-bitluni", name: "Bitluni / YouTube", url: "https://www.youtube.com/c/Bitluni/videos", kind: "youtube", color: "#dc2626", enabled: true, lastFetch: "5 hr ago" },
+  { id: "sumau", name: "SUMAUMA", url: "https://sumauma.com/feed", kind: "rss", color: "#15803d", enabled: false, lastFetch: "paused 2 days ago" },
+];
+
+function colorFromString(value: string): string {
+  let hash = 0;
+  for (const char of value) hash = (hash * 31 + char.charCodeAt(0)) & 0xffffff;
+  const hue = hash % 360;
+  return `hsl(${hue} 62% 52%)`;
+}
+
+function sourceNameForHost(host: string): string {
+  const known: Array<[string, string]> = [
+    ["github", "GitHub"],
+    ["youtube", "YouTube"],
+    ["x", "x.com"],
+    ["twitter", "Twitter"],
+    ["arxiv", "arXiv"],
+    ["mastodon", "Mastodon"],
+    ["fosstodon", "fosstodon.org"],
+    ["informal", "informal.social"],
+  ];
+  for (const [needle, name] of known) if (host.includes(needle)) return name;
+  return host;
+}
+
+function inferKindFromUrl(rawUrl: string): { kind: ItemKind; label: string } {
+  let host = "";
+  try { host = new URL(rawUrl).hostname; } catch { return { kind: "article", label: "link" }; }
+  if (host.includes("github.com")) return { kind: "repo", label: "repo" };
+  if (host.includes("youtube.com") || host === "youtu.be") return { kind: "video", label: "video" };
+  if (host.includes("x.com") || host.includes("twitter.com") || host.includes("mastodon") || host.includes("fosstodon")) return { kind: "post", label: "post" };
+  if (host.includes("arxiv.org") || host.includes("doi.org")) return { kind: "paper", label: "paper" };
+  return { kind: "article", label: "article" };
+}
+
+function SourcesDrawer({ open, onClose, sources, onToggle, onRemove, onAddFeed, onIngest, notice }: {
+  open: boolean;
+  onClose: () => void;
+  sources: Source[];
+  onToggle: (id: string) => void;
+  onRemove: (id: string) => void;
+  onAddFeed: (name: string, url: string) => void;
+  onIngest: (url: string) => void;
+  notice: string | null;
+}) {
+  const [tab, setTab] = useState<"links" | "feeds">("links");
+  const [feedName, setFeedName] = useState("");
+  const [feedUrl, setFeedUrl] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const feedLooksValid = feedUrl.includes(".") && !feedUrl.includes(" ");
+  const linkLooksValid = linkUrl.includes(".") && !linkUrl.includes(" ");
+
+  const askRemove = (id: string) => {
+    setConfirmId(id);
+    window.setTimeout(() => setConfirmId((current) => (current === id ? null : current)), 5000);
+  };
+
+  useEffect(() => {
+    if (!open) { setConfirmId(null); return; }
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const inference = linkLooksValid ? inferKindFromUrl(linkUrl) : null;
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button type="button" aria-label="Close panel" className="absolute inset-0 bg-background/60 backdrop-blur-sm" onClick={onClose} />
+      <aside className="absolute inset-x-0 bottom-0 max-h-[82%] overflow-y-auto rounded-t-2xl border border-border bg-card p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl sm:inset-y-0 sm:right-0 sm:left-auto sm:top-0 sm:h-full sm:max-h-full sm:w-96 sm:rounded-t-none sm:rounded-l-2xl sm:pb-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">Sources</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center hover:bg-muted")}><Icon name="X" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
+        </div>
+
+        <div className="mt-4 inline-flex rounded-lg border border-border p-0.5">
+          {([["links", "Ingest a link"], ["feeds", "Add a feed"]] as Array<["links" | "feeds", string]>).map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setTab(id)} className={cn("rounded-md px-3 py-1.5 text-xs transition-colors", tab === id ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>{label}</button>
+          ))}
+        </div>
+
+        {notice && <p className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-400">{notice}</p>}
+
+        {tab === "links" ? (
+          <div className="mt-4">
+            <label className="text-xs text-muted-foreground" htmlFor="flux-ingest-url">Paste any URL — Flux captures it as today's queue</label>
+            <div className="mt-2 flex gap-2">
+              <input
+                id="flux-ingest-url"
+                value={linkUrl}
+                onChange={(event) => setLinkUrl(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter" && linkLooksValid) { onIngest(linkUrl); setLinkUrl(""); } }}
+                placeholder="https://…"
+                className="h-10 flex-1 rounded-lg border border-border bg-card px-3 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+              />
+              <Button size="sm" className="h-10" disabled={!linkLooksValid} onClick={() => { onIngest(linkUrl); setLinkUrl(""); }}>
+                <Icon name="Plus" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> Capture
+              </Button>
+            </div>
+            {inference && <p className="mt-2 text-xs text-muted-foreground">Will ingest as <span className="font-medium text-foreground">{inference.label}</span> · landing in today's queue</p>}
+          </div>
+        ) : (
+          <div className="mt-4">
+            <label className="text-xs text-muted-foreground" htmlFor="flux-feed-url">New feed — give it a display name and the feed URL</label>
+            <div className="mt-2 flex flex-col gap-2">
+              <input
+                id="flux-feed-url"
+                value={feedUrl}
+                onChange={(event) => setFeedUrl(event.target.value)}
+                placeholder="https://example.com/feed.xml"
+                className="h-10 rounded-lg border border-border bg-card px-3 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+              />
+              <input
+                value={feedName}
+                onChange={(event) => setFeedName(event.target.value)}
+                placeholder="Optional display name"
+                className="h-10 rounded-lg border border-border bg-card px-3 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+              />
+              <Button size="sm" className="h-10" disabled={!feedLooksValid} onClick={() => { onAddFeed(feedName || new URL(feedUrl).hostname, feedUrl); setFeedUrl(""); setFeedName(""); }}>
+                <Icon name="Plus" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> Add feed
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">Fetching starts paused — first poll happens on the next sweep + n</p>
+          </div>
+        )}
+
+        <h3 className="mt-6 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Configured · {sources.filter((source) => source.enabled).length} active / {sources.length}</h3>
+        <div className="mt-2 space-y-1">
+          {sources.map((source) => {
+            const kindMeta = SOURCE_KIND_META[source.kind];
+            if (confirmId === source.id) {
+              return (
+                <div key={source.id} className="flex items-center gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] max-md:pointer-coarse:text-[15px] font-medium text-red-400">Remove "{source.name}"?</p>
+                    <p className="text-[11px] text-muted-foreground">Its ingested items stay in the library</p>
+                  </div>
+                  <button type="button" onClick={() => { setConfirmId(null); onRemove(source.id); }} className={cn(COARSE_POINTER_TOOLBAR_ACTION_BUTTON_CLASS + " border-red-500/60 text-red-400 max-md:pointer-coarse:h-10 max-md:pointer-coarse:px-3")}>Remove</button>
+                  <button type="button" onClick={() => setConfirmId(null)} className={cn(COARSE_POINTER_TOOLBAR_ACTION_BUTTON_CLASS + " max-md:pointer-coarse:h-10 max-md:pointer-coarse:px-3")}>Keep</button>
+                </div>
+              );
+            }
+            return (
+              <div key={source.id} className={cn("flex items-center gap-3 rounded-lg border border-transparent px-2 py-2 hover:bg-muted/40", !source.enabled && "opacity-55")}>
+                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: source.color }} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] max-md:pointer-coarse:text-[15px] font-medium">{source.name}</p>
+                  <p className="truncate text-[11px] text-muted-foreground"><Icon name={kindMeta.icon} className="inline size-3" /> {kindMeta.label} · {source.lastFetch}</p>
+                </div>
+                <button type="button" aria-label="Remove source" onClick={() => (confirmId === source.id ? onRemove(source.id) : askRemove(source.id))} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center hover:bg-muted", confirmId === source.id ? "text-red-400 bg-red-500/10" : "text-muted-foreground hover:text-foreground")}>
+                  <Icon name={confirmId === source.id ? "X" : "Trash2"} className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} />
+                </button>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={source.enabled}
+                  aria-label={`Toggle ${source.name}`}
+                  onClick={() => onToggle(source.id)}
+                  className={cn("h-5 max-md:pointer-coarse:h-7 w-9 shrink-0 rounded-full p-0.5 transition-colors", source.enabled ? "bg-primary" : "bg-muted-foreground/40")}
+                >
+                  <span className={cn("block size-4 max-md:pointer-coarse:size-6 rounded-full bg-background transition-transform", source.enabled && "translate-x-4 max-md:pointer-coarse:translate-x-2")} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
     </div>
   );
 }
@@ -792,13 +995,16 @@ const FEED_TABS: Array<[Feed, string]> = [
   ["videos", "Videos"],
   ["social", "Social"],
   ["code", "Code"],
-  ["saved", "Saved"],
+  ["saved", "Library"],
 ];
 
 function FluxPage({ subPath }: { subPath?: string }) {
   const navigate = useBbNavigate();
   const [feed, setFeed] = useState<Feed>("all");
   const [items, setItems] = useState(ITEMS);
+  const [sources, setSources] = useState(SOURCES);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [view, setView] = useState<"cards" | "triage">("cards");
 
@@ -810,12 +1016,16 @@ function FluxPage({ subPath }: { subPath?: string }) {
   const openItem = (item: Item) => navigate.toPluginPanel("feed", { subPath: item.id });
   const closeReader = () => navigate.toPluginPanel("feed", { replace: true });
 
-  const visible = useMemo(() => items.filter((item) => {
-    if (!matchesKind(item, feed)) return false;
-    if (view === "triage") return true;
-    if (feed === "saved") return item.saved === "saved" || item.saved === "later";
-    return item.saved !== "dropped";
-  }), [feed, view, items]);
+  const visible = useMemo(() => {
+    const enabled = new Set(sources.filter((source) => source.enabled).map((source) => source.name));
+    return items.filter((item) => {
+      if (!enabled.has(item.source)) return false;
+      if (!matchesKind(item, feed)) return false;
+      if (view === "triage") return true;
+      if (feed === "saved") return item.saved === "saved" || item.saved === "later";
+      return item.saved !== "dropped";
+    });
+  }, [feed, view, items, sources]);
 
   const byDay = useMemo(() => {
     const groups: Array<[string, Item[]]> = [["Today", []], ["Yesterday", []]];
@@ -828,6 +1038,70 @@ function FluxPage({ subPath }: { subPath?: string }) {
 
   const setState = (id: string, state: SavedState) => setItems((current) => current.map((item) => item.id === id ? { ...item, saved: state } : item));
   const toggleSaved = (id: string) => setItems((current) => current.map((item) => item.id === id ? { ...item, saved: item.saved === "saved" ? "new" : "saved" } : item));
+
+  const flashNotice = (text: string) => {
+    setNotice(text);
+    window.setTimeout(() => setNotice((current) => (current === text ? null : current)), 3600);
+  };
+
+  const showNotice = (text: string) => {
+    if (drawerOpen) { flashNotice(text); return; }
+    setNotice(null);
+  };
+
+  const toggleSource = (id: string) => setSources((current) => current.map((source) => source.id === id ? { ...source, enabled: !source.enabled } : source));
+
+  const removeSource = (id: string) => {
+    const source = sources.find((entry) => entry.id === id);
+    setSources((current) => current.filter((entry) => entry.id !== id));
+    if (source) showNotice(`Removed "${source.name}" — its ingested items stay in the library`);
+  };
+
+  const addFeed = (name: string, url: string) => {
+    let kind: RssSourceKind = "rss";
+    try {
+      const host = new URL(url).hostname;
+      kind = host.includes("github.com") ? "github" : host.includes("youtube.com") ? "youtube" : host.includes("mastodon") || host.includes("fosstodon") || host.includes("social") ? "mastodon" : "rss";
+    } catch { /* keep rss */ }
+    setSources((current) => [{ id: `feed-${Date.now()}`, name, url, kind, color: colorFromString(name), enabled: false, lastFetch: "paused — first poll pending" }, ...current]);
+    showNotice(`Added "${name}" — flip it on when you want fetching to start`);
+  };
+
+  const ingestLink = (rawUrl: string) => {
+    const url = rawUrl.trim();
+    if (!items.some((item) => item.source === url)) {
+      const { kind, label } = inferKindFromUrl(url);
+      let host = url;
+      let slugTail = url;
+      try {
+        const parsed = new URL(url);
+        host = parsed.hostname.replace(/^www\./, "");
+        slugTail = parsed.pathname.split("/").filter(Boolean).pop() ?? parsed.hostname;
+      } catch { /* keep raw */ }
+      const title = slugTail.replace(/[-_]+/g, " ").replace(/\.(html?|xml|md)$/i, "").replace(/\b[a-z]/g, (c) => c.toUpperCase()) || host;
+      const sourceName = sourceNameForHost(host);
+      const item: Item = {
+        id: `adhoc-${Date.now()}`,
+        kind,
+        source: sourceName,
+        sourceColor: colorFromString(sourceName),
+        author: sourceName,
+        title,
+        body: `${url} — capture pending; the backend thread owns the real fetch + extraction`,
+        time: new Date().toTimeString().slice(0, 5),
+        day: "today",
+        tags: [`#ingested`],
+        saved: "new",
+        minutes: kind === "video" ? undefined : 6,
+        duration: kind === "video" ? "--:-- wait on the fetch beat" : undefined,
+        views: kind === "video" ? " Pending capture" : undefined,
+      };
+      setItems((current) => [item, ...current]);
+      showNotice(`Captured ${label} → "${title}"`);
+      return;
+    }
+    showNotice("That link is already in the queue");
+  };
 
   if (activeItem) return <Reader item={activeItem} onBack={closeReader} onToggleSaved={() => toggleSaved(activeItem.id)} />;
 
@@ -850,6 +1124,7 @@ function FluxPage({ subPath }: { subPath?: string }) {
                 </button>
               ))}
             </div>
+            <button type="button" aria-label="Capture a link or manage sources" onClick={() => setDrawerOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Plus" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
             <Button variant="outline" size="sm" className="h-8 max-md:pointer-coarse:h-10" onClick={() => navigate.toCompose()}><Icon name="GridView" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> <span className="hidden sm:inline">Back to BB</span></Button>
           </div>
         </div>
@@ -879,6 +1154,16 @@ function FluxPage({ subPath }: { subPath?: string }) {
           )}
         </div>
       </div>
+      <SourcesDrawer
+        open={drawerOpen}
+        onClose={() => { setDrawerOpen(false); setNotice(null); }}
+        sources={sources}
+        onToggle={toggleSource}
+        onRemove={removeSource}
+        onAddFeed={addFeed}
+        onIngest={ingestLink}
+        notice={notice}
+      />
     </div>
   );
 }
