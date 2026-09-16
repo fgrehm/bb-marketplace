@@ -178,7 +178,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
 
   if (phase === "welcome") {
     return (
-      <main className="grid h-full min-h-0 place-items-center overflow-y-auto bg-background px-5 py-12">
+      <main className="jomo-enter grid h-full min-h-0 place-items-center overflow-y-auto bg-background px-5 py-12">
         <section className="w-full max-w-2xl text-center">
           <h1 className="text-7xl sm:text-8xl"><Wordmark /></h1>
           <p className="mt-3 text-base text-muted-foreground">the joy of missing out</p>
@@ -192,7 +192,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
 
   if (phase === "interview") {
     return (
-      <main className="grid h-full min-h-0 place-items-center overflow-y-auto bg-background px-4 py-8">
+      <main className="jomo-enter grid h-full min-h-0 place-items-center overflow-y-auto bg-background px-4 py-8">
         <section className="w-full max-w-xl">
           <div className="mb-6 flex justify-center gap-2" aria-label={`Question ${questionIndex + 1} of ${QUESTIONS.length}`}>{QUESTIONS.map((_, index) => <span key={index} className={cn("size-2 rounded-full", index === questionIndex ? "bg-primary" : index < questionIndex ? "bg-primary/40" : "bg-border")} />)}</div>
           <div className="rounded-3xl bg-card/60 p-6 shadow-sm ring-1 ring-border/50 sm:p-9">
@@ -210,7 +210,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
 
   if (phase === "scan") {
     return (
-      <main className="h-full min-h-0 overflow-y-auto bg-background px-5 py-10">
+      <main className="jomo-enter h-full min-h-0 overflow-y-auto bg-background px-5 py-10">
         <section className="mx-auto max-w-3xl">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">Material analysis · draft only</p>
           <h2 className="mt-3 text-2xl font-semibold tracking-tight">One last thing, let me look at what you already have.</h2>
@@ -227,7 +227,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
   }
 
   return (
-    <main className="h-full min-h-0 overflow-y-auto bg-background px-5 py-8">
+    <main className="jomo-enter h-full min-h-0 overflow-y-auto bg-background px-5 py-8">
       <section className="mx-auto max-w-3xl">
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">Librarian draft</p>
         <h2 className="mt-3 text-2xl font-semibold tracking-tight">Here is what I think I know about you. Fix me.</h2>
@@ -256,7 +256,7 @@ export function NotebookPanel({ profile, open, onClose, onSave, onReinterview }:
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-background/70 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Librarian's notebook" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <aside className="flex h-full w-full max-w-2xl flex-col border-l border-border bg-background shadow-2xl">
+      <aside className="jomo-enter flex h-full w-full max-w-2xl flex-col border-l border-border bg-background shadow-2xl">
         <header className="flex items-start gap-3 border-b border-border p-5"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-400">Yours to edit</p><h2 className="mt-1 text-xl font-semibold">Librarian's notebook</h2><p className="mt-1 text-xs text-muted-foreground">Stored by JOMO, readable as plain markdown.</p></div><button type="button" className="ml-auto rounded-md p-2 hover:bg-muted" onClick={onClose} aria-label="Close notebook"><Icon name="X" className="size-4" /></button></header>
         <textarea value={draft} onChange={(event) => setDraft(event.target.value)} className="min-h-0 flex-1 resize-none bg-card/40 p-5 font-mono text-sm leading-7 outline-none" spellCheck={false} />
         <footer className="flex flex-wrap items-center gap-2 border-t border-border p-4"><Button disabled={saving} onClick={() => { setSaving(true); setStatus(null); void onSave(draft).then(() => setStatus("Notebook saved.")).catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : "Save failed.")).finally(() => setSaving(false)); }}>{saving ? 'Saving…' : 'Save notebook'}</Button><Button variant="outline" onClick={onReinterview}>The librarian lost the plot</Button>{status && <span role="status" className="text-xs text-muted-foreground">{status}</span>}<span className="ml-auto text-xs text-muted-foreground">Nothing acts without a visible rule.</span></footer>

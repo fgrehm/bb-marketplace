@@ -5,6 +5,7 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { NotebookPanel, Onboarding, type LibrarianProfile } from "./onboarding";
 import type { rpcContract } from "./server";
+import "./jomo.css";
 import {
   COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
   COARSE_POINTER_ICON_SIZE_SHRINK_CLASS,
@@ -1213,9 +1214,11 @@ function inferKindFromUrl(rawUrl: string): { kind: ItemKind; label: string } {
   return { kind: "article", label: "article" };
 }
 
-function RoundupCard({ items, onOpen }: { items: Item[]; onOpen: (item: Item) => void }) {
+function RoundupCard({ items, hasProfile, onOpen }: { items: Item[]; hasProfile: boolean; onOpen: (item: Item) => void }) {
   const [dismissed, setDismissed] = useState(false);
-  if (dismissed) return null;
+  if (dismissed) {
+    return <section className="jomo-enter rounded-3xl bg-card/40 px-6 py-12 text-center ring-1 ring-border/40"><Icon name="Check" className="mx-auto size-5 text-emerald-400" /><h2 className="mt-3 text-xl font-medium tracking-tight">All quiet.</h2><p className="mt-2 text-sm text-muted-foreground">The report is tucked away. Everything else is still resting.</p><button type="button" onClick={() => setDismissed(false)} className="mt-5 text-xs text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground">Show today&apos;s report</button></section>;
+  }
   const roundPicks = [
     items.find((item) => item.id === "mayfly-chat"),
     items.find((item) => item.id === "trinitron"),
@@ -1233,8 +1236,8 @@ function RoundupCard({ items, onOpen }: { items: Item[]; onOpen: (item: Item) =>
         <button type="button" aria-label="Dismiss roundup" onClick={() => setDismissed(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center text-muted-foreground hover:text-foreground")}><Icon name="X" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
       </div>
       <div className="px-4 pb-1">
-        <p className="text-xl font-medium tracking-tight text-foreground">Nothing needs you right now.</p>
-        <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">Three things brushed against your interests. They can wait too, but they are here if curiosity wins.</p>
+        <p className="text-xl font-medium tracking-tight text-foreground">{hasProfile ? "Nothing appears to need you right now." : "Nothing is asking for attention."}</p>
+        <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{hasProfile ? "Three things brushed against the interests in your notebook. They can wait too." : "Three optional curiosities surfaced from the mock hoard. No profile assumptions yet."}</p>
       </div>
       <ul className="mx-2 mt-3 space-y-1 pb-2">
         {bullets.map(({ item, text }) => (
@@ -1261,7 +1264,6 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
   const [dx, setDx] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
   const undoStack = useRef<Array<{ id: string; state: SavedState; label: string }>>([]);
-  const acted = useRef({ ingested: 0, later: 0, dropped: 0 });
   const lastSet = useRef(onSet);
   lastSet.current = onSet;
 
@@ -1296,18 +1298,12 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
   }, [items, index]);
 
   if (finished) {
-    const { ingested, later, dropped } = acted.current;
     return (
-      <div className="grid min-h-0 flex-1 place-items-center px-5">
+      <div className="jomo-enter grid min-h-0 flex-1 place-items-center px-5">
         <div className="max-w-md text-center">
-          <p className="text-3xl max-md:pointer-coarse:text-4xl font-semibold tracking-tight">Queue emptied.</p>
-          <p className="mt-3 text-sm text-muted-foreground">
-            {items.length === 0 ? "Nothing was queued for this sweep." : `${ingested} ingested · ${later} later · ${dropped} dropped in this round.`}
-          </p>
-          <div className="mt-6 flex justify-center gap-2">
-            <Button variant="outline" size="sm" className="h-9 max-md:pointer-coarse:h-10" onClick={onExit}>Back to feed</Button>
-            {items.length > 0 && <Button size="sm" className="h-9 max-md:pointer-coarse:h-10" onClick={() => setIndex(0)}>Keep sweeping</Button>}
-          </div>
+          <p className="text-3xl max-md:pointer-coarse:text-4xl font-semibold tracking-tight">That is enough for today.</p>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">{items.length === 0 ? "There was nothing waiting for a decision." : "The rest can wait. There is no score to improve and nothing to catch up on."}</p>
+          <Button variant="outline" size="sm" className="mt-7 h-9 max-md:pointer-coarse:h-10" onClick={onExit}>Let the rest wait</Button>
         </div>
       </div>
     );
@@ -1317,11 +1313,6 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
     const current = items[index];
     if (!current) return;
     undoStack.current.push({ id: current.id, state: current.saved, label: current.title ?? current.fullName ?? "item" });
-    if (current.saved !== state) {
-      if (state === "saved") acted.current.ingested += 1;
-      else if (state === "dropped") acted.current.dropped += 1;
-      else if (state === "later") acted.current.later += 1;
-    }
     lastSet.current(current.id, state);
     lastActedItemId = current.id;
     setToast(`"${current.title ?? current.fullName}" → ${state}`);
@@ -1352,7 +1343,7 @@ function SweepView({ items, onOpen, onSet, onExit }: { items: Item[]; onOpen: (i
   };
 
   return (
-    <div className="flex min-h-[calc(100%-56px)] flex-1 flex-col">
+    <div className="jomo-enter flex min-h-[calc(100%-56px)] flex-1 flex-col">
       <div className="px-4 pt-1">
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
           <button type="button" onClick={onExit} className="inline-flex items-center gap-1 hover:text-foreground"><Icon name="ChevronLeft" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> exit sweep</button>
@@ -1438,7 +1429,7 @@ function SourcesDrawer({ open, onClose, sources, onToggle, onRemove, onAddFeed, 
   return (
     <div className="fixed inset-0 z-50">
       <button type="button" aria-label="Close panel" className="absolute inset-0 bg-background/60 backdrop-blur-sm" onClick={onClose} />
-      <aside className="absolute inset-x-0 bottom-0 max-h-[82%] overflow-y-auto rounded-t-2xl border border-border bg-card p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl sm:inset-y-0 sm:right-0 sm:left-auto sm:top-0 sm:h-full sm:max-h-full sm:w-96 sm:rounded-t-none sm:rounded-l-2xl sm:pb-5">
+      <aside className="jomo-enter absolute inset-x-0 bottom-0 max-h-[82%] overflow-y-auto rounded-t-2xl border border-border bg-card p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl sm:inset-y-0 sm:right-0 sm:left-auto sm:top-0 sm:h-full sm:max-h-full sm:w-96 sm:rounded-t-none sm:rounded-l-2xl sm:pb-5">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">Sources</h2>
           <button type="button" onClick={onClose} aria-label="Close" className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center hover:bg-muted")}><Icon name="X" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
@@ -1557,6 +1548,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileReload, setProfileReload] = useState(0);
   const [setupDismissed, setSetupDismissed] = useState(false);
+  const [utilityOpen, setUtilityOpen] = useState(false);
   const [interviewOpen, setInterviewOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
   const [feed, setFeed] = useState<Feed>("all");
@@ -1566,6 +1558,15 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const [view, setView] = useState<"home" | "cards" | "triage" | "sweep">("home");
+
+  useEffect(() => {
+    if (!utilityOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setUtilityOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [utilityOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1720,7 +1721,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
             <h1 className="text-xl font-semibold tracking-tight">jomo</h1>
             <p className="hidden sm:block text-xs text-muted-foreground">{view === "home" ? "The hoard is holding everything. Nothing needs attention." : "Browse only because you want to."}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="relative flex items-center gap-2">
             {view !== "home" && <div className="inline-flex rounded-lg bg-muted/40 p-0.5" role="tablist" aria-label="Hoard view">
               <button type="button" aria-label="Return to calm view" onClick={() => setView("home")} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground")}><Icon name="ChevronLeft" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
               {([
@@ -1733,8 +1734,8 @@ function JomoPage({ subPath }: { subPath?: string }) {
                 </button>
               ))}
             </div>}
-            <button type="button" aria-label="Capture a link or manage sources" onClick={() => setDrawerOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Plus" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
-            {profile ? <button type="button" aria-label="Open librarian's notebook" onClick={() => setNotebookOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Explore" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button> : <button type="button" aria-label="Meet the librarian" onClick={() => setInterviewOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Explore" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>}
+            <button type="button" aria-expanded={utilityOpen} aria-label="Open JOMO menu" onClick={() => setUtilityOpen((current) => !current)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-full bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground")}><Icon name="Explore" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
+            {utilityOpen && <><button type="button" aria-label="Close JOMO menu" className="fixed inset-0 z-30 cursor-default" onClick={() => setUtilityOpen(false)} /><div className="jomo-enter absolute right-12 top-11 z-40 w-56 rounded-2xl bg-card p-1.5 shadow-xl ring-1 ring-border/60"><button type="button" onClick={() => { setUtilityOpen(false); setDrawerOpen(true); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Icon name="Plus" className="size-4" /> Sources & mock capture</button><button type="button" onClick={() => { setUtilityOpen(false); if (profile) setNotebookOpen(true); else setInterviewOpen(true); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Icon name="Explore" className="size-4" /> {profile ? "Librarian's notebook" : "Meet the librarian"}</button></div></>}
             <Button variant="outline" size="sm" className="h-8 max-md:pointer-coarse:h-10" onClick={() => navigate.toCompose()}><Icon name="GridView" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> <span className="hidden sm:inline">Back to BB</span></Button>
           </div>
         </div>
@@ -1747,8 +1748,8 @@ function JomoPage({ subPath }: { subPath?: string }) {
             ))}
           </nav>}
           {view === "home" ? (
-            <section className="mx-auto max-w-3xl py-5 sm:py-12">
-              <RoundupCard items={items} onOpen={openItem} />
+            <section className="jomo-enter mx-auto max-w-3xl py-5 sm:py-12">
+              <RoundupCard items={items} hasProfile={Boolean(profile)} onOpen={openItem} />
               <div className="mt-12 text-center">
                 <p className="text-sm text-muted-foreground">The rest of the round is resting in the hoard.</p>
                 <p className="mt-1 text-xs text-muted-foreground/70">No badge, no deadline, no need to catch up.</p>
@@ -1759,11 +1760,11 @@ function JomoPage({ subPath }: { subPath?: string }) {
               </div>
             </section>
           ) : view === "sweep" ? (
-            <SweepView items={sweepItems} onOpen={openItem} onSet={setState} onExit={() => setView("triage")} />
+            <SweepView items={sweepItems} onOpen={openItem} onSet={setState} onExit={() => setView("home")} />
           ) : view === "triage" ? (
             <TriageView items={visible} onOpen={(item) => openItem(item)} onSet={setState} activeKindLabel={FEED_TABS.find(([id]) => id === feed)?.[1] ?? "All"} />
           ) : (
-            <>
+            <div className="jomo-enter">
               {byDay.length === 0 && <p className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nothing here yet.</p>}
               {byDay.map(([label, dayItems]) => (
                 <section key={label} className="mb-2">
@@ -1774,7 +1775,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
                 </section>
               ))}
               <p className="mt-8 text-center text-xs text-muted-foreground">Mock material for exploring the shape of a large hoard.</p>
-            </>
+            </div>
           )}
         </div>
       </div>
