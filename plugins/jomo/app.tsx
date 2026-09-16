@@ -20,6 +20,7 @@ type Item = {
   id: string;
   kind: ItemKind;
   source: string;
+  sourceId?: string;
   sourceColor: string;
   author: string;
   title?: string;
@@ -73,11 +74,349 @@ const STATE_ACCENT: Record<SavedState, string> = {
   dropped: "border-l-transparent opacity-45",
 };
 
-const ITEMS: Item[] = [
+// ---------------------------------------------------------------------------
+// BBM-3 volume batch: a realistic ~300-item round so the funnel/backlog UX
+// gets tested at true scale before any virtualization is considered.
+// Deterministic PRNG keeps the batch stable across reloads.
+
+function mulberry32(seed: number): () => number {
+  let state = seed;
+  return () => {
+    state |= 0; state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+type VolumeSpec = {
+  id: string;
+  source: string;
+  sourceColor: string;
+  author: string;
+  kind: ItemKind;
+  tags: string[];
+  minutes?: [number, number];
+  volume: [number, number]; // [today, yesterday]
+  titles: string[];
+  bodies: string[];
+};
+
+const VIDEO_ACCENTS = [
+  "from-teal-500/30 via-sky-600/10 to-transparent",
+  "from-slate-500/30 via-slate-700/10 to-transparent",
+  "from-emerald-600/30 via-teal-700/10 to-transparent",
+  "from-orange-500/25 via-red-700/10 to-transparent",
+  "from-indigo-500/30 via-violet-700/10 to-transparent",
+];
+
+const RELEASE_MESSAGES = [
+  "slots: register nav panels with stable ordering keys",
+  "app: expose toCompose() navigation from panel slots",
+  "types: shim vaul + portal radix families for app bundles",
+  "fix: release host RPC tokens on plugin disable",
+  "server: stream JSONL progress for long-running commands",
+  "ui: virtualized lists for panels with 500+ rows",
+  "docs: document the subPath routing contract",
+  "perf: batch IPC writes behind a 16ms frame flush",
+];
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
+const VOLUME_SOURCE_ID_OVERRIDES: Record<string, string> = {
+  renata: "social-informal",
+  liw: "social-liw",
+  "gh-releases": "lex",
+};
+
+function buildVolumeBatch(): Item[] {
+  const rand = mulberry32(20260916);
+  const pick = <T,>(bank: T[]): T => bank[Math.floor(rand() * bank.length)];
+  const items: Item[] = [];
+  const specs: VolumeSpec[] = [
+    {
+      id: "hackaday", source: "Hackaday", sourceColor: "#84cc16", author: "Hackaday", kind: "article", minutes: [4, 9],
+      volume: [18, 58], tags: ["#repair", "#CRT", "#hardware", "#retro", "#FPGA"],
+      titles: [
+        "The Tube Computer, Part {part}: Address Decoding With Relays",
+        "Retrotechtacular: When {brand} Ruled the Living Room",
+        "This {adj} CNC Is Built Entirely From Printer Parts",
+        "Ask Hackaday: How Do You Store {years} Years Of Notes?",
+        "A Homebrew CPU With An {adj} Instruction Set",
+        "Repairing The {adj} Power Supply That Refuses To Die",
+        "{adj} Teardown: Inside A {year} Handheld Console",
+        "Building A Weather Station That Outlives Its Maker",
+        "The Fork-Bomb That Nearly Took Down {year}'s Hackerspace",
+        "E-Paper Dashboard Rides An ESP32 And A Solar Panel",
+        "Vintage Calculator Gets A {adj} Second Life",
+        "When Your Oscilloscope Is Older Than You Are",
+      ],
+      bodies: [
+        "Build log with photos, the usual teardown forensics, and one genuinely clever trick worth stealing.",
+        "The author documents every failure on the way to a working prototype — including the one that released the smoke.",
+        "Part restoration, part archaeology: what survives, what re-caps, and what has to be reverse-engineered from scratch.",
+        "Fifteen minutes of reading that quietly teaches you more than a semester of datasheets.",
+      ],
+    },
+    {
+      id: "kottke", source: "kottke.org", sourceColor: "#18a999", author: "Jason Kottke", kind: "article", minutes: [2, 6],
+      volume: [12, 44], tags: ["#culture", "#coffee", "#design", "#media"],
+      titles: [
+        "The {adj} Economics Of Specialty Coffee",
+        "A Short Film About People Who Restore {adj} Things",
+        "Notes On The Death Of The Personal Website",
+        "The Best Map Of {year} You'll See This Week",
+        "Why Every City Thinks Its Bus System Is The Worst",
+        "The Quiet Return Of The Home Page",
+        "RIP {Thing}: A Eulogy For {adj} Internet Culture",
+        "What The Archive Forgets: {Thing} Edition",
+        "A {year} Film That Predicts The Feed",
+        "The {adj} Appeal Of Owning Nothing Digital",
+        "On Reading 300 Links And Remembering None",
+        "Coffee, But Make It A Group Chat",
+      ],
+      bodies: [
+        "A short, sharp cultural observation with a long tail of good links at the end.",
+        "Kottke links his way through the week; the destination matters less than the wander.",
+        "The kind of post you finish in ninety seconds and think about for three days.",
+      ],
+    },
+    {
+      id: "techcrunch", source: "TechCrunch", sourceColor: "#e11d48", author: "TechCrunch", kind: "article", minutes: [3, 7],
+      volume: [9, 49], tags: ["#startups", "#funding", "#AI", "#space"],
+      titles: [
+        "{Startup} Raises ${amount}M To {pitch}",
+        "Inside The {adj} Race To Automate {Thing}",
+        "Sources: {Startup} In Talks At A ${amount}B Valuation",
+        "The {Thing} Bubble Is Deflating, Say {adj} Investors",
+        "{Startup} Shuts Down {n} Months After Launch",
+        "Regulators Widen Probe Into {Thing} Practices",
+        "Why Every {Thing} Startup Suddenly Needs An Agent",
+      ],
+      bodies: [
+        "Deal coverage with the usual unnamed sources and a chart that could say anything.",
+        "Reporter-style recap of a funding round, a founder quote, and a market-size claim worth discounting.",
+      ],
+    },
+    {
+      id: "atarde", source: "A TARDE", sourceColor: "#f97316", author: "A TARDE", kind: "article", minutes: [2, 4],
+      volume: [8, 27], tags: ["#Salvador", "#Bahia", "#local"],
+      titles: [
+        "Prefeitura de Salvador anuncia {obra} no {bairro}",
+        "Carnaval {year}: {bairro} recebe {n} blocos confirmados",
+        "Porto de Salvador bate recorde de movimentação no trimestre",
+        "Novo terminal do Aeroporto de Salvador entra em operação",
+        "Festival em {bairro} reúne {n} mil pessoas no fim de semana",
+        "Obras da orla entram em nova fase e mudam trânsito no {bairro}",
+        "Programação cultural de setembro em Salvador tem {n} eventos gratuitos",
+      ],
+      bodies: [
+        "Resumo da reportagem local: a prefeitura confirma prazos e a reportagem ouve moradores sobre o impacto.",
+        "A TARDE cobre o dia a dia de Salvador — transporte, cultura e os anúncios que mudam a rotina da cidade.",
+      ],
+    },
+    {
+      id: "sprudge", source: "Sprudge", sourceColor: "#78716c", author: "Sprudge", kind: "article", minutes: [3, 6],
+      volume: [6, 21], tags: ["#coffee", "#culture"],
+      titles: [
+        "The {adj} Rise Of {city}'s Third-Wave Scene",
+        "A Cupping Notes Diary: {Thing} From {city}",
+        "Meet The Roaster Keeping {Thing} Alive In {city}",
+        "Is {adj} Coffee A Scam? We Asked {n} Baristas",
+        "The Espresso Machine That Refuses To Die",
+      ],
+      bodies: [
+        "Coffee journalism with strong opinions about grinders and stronger opinions about people.",
+        "A profile piece that treats cafés like the small theaters they are.",
+      ],
+    },
+    {
+      id: "arxiv", source: "arXiv", sourceColor: "#b91c1c", author: "anon. et al.", kind: "paper", minutes: [22, 40],
+      volume: [4, 16], tags: ["#HCI", "#agents", "#retrieval", "#systems"],
+      titles: [
+        "Measuring Trust Calibration In Mixed Human-Agent Triage",
+        "Corpus Effects In {adj} Retrieval For Personal Archives",
+        "A Taxonomy Of {adj} Interruptions In Assistants",
+        "Self-Forgetting Systems: {Thing} As A First-Class Operation",
+        "Benchmarking {n} Personal Knowledge Assistants On Recall",
+      ],
+      bodies: [
+        "Abstract promises a benchmark; the interesting part is always section 5. Skim-worthy, cite-worthy, rarely read fully.",
+        "Evaluation across {n} participants with pre-registered analysis; effect sizes modest, honestly reported.",
+      ],
+    },
+    {
+      id: "renata", source: "informal.social", sourceColor: "#7c3aed", author: "Renata Campos", kind: "post",
+      volume: [7, 13], tags: ["#agents", "#process", "#tooling"],
+      titles: [], bodies: [
+        "Hot take: your agent's backlog is the backlog. Triage should happen where the work lives, not in a private file.",
+        "Every demo of an agent product skips the boring part: what happens to the 200 things it decided for you while you slept.",
+        "Unpopular opinion: the best agent UI is a feed. Logs are for machines, feeds are for people.",
+        "Spent the morning watching people use an agent sidebar. Nobody found the undo. Nobody.",
+        "Reminder that 'the model' is never the bottleneck. The queue is the bottleneck. The queue is always the bottleneck.",
+      ],
+    },
+    {
+      id: "liw", source: "fosstodon.org", sourceColor: "#059669", author: "Lars Wirzenius", kind: "post",
+      volume: [5, 18], tags: ["#linux", "#web", "#tools"],
+      titles: [], bodies: [
+        "Annoyed by {thing} again. Wrote a 200-line script instead of filing a bug, like a reasonable person.",
+        "FLOSS is not about the license. It's about being able to leave, and knowing it.",
+        "Reminder that backups are a moral obligation to your future self.",
+        "Every few years I re-learn that email is the only protocol that survived everything.",
+        "Migrated another service off the big cloud. The bill went down and so did the anxiety.",
+      ],
+    },
+    {
+      id: "yt-lowlevel", source: "YouTube", sourceColor: "#dc2626", author: "Low Level Learning", kind: "video",
+      volume: [3, 12], tags: ["#systems", "#C", "#embedded"],
+      titles: [
+        "Why Your {Thing} Is Slower Than You Think (And How To Fix It)",
+        "Reading {years}-Year-Old Firmware So You Don't Have To",
+        "The {adj} Truth About Undefined Behavior",
+        "Debugging A Heisenbug With Only {n} LEDs And A Logic Analyzer",
+      ],
+      bodies: [
+        "Visual walkthrough with a scope on screen the whole time; the last third is where the payoff lives.",
+      ],
+    },
+    {
+      id: "yt-bitluni", source: "YouTube", sourceColor: "#ef4444", author: "Bitluni", kind: "video",
+      volume: [2, 6], tags: ["#ESP32", "#hardware", "#linux"],
+      titles: [
+        "Booted Linux On A {price} Microcontroller — Full Walkthrough",
+        "I Built A {adj} Display From Scratch (Part {part})",
+        "Reverse-Engineering A {year} Game Console's Video Output",
+      ],
+      bodies: [
+        "Hands-on hardware hackery with schematics in the description and a soldering iron that never rests.",
+      ],
+    },
+    {
+      id: "exe-dev", source: "exe.dev", sourceColor: "#0ea5e9", author: "exe.dev", kind: "article", minutes: [6, 14],
+      volume: [2, 3], tags: ["#AI", "#agents"],
+      titles: [
+        "Transient State For Agents: What Survives The Session",
+        "The Case For Boring Interfaces Around Smart Systems",
+        "Your Assistant Needs A Library, Not A Memory",
+        "Rendering Outcomes: Why Agents Should Not Own State",
+      ],
+      bodies: [
+        "Essay-style, one idea per paragraph, no filler — exe.dev rarely wastes a screen.",
+      ],
+    },
+    {
+      id: "pragmatic", source: "The Pragmatic Engineer", sourceColor: "#f59e0b", author: "Gergely Orosz", kind: "article", minutes: [7, 12],
+      volume: [1, 2], tags: ["#AI", "#product", "#teams"],
+      titles: [
+        "What Happens When Your Workspace Gets An Agent",
+        "Inside {n} Teams That Ship With Agent Pairing",
+        "The {adj} Economics Of AI-Assisted Code Review",
+      ],
+      bodies: [
+        "Field reporting with real org names and the numbers behind the anecdotes.",
+      ],
+    },
+    {
+      id: "gh-releases", source: "GitHub", sourceColor: "#3f3f46", author: "GitHub", kind: "release",
+      volume: [3, 9], tags: ["#SDK", "#plugins", "#tools"],
+      titles: [], bodies: [],
+    },
+  ];
+
+  const words: Record<string, string[]> = {
+    adj: ["Humble", "Stubborn", "Forgotten", "Improbable", "Elegant", "Unhinged", "Patient", "Chaotic"],
+    thing: ["RSS", "the inbox", "the archive", "scraping", "the bookmark", "IRC", "the wiki"],
+    n: ["3", "5", "7", "12", "42", "300"],
+    part: ["2", "3", "4", "5", "7", "12"],
+    years: ["3", "5", "7", "12", "20", "42"],
+    brand: ["Sony", "JVC", "RCA", "Philips", "Sanyo"],
+    pitch: ["automate the inbox", "replace spreadsheets", "index personal archives", "agentify on-call"],
+    Thing: ["RSS", "The Inbox", "The Archive", "Scraping", "The Bookmark", "IRC", "The Wiki"],
+    city: ["Salvador", "São Paulo", "Lisbon", "Berlin", "Melbourne", "Osaka"],
+    bairro: ["Rio Vermelho", "Pituba", "Barra", "Itapuã", "Pelourinho", "Cabula"],
+    obra: ["novo corredor de ônibus", "praça revitalizada", "ciclovia da orla", "centro de convenções", "terminal urbano"],
+    year: ["1979", "1986", "1994", "2003", "2011"],
+    price: ["$4", "$8", "$12"],
+    Startup: ["Parrot", "Loomwork", "Driftline", "Kernel & Co", "Brightqueue", "Fogbound"],
+    amount: ["12", "24", "40", "85", "140"],
+  };
+  const fill = (template: string): string =>
+    template.replace(/\{(\w+)\}/g, (_, key: string) => {
+      const bank = words[key] ?? words["thing"];
+      return bank[Math.floor(rand() * bank.length)];
+    });
+
+  for (const spec of specs) {
+    for (const [dayIdx, count] of [spec.volume[0], spec.volume[1]].entries()) {
+      const day = dayIdx === 0 ? "today" : "yesterday";
+      const startHour = dayIdx === 0 ? 7 : 6;
+      const span = dayIdx === 0 ? 11 : 17;
+      for (let i = 0; i < count; i++) {
+        const title = spec.titles.length ? fill(pick(spec.titles)) : undefined;
+        const body = spec.kind === "post" ? pick(spec.bodies) : spec.kind === "release" ? "" : fill(pick(spec.bodies));
+        const hour = startHour + Math.floor(rand() * span);
+        const time = `${pad2(Math.min(hour, 22))}:${pad2(Math.floor(rand() * 60))}`;
+        const saved: SavedState = dayIdx === 0
+          ? rand() < 0.03 ? "dropped" : rand() < 0.08 ? "saved" : rand() < 0.1 ? "later" : "new"
+          : rand() < 0.5 ? "dropped" : rand() < 0.18 ? "saved" : rand() < 0.38 ? "later" : "new";
+        const tags = [spec.tags[Math.floor(rand() * spec.tags.length)]]; // one tag is enough at this volume
+        if (rand() < 0.5) {
+          const extra = spec.tags[Math.floor(rand() * spec.tags.length)];
+          if (!tags.includes(extra)) tags.push(extra);
+        }
+        const base: Item = {
+          id: `${spec.id}-${dayIdx}-${i}`,
+          kind: spec.kind,
+          source: spec.source,
+          sourceId: VOLUME_SOURCE_ID_OVERRIDES[spec.id] ?? spec.id,
+          sourceColor: spec.sourceColor,
+          author: spec.author,
+          title,
+          body,
+          time,
+          day,
+          tags,
+          saved,
+        };
+        if (spec.kind === "article" || spec.kind === "paper") {
+          const [lo, hi] = spec.minutes ?? [3, 8];
+          base.minutes = lo + Math.floor(rand() * (hi - lo));
+        } else if (spec.kind === "video") {
+          base.duration = `${pad2(8 + Math.floor(rand() * 42))}:${pad2(Math.floor(rand() * 60))}`;
+          base.views = `${(rand() * 900 + 20).toFixed(0)}K views`;
+          base.thumbAccent = VIDEO_ACCENTS[Math.floor(rand() * VIDEO_ACCENTS.length)];
+        } else if (spec.kind === "post") {
+          base.handle = `@${spec.id}@${spec.source}`;
+          base.likes = `${(rand() * 4 + 0.2).toFixed(1)}K`;
+          base.reposts = `${Math.floor(rand() * 400 + 12)}`;
+        } else if (spec.kind === "release") {
+          base.fullName = pick(["get-bb/plugin-sdk", "facebook/lexical", "zod/zod", "honojs/hono"]);
+          base.stars = `${(rand() * 20 + 0.4).toFixed(1)}k`;
+          base.language = "TypeScript";
+          base.langColor = "#3178c6";
+          base.issues = `${Math.floor(rand() * 700)}`;
+          base.version = `v0.${4 + Math.floor(rand() * 3)}.${Math.floor(rand() * 120)}`;
+          base.changes = Array.from({ length: 2 + Math.floor(rand() * 3) }, () => ({
+            hash: Math.floor(rand() * 0xffffff).toString(16).padStart(6, "0"),
+            message: pick(RELEASE_MESSAGES),
+          }));
+        }
+        items.push(base);
+      }
+    }
+  }
+  return items;
+}
+
+const CURATED_ITEMS: Item[] = [
   {
     id: "mayfly-chat",
     kind: "article",
     source: "exe.dev",
+    sourceId: "exe-dev",
     sourceColor: "#0ea5e9",
     author: "exe.dev",
     title: "Mayfly Chat: Transient Chat for Agents",
@@ -92,6 +431,7 @@ const ITEMS: Item[] = [
     id: "sqlite-reads",
     kind: "video",
     source: "SQLite",
+    sourceId: "yt-fetalsai",
     sourceColor: "#0f766e",
     author: "fetalsai",
     title: "How SQLite balances read concurrency on a single write lock, visually",
@@ -108,6 +448,7 @@ const ITEMS: Item[] = [
     id: "post-agent-backlog",
     kind: "post",
     source: "informal.social",
+    sourceId: "social-informal",
     sourceColor: "#7c3aed",
     author: "Renata Campos",
     handle: "@renata@informal.social",
@@ -127,6 +468,7 @@ const ITEMS: Item[] = [
     id: "repo-lexical",
     kind: "repo",
     source: "GitHub",
+    sourceId: "lex",
     sourceColor: "#3f3f46",
     author: "facebook/lexical",
     body: "",
@@ -145,6 +487,7 @@ const ITEMS: Item[] = [
     id: "agentic-ux",
     kind: "article",
     source: "The Pragmatic Engineer",
+    sourceId: "pragmatic",
     sourceColor: "#f59e0b",
     author: "Gergely Orosz",
     title: "What happens when your workspace gets an agent",
@@ -159,6 +502,7 @@ const ITEMS: Item[] = [
     id: "release-sdk",
     kind: "release",
     source: "GitHub",
+    sourceId: "lex",
     sourceColor: "#3f3f46",
     author: "get-bb/plugin-sdk",
     body: "",
@@ -182,6 +526,7 @@ const ITEMS: Item[] = [
     id: "paper-inboxless",
     kind: "paper",
     source: "arXiv",
+    sourceId: "arxiv",
     sourceColor: "#b91c1c",
     author: "anon. et al.",
     title: "Inboxless: Read-It-Later Queues as Shared State Between Humans and Agents",
@@ -196,6 +541,7 @@ const ITEMS: Item[] = [
     id: "trinitron",
     kind: "article",
     source: "Hackaday",
+    sourceId: "hackaday",
     sourceColor: "#84cc16",
     author: "Hackaday",
     title: "After 6 Years as Road Ornament, a Widescreen Sony Trinitron Lives Again",
@@ -210,6 +556,7 @@ const ITEMS: Item[] = [
     id: "video-esp32",
     kind: "video",
     source: "YouTube",
+    sourceId: "yt-bitluni",
     sourceColor: "#dc2626",
     author: "Bitluni",
     title: "Booted Linux 6.11 on the ESP32-S3 — full walkthrough with a few tweaks",
@@ -226,6 +573,7 @@ const ITEMS: Item[] = [
     id: "post-nitter",
     kind: "post",
     source: "fosstodon.org",
+    sourceId: "social-liw",
     sourceColor: "#059669",
     author: "Lars Wirzenius",
     handle: "@liw@fosstodon.org",
@@ -241,6 +589,7 @@ const ITEMS: Item[] = [
     id: "repo-jomo",
     kind: "repo",
     source: "GitHub",
+    sourceId: "lex",
     sourceColor: "#3f3f46",
     author: "fgrehm/bb-marketplace",
     body: "",
@@ -259,6 +608,7 @@ const ITEMS: Item[] = [
     id: "kottke-spice",
     kind: "article",
     source: "kottke.org",
+    sourceId: "kottke",
     sourceColor: "#18a999",
     author: "Jason Kottke",
     title: "Pumpkin Spice Is Dead",
@@ -270,6 +620,11 @@ const ITEMS: Item[] = [
     minutes: 3,
   },
 ];
+
+const ITEMS: Item[] = [...CURATED_ITEMS, ...buildVolumeBatch()].sort((a, b) => {
+  if (a.day !== b.day) return a.day === "today" ? -1 : 1;
+  return a.time < b.time ? 1 : a.time > b.time ? -1 : 0; // newest first
+});
 
 function SourceMark({ item, large = false }: { item: Item; large?: boolean }) {
   return (
@@ -807,14 +1162,20 @@ const SOURCE_KIND_META: Record<RssSourceKind, { label: string; icon: React.Compo
 };
 
 const SOURCES: Source[] = [
+  { id: "hackaday", name: "Hackaday", url: "https://hackaday.com/feed", kind: "rss", color: "#84cc16", enabled: true, lastFetch: "9 min ago" },
+  { id: "techcrunch", name: "TechCrunch", url: "https://techcrunch.com/feed", kind: "rss", color: "#e11d48", enabled: true, lastFetch: "12 min ago" },
+  { id: "kottke", name: "kottke.org", url: "https://feeds.kottke.org/main", kind: "rss", color: "#18a999", enabled: true, lastFetch: "26 min ago" },
+  { id: "atarde", name: "A TARDE", url: "https://atarde.com.br/rss", kind: "rss", color: "#f97316", enabled: true, lastFetch: "18 min ago" },
+  { id: "sprudge", name: "Sprudge", url: "https://sprudge.com/feed", kind: "rss", color: "#78716c", enabled: true, lastFetch: "40 min ago" },
+  { id: "arxiv", name: "arXiv (cs.HC)", url: "https://arxiv.org/rss/cs.HC", kind: "rss", color: "#b91c1c", enabled: true, lastFetch: "1 hr ago" },
   { id: "exe-dev", name: "exe.dev", url: "https://blog.exe.dev/feed", kind: "rss", color: "#0ea5e9", enabled: true, lastFetch: "12 min ago" },
   { id: "pragmatic", name: "The Pragmatic Engineer", url: "https://newsletter.pragmaticengineer.com/feed", kind: "rss", color: "#f59e0b", enabled: true, lastFetch: "26 min ago" },
-  { id: "kottke", name: "kottke.org", url: "https://feeds.kottke.org/main", kind: "rss", color: "#18a999", enabled: true, lastFetch: "26 min ago" },
-  { id: "hackaday", name: "Hackaday", url: "https://hackaday.com/feed", kind: "rss", color: "#84cc16", enabled: true, lastFetch: "1 hr ago" },
   { id: "lex", name: "GitHub releases", url: "https://github.com/ facebook/lexical", kind: "github", color: "#3f3f46", enabled: true, lastFetch: "2 hr ago" },
   { id: "social-informal", name: "@renata@informal.social", url: "https://informal.social/users/renata.rss", kind: "mastodon", color: "#7c3aed", enabled: true, lastFetch: "34 min ago" },
   { id: "social-liw", name: "@liw@fosstodon.org", url: "https://fosstodon.org/users/liw.rss", kind: "mastodon", color: "#059669", enabled: true, lastFetch: "1 hr ago" },
   { id: "yt-bitluni", name: "Bitluni / YouTube", url: "https://www.youtube.com/c/Bitluni/videos", kind: "youtube", color: "#dc2626", enabled: true, lastFetch: "5 hr ago" },
+  { id: "yt-lowlevel", name: "Low Level Learning / YouTube", url: "https://www.youtube.com/c/LowLevel/videos", kind: "youtube", color: "#ef4444", enabled: true, lastFetch: "3 hr ago" },
+  { id: "yt-fetalsai", name: "fetalsai / YouTube", url: "https://www.youtube.com/@festivetech", kind: "youtube", color: "#0f766e", enabled: true, lastFetch: "6 hr ago" },
   { id: "sumau", name: "SUMAUMA", url: "https://sumauma.com/feed", kind: "rss", color: "#15803d", enabled: false, lastFetch: "paused 2 days ago" },
 ];
 
@@ -1202,9 +1563,9 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const closeReader = () => navigate.toPluginPanel("feed", { replace: true });
 
   const visible = useMemo(() => {
-    const enabled = new Set(sources.filter((source) => source.enabled).map((source) => source.name));
+    const enabled = new Set(sources.filter((source) => source.enabled).map((source) => source.id));
     return items.filter((item) => {
-      if (!enabled.has(item.source)) return false;
+      if (item.sourceId && !enabled.has(item.sourceId)) return false;
       if (!matchesKind(item, feed)) return false;
       if (view === "triage") return true;
       if (feed === "saved") return item.saved === "saved" || item.saved === "later";
@@ -1222,9 +1583,9 @@ function JomoPage({ subPath }: { subPath?: string }) {
   }, [visible]);
 
   const sweepItems = useMemo(() => {
-    const enabled = new Set(sources.filter((source) => source.enabled).map((source) => source.name));
+    const enabled = new Set(sources.filter((source) => source.enabled).map((source) => source.id));
     return items.filter((item) => {
-      if (!enabled.has(item.source)) return false;
+      if (item.sourceId && !enabled.has(item.sourceId)) return false;
       if (!matchesKind(item, feed)) return false;
       return item.saved !== "dropped";
     });
