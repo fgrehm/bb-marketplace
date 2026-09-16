@@ -206,8 +206,7 @@ export async function runEntityImpact(
   if (entityType === "orphan" || !entityName.trim()) {
     return {
       status: "unavailable",
-      reason:
-        "module-level change (imports / parsing fallback): no named entity to analyze",
+      reason: "module-level change: no impact analysis",
     };
   }
   if (!semBinaryPath()) {

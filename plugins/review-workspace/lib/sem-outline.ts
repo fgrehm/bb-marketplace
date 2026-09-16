@@ -57,6 +57,13 @@ export const changeTypeLabels: Record<SemEntityChange["changeType"], string> = {
   reordered: "reordered",
 };
 
+// Module-level churn entities (import blocks, parsing fallbacks): sem emits
+// them as unnamed "orphan" entities. They drown out the real changes, so the
+// entities view hides them alongside cosmetics by default.
+export function isModuleLevelNoise(entity: SemEntityChange): boolean {
+  return entity.entityType === "orphan" || entity.entityName === "module-level";
+}
+
 // Compact LCS line diff for per-entity before/after content in the entities
 // view. Returns changed lines only; empty when sem omitted the content
 // (oversized blob or deleted/added without the other side).

@@ -464,7 +464,7 @@ describe("entity summary flow (semantic entry)", () => {
     });
     // cosmetics hidden by default
     expect(slot.queryByText(/cosmeticOnlyRefactor/)).toBeNull();
-    slot.getByLabelText("Hide cosmetic-only changes").click();
+    slot.getByLabelText("Hide cosmetics and module-level changes").click();
     expect(
       slot.getAllByText(/cosmeticOnlyRefactor/).length,
     ).toBeGreaterThanOrEqual(1);

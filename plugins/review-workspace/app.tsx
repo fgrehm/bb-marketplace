@@ -26,6 +26,7 @@ import {
   entityAnchor,
   entityContentDiff,
   entityContentPatch,
+  isModuleLevelNoise,
   stableEntityId,
 } from "./lib/sem-outline";
 import type {
@@ -757,7 +758,10 @@ function EntityNav({
   onSelect: (entityId: string) => void;
 }) {
   const visible = hideCosmetics
-    ? changes.filter((change) => change.structuralChange !== false)
+    ? changes.filter(
+        (change) =>
+          change.structuralChange !== false && !isModuleLevelNoise(change),
+      )
     : changes;
   const byFile = new Map<string, SemEntityChange[]>();
   for (const change of visible) {
@@ -860,6 +864,7 @@ const EntityContentDiffView = memo(function EntityContentDiffView({
           diffStyle: "unified" as const,
           overflow: "scroll" as const,
           hunkSeparators: "line-info" as const,
+          disableFileHeader: true,
         }}
       />
     </div>
@@ -886,7 +891,10 @@ function EntityExplorer({
   onToggleExpanded: (entityId: string) => void;
 }) {
   const visible = hideCosmetics
-    ? changes.filter((change) => change.structuralChange !== false)
+    ? changes.filter(
+        (change) =>
+          change.structuralChange !== false && !isModuleLevelNoise(change),
+      )
     : changes;
   // The server already orders changes by review priority, then path, then
   // line; grouping by file preserves that order within each file.
@@ -913,9 +921,9 @@ function EntityExplorer({
             type="checkbox"
             checked={hideCosmetics}
             onChange={(event) => onHideCosmetics(event.target.checked)}
-            aria-label="Hide cosmetic-only changes"
+            aria-label="Hide cosmetics and module-level changes"
           />
-          hide cosmetics
+          hide cosmetics &amp; module-level
         </label>
       </div>
       {[...byFile.entries()].map(([path, fileChanges]) => (
