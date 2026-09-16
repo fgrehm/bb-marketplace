@@ -1965,7 +1965,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           ← <span className="hidden sm:inline">Back</span>
         </Button>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold">Review changes</h1>
+          <h1 className="hidden truncate text-sm font-semibold sm:block">
+            Review changes
+          </h1>
           <p className="hidden truncate text-xs text-muted-foreground sm:block">
             Diff-first review · {review?.snapshot.slice(0, 10) ?? "not opened"}
           </p>
@@ -1993,7 +1995,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           >
             •••
           </summary>
-          <div className="absolute right-0 top-10 z-30 w-56 rounded-md border bg-popover p-2 text-popover-foreground shadow-lg">
+          <div className="absolute top-10 right-0 z-30 w-56 max-lg:left-0 max-lg:right-auto rounded-md border bg-popover p-2 text-popover-foreground shadow-lg">
             {review && revisions[0] && review.id !== revisions[0].id ? (
               <button
                 className="block w-full rounded px-2 py-2 text-left text-xs hover:bg-muted xl:hidden"
