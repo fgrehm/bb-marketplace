@@ -25,7 +25,7 @@ const QUESTIONS: Question[] = [
     kicker: "positive space",
     title: "What are you unreasonably into right now?",
     why: "Not your permanent identity. Just the trails worth following today.",
-    options: ["agents", "retro hardware", "coffee", "Salvador", "distributed systems", "independent web"],
+    options: ["agents", "retro hardware", "coffee", "Salvador"],
     multi: true,
   },
   {
@@ -33,7 +33,7 @@ const QUESTIONS: Question[] = [
     kicker: "the hoard",
     title: "What are you hoarding for future research?",
     why: "These can rest unread without becoming a debt you owe yourself.",
-    options: ["interface patterns", "personal archives", "local history", "systems papers", "repair notes", "project references"],
+    options: ["personal archives", "local history", "systems papers", "repair notes"],
     multi: true,
   },
   {
@@ -41,7 +41,7 @@ const QUESTIONS: Question[] = [
     kicker: "the miss-list",
     title: "What would you happily never see again?",
     why: "Knowing what to miss matters as much as knowing what to keep.",
-    options: ["crypto prices", "launch-hype threads", "AI thought-leadership", "sports scores", "celebrity news", "VC discourse"],
+    options: ["crypto prices", "launch-hype threads", "AI thought-leadership", "VC discourse"],
     multi: true,
   },
   {
@@ -112,7 +112,7 @@ function Wordmark() {
 
 function Chip({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button type="button" aria-pressed={active} onClick={onClick} className={cn("rounded-full border px-3.5 py-2 text-sm transition-colors", active ? "border-foreground bg-foreground font-medium text-background" : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground")}>
+    <button type="button" aria-pressed={active} onClick={onClick} className={cn("rounded-full px-3.5 py-2 text-sm transition-colors", active ? "bg-foreground font-medium text-background" : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground")}>
       {children}
     </button>
   );
@@ -182,7 +182,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
         <section className="w-full max-w-2xl text-center">
           <h1 className="text-7xl sm:text-8xl"><Wordmark /></h1>
           <p className="mt-3 text-base text-muted-foreground">the joy of missing out</p>
-          <p className="mx-auto mt-8 max-w-xl text-base leading-7 text-foreground/80">An inbox that wants you to miss things. JOMO holds the firehose so you do not have to read it, and a librarian learns what deserves your now.</p>
+          <p className="mx-auto mt-8 max-w-xl text-base leading-7 text-foreground/80">A quiet room that expects you to miss things. JOMO holds the firehose elsewhere, while a librarian learns what deserves your now.</p>
           <div className="mt-7 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-muted-foreground"><span>5 questions · 2 minutes</span><span>every one skippable</span><span>nothing sticks without your yes</span></div>
           <div className="mt-9 flex flex-wrap justify-center gap-2"><Button onClick={() => setPhase("interview")}>Begin</Button><Button variant="outline" onClick={onSkip}>Skip setup, I will do it later</Button></div>
         </section>
@@ -195,7 +195,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
       <main className="grid h-full min-h-0 place-items-center overflow-y-auto bg-background px-4 py-8">
         <section className="w-full max-w-xl">
           <div className="mb-6 flex justify-center gap-2" aria-label={`Question ${questionIndex + 1} of ${QUESTIONS.length}`}>{QUESTIONS.map((_, index) => <span key={index} className={cn("size-2 rounded-full", index === questionIndex ? "bg-primary" : index < questionIndex ? "bg-primary/40" : "bg-border")} />)}</div>
-          <div className="rounded-2xl border border-border bg-card p-6 sm:p-8">
+          <div className="rounded-3xl bg-card/60 p-6 shadow-sm ring-1 ring-border/50 sm:p-9">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-400">Question {questionIndex + 1} of 5 · {question.kicker}</p>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">{question.title}</h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{question.why}</p>

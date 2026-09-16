@@ -1216,9 +1216,6 @@ function inferKindFromUrl(rawUrl: string): { kind: ItemKind; label: string } {
 function RoundupCard({ items, onOpen }: { items: Item[]; onOpen: (item: Item) => void }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
-  const skipped = items.filter((item) => item.saved === "dropped").length;
-  const hoarded = items.filter((item) => item.saved === "saved").length;
-  const resting = items.filter((item) => item.saved === "saved" || item.saved === "later").length;
   const roundPicks = [
     items.find((item) => item.id === "mayfly-chat"),
     items.find((item) => item.id === "trinitron"),
@@ -1230,28 +1227,28 @@ function RoundupCard({ items, onOpen }: { items: Item[]; onOpen: (item: Item) =>
     { item: roundPicks[2], text: roundPicks[2].title ?? "Salvador local news from A TARDE" },
   ];
   return (
-    <section className="mb-6 overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card">
+    <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400/[0.07] via-card/70 to-card/40 shadow-sm ring-1 ring-border/50">
       <div className="flex items-center justify-between px-4 pt-3">
         <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-amber-400">JOMO report · today</p>
         <button type="button" aria-label="Dismiss roundup" onClick={() => setDismissed(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center text-muted-foreground hover:text-foreground")}><Icon name="X" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
       </div>
       <div className="px-4 pb-1">
-        <p className="text-base font-medium text-foreground">You skipped {skipped} items in this round. Nothing in them needed you.</p>
-        <p className="mt-1 text-[13px] text-muted-foreground">Three borderline ones, just in case, but you would have been fine not knowing.</p>
+        <p className="text-xl font-medium tracking-tight text-foreground">Nothing needs you right now.</p>
+        <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">Three things brushed against your interests. They can wait too, but they are here if curiosity wins.</p>
       </div>
-      <ul className="mt-1 divide-y divide-border/60">
+      <ul className="mx-2 mt-3 space-y-1 pb-2">
         {bullets.map(({ item, text }) => (
           <li key={item.id}>
-            <button type="button" onClick={() => onOpen(item)} className="flex w-full items-start gap-3 px-4 py-2.5 text-left hover:bg-muted/40">
+            <button type="button" onClick={() => onOpen(item)} className="flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-muted/40">
               <span className="mt-1.5 size-1.5 shrink-0 rounded-full" style={{ backgroundColor: item.sourceColor }} />
               <span className="min-w-0"><span className="block text-[13px] max-md:pointer-coarse:text-[15px] leading-5">{text}</span><span className="text-[11px] text-muted-foreground">{item.source} · {item.title ?? item.fullName}</span></span>
             </button>
           </li>
         ))}
       </ul>
-      <div className="flex items-center justify-between border-t border-border/60 px-4 py-2 text-[11px] text-muted-foreground">
-        <span>Hoard grew by {hoarded} · {resting} items resting · nothing expires quietly</span>
-        <span className="inline-flex items-center gap-1 opacity-60"><Icon name="Repeat" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> refreshed after each sweep</span>
+      <div className="flex items-center justify-between px-4 py-3 text-[11px] text-muted-foreground">
+        <span>Everything else is resting safely out of sight.</span>
+        <span className="inline-flex items-center gap-1 opacity-60"><Icon name="Repeat" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> a new report follows each sweep</span>
       </div>
     </section>
   );
@@ -1568,7 +1565,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [view, setView] = useState<"cards" | "triage" | "sweep">("cards");
+  const [view, setView] = useState<"home" | "cards" | "triage" | "sweep">("home");
 
   useEffect(() => {
     let cancelled = false;
@@ -1721,20 +1718,21 @@ function JomoPage({ subPath }: { subPath?: string }) {
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight">jomo</h1>
-            <p className="hidden sm:block text-xs text-muted-foreground">Today · {items.filter((item) => item.day === "today" && item.saved === "new").length} new across {sources.filter((source) => source.enabled).length} sources</p>
+            <p className="hidden sm:block text-xs text-muted-foreground">{view === "home" ? "The hoard is holding everything. Nothing needs attention." : "Browse only because you want to."}</p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-lg border border-border p-0.5" role="tablist" aria-label="Feed layout">
+            {view !== "home" && <div className="inline-flex rounded-lg bg-muted/40 p-0.5" role="tablist" aria-label="Hoard view">
+              <button type="button" aria-label="Return to calm view" onClick={() => setView("home")} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground")}><Icon name="ChevronLeft" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
               {([
                 ["cards", "GridView"],
                 ["triage", "ListView"],
                 ["sweep", "Zap"],
               ] as Array<["cards" | "triage" | "sweep", "GridView" | "ListView" | "Zap"]>).map(([mode, icon]) => (
-                <button key={mode} type="button" aria-pressed={view === mode} aria-label={mode === "cards" ? "Card view" : mode === "triage" ? "Triage view" : "Sweep mode"} onClick={() => setView(mode)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md transition-colors", view === mode ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                <button key={mode} type="button" aria-pressed={view === mode} aria-label={mode === "cards" ? "Card view" : mode === "triage" ? "Triage view" : "Sweep mode"} onClick={() => setView(mode)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md transition-colors", view === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
                   <Icon name={icon} className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} />
                 </button>
               ))}
-            </div>
+            </div>}
             <button type="button" aria-label="Capture a link or manage sources" onClick={() => setDrawerOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Plus" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
             {profile ? <button type="button" aria-label="Open librarian's notebook" onClick={() => setNotebookOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Explore" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button> : <button type="button" aria-label="Meet the librarian" onClick={() => setInterviewOpen(true)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted")}><Icon name="Explore" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>}
             <Button variant="outline" size="sm" className="h-8 max-md:pointer-coarse:h-10" onClick={() => navigate.toCompose()}><Icon name="GridView" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> <span className="hidden sm:inline">Back to BB</span></Button>
@@ -1743,28 +1741,39 @@ function JomoPage({ subPath }: { subPath?: string }) {
       </header>
       <div className={cn("min-h-0 flex-1", view === "triage" ? "flex flex-col" : "overflow-y-auto pb-[env(safe-area-inset-bottom)]")}>
         <div className={cn("mx-auto w-full max-w-5xl px-3 max-sm:pointer-coarse:px-4 py-4 sm:px-8 sm:py-6", view === "triage" && "flex min-h-0 flex-1 flex-col")}>
-          <nav aria-label="Feed filters" className={cn("-mx-1 flex gap-1 overflow-x-auto px-1 pb-1", view === "triage" ? "mb-4" : "mb-5")}>
+          {view !== "home" && <nav aria-label="Feed filters" className={cn("-mx-1 flex gap-1 overflow-x-auto px-1 pb-1", view === "triage" ? "mb-4" : "mb-5")}>
             {FEED_TABS.map(([id, label]) => (
               <button key={id} type="button" onClick={() => setFeed(id)} className={cn("shrink-0 rounded-full px-3.5 py-1.5 max-md:pointer-coarse:px-4 max-md:pointer-coarse:py-2 text-[13px] max-md:pointer-coarse:text-sm transition-colors", feed === id ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>{label}</button>
             ))}
-          </nav>
-          {view === "sweep" ? (
+          </nav>}
+          {view === "home" ? (
+            <section className="mx-auto max-w-3xl py-5 sm:py-12">
+              <RoundupCard items={items} onOpen={openItem} />
+              <div className="mt-12 text-center">
+                <p className="text-sm text-muted-foreground">The rest of the round is resting in the hoard.</p>
+                <p className="mt-1 text-xs text-muted-foreground/70">No badge, no deadline, no need to catch up.</p>
+                <div className="mt-6 flex flex-wrap justify-center gap-2">
+                  <Button variant="outline" onClick={() => setView("cards")}>Browse the hoard</Button>
+                  <Button variant="ghost" onClick={() => setView("sweep")}>Take a quiet sweep</Button>
+                </div>
+              </div>
+            </section>
+          ) : view === "sweep" ? (
             <SweepView items={sweepItems} onOpen={openItem} onSet={setState} onExit={() => setView("triage")} />
           ) : view === "triage" ? (
             <TriageView items={visible} onOpen={(item) => openItem(item)} onSet={setState} activeKindLabel={FEED_TABS.find(([id]) => id === feed)?.[1] ?? "All"} />
           ) : (
             <>
-          <RoundupCard items={items} onOpen={openItem} />
-          {byDay.length === 0 && <p className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nothing here yet.</p>}
-          {byDay.map(([label, dayItems]) => (
-            <section key={label} className="mb-2">
-              <h2 className="sticky top-0 z-10 -mx-2 mb-3 bg-background/90 px-2 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground backdrop-blur">{label} · {dayItems.length}</h2>
-              <div className="grid items-start gap-3 md:grid-cols-2">
-                {dayItems.map((item) => <ItemCard key={item.id} item={item} onOpen={() => openItem(item)} onSave={() => toggleSaved(item.id)} />)}
-              </div>
-            </section>
-          ))}
-          <p className="mt-8 text-center text-xs text-muted-foreground">Realistic sample data — the plugin will ingest articles, videos, posts, repos, and releases from multiple sources</p>
+              {byDay.length === 0 && <p className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nothing here yet.</p>}
+              {byDay.map(([label, dayItems]) => (
+                <section key={label} className="mb-2">
+                  <h2 className="sticky top-0 z-10 -mx-2 mb-3 bg-background/90 px-2 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground backdrop-blur">{label} · {dayItems.length}</h2>
+                  <div className="grid items-start gap-3 md:grid-cols-2">
+                    {dayItems.map((item) => <ItemCard key={item.id} item={item} onOpen={() => openItem(item)} onSave={() => toggleSaved(item.id)} />)}
+                  </div>
+                </section>
+              ))}
+              <p className="mt-8 text-center text-xs text-muted-foreground">Mock material for exploring the shape of a large hoard.</p>
             </>
           )}
         </div>
