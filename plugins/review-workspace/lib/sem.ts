@@ -150,8 +150,9 @@ function spawnSem(
   });
 }
 
-// Per-entity content caps: outlines want a quick view, not whole blobs.
-const ENTITY_CONTENT_MAX_CHARS = 8000;
+// Per-entity content caps: the entities view wants a quick view, not whole
+// blobs. Shared with the server-side snapshot backfill.
+export const ENTITY_CONTENT_MAX_CHARS = 8000;
 
 function capContent(content: unknown): string | null {
   if (typeof content !== "string") return null;

@@ -2,7 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { normalizeChangeKind } from "./lib/utils";
-import { runEntityDiff, runEntityImpact } from "./lib/sem";
+import {
+  ENTITY_CONTENT_MAX_CHARS,
+  runEntityDiff,
+  runEntityImpact,
+} from "./lib/sem";
 import type { SemEntityChange } from "./lib/sem";
 
 const fileShape = z
@@ -940,6 +944,63 @@ export default async function plugin(bb: BbPluginApi) {
       };
     });
     const result = await runEntityDiff(inputs);
+    if (result.status === "ok") {
+      // Backfill per-entity content from the stored snapshot files when sem
+      // omits it (oversized per sem's own cap, granular chunks, ...). Only
+      // modified/reordered entities are safe: added entities have no old
+      // range and deleted entities report new-side numbers that do not exist
+      // in the new content.
+      const snapshot = new Map<
+        string,
+        { old: string | null; new: string | null }
+      >();
+      for (const file of textFiles) {
+        const row = contentQuery.get(review.id, file.path) as
+          | { old_content: string | null; new_content: string | null }
+          | undefined;
+        snapshot.set(file.path, {
+          old: row?.old_content ?? null,
+          new: row?.new_content ?? null,
+        });
+      }
+      const sliceContent = (
+        content: string | null,
+        start: number | null,
+        end: number | null,
+      ): string | null => {
+        if (content == null || start == null || start < 1) return null;
+        const fileLines = content.split("\n");
+        const lo = start - 1;
+        const hi = Math.min(fileLines.length, end ?? start);
+        if (hi <= lo) return null;
+        const slice = fileLines.slice(lo, hi).join("\n");
+        return slice.length > ENTITY_CONTENT_MAX_CHARS ? null : slice;
+      };
+      for (const change of result.changes) {
+        if (
+          change.beforeContent == null &&
+          (change.changeType === "modified" ||
+            change.changeType === "reordered")
+        ) {
+          change.beforeContent = sliceContent(
+            snapshot.get(change.filePath)?.old ?? null,
+            change.oldStartLine,
+            change.oldEndLine,
+          );
+        }
+        if (
+          change.afterContent == null &&
+          (change.changeType === "modified" ||
+            change.changeType === "reordered")
+        ) {
+          change.afterContent = sliceContent(
+            snapshot.get(change.filePath)?.new ?? null,
+            change.startLine,
+            change.endLine,
+          );
+        }
+      }
+    }
     const perPath = new Map<string, SemEntityChange[]>();
     if (result.status === "ok") {
       for (const change of result.changes) {

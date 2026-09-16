@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+Element.prototype.scrollIntoView =
+  Element.prototype.scrollIntoView ?? (() => {});
 import { describe, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
@@ -455,15 +457,17 @@ describe("entity summary flow (semantic entry)", () => {
     slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await vi.waitFor(() => {
       expect(summaryCalls).toContainEqual({ reviewId: review.id });
-      // priority order: deleted first, then modified
-      slot.getByText("deleted");
-      slot.getByText(/gone/);
-      slot.getByText("modified");
+      // priority order: deleted first, then modified (nav + explorer both render)
+      expect(slot.getAllByText("deleted").length).toBeGreaterThanOrEqual(1);
+      expect(slot.getAllByText(/gone/).length).toBeGreaterThanOrEqual(1);
+      expect(slot.getAllByText("modified").length).toBeGreaterThanOrEqual(1);
     });
     // cosmetics hidden by default
     expect(slot.queryByText(/cosmeticOnlyRefactor/)).toBeNull();
     slot.getByLabelText("Hide cosmetic-only changes").click();
-    slot.getByText(/cosmeticOnlyRefactor/);
+    expect(
+      slot.getAllByText(/cosmeticOnlyRefactor/).length,
+    ).toBeGreaterThanOrEqual(1);
     slot.lifecycle.unmount();
   });
 
@@ -503,7 +507,7 @@ describe("entity summary flow (semantic entry)", () => {
     });
     slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await vi.waitFor(() => {
-      slot.getByText("modified");
+      expect(slot.getAllByText("modified").length).toBeGreaterThanOrEqual(1);
     });
     slot.getByRole("button", { name: "Go to mod" }).click();
     // jump only switches file/pends the anchor; no error surfaced
@@ -586,22 +590,20 @@ describe("entity summary flow (semantic entry)", () => {
     await vi.waitFor(() => {
       expect(slot.getAllByText(/entit(y|ies)$/)).toHaveLength(2);
     });
-    // alpha expands into a before/after content diff
-    slot.getByRole("button", { name: /modified alpha/ }).click();
+    // alpha expands into a Pierre-rendered content diff (FileDiff renders a
+    // web component that jsdom cannot hydrate, so assert the surface exists
+    // rather than the hunk text - patch synthesis is covered in the lib tests)
+    slot.getAllByRole("button", { name: /modified alpha/ })[0]!.click();
     await vi.waitFor(() => {
-      expect(slot.getAllByText(/return (1|42);/).length).toBeGreaterThanOrEqual(
-        2,
-      );
+      expect(slot.container.innerHTML).toContain('data-testid="pierre-diff"');
     });
+    expect(slot.container.innerHTML).not.toContain("Entity too large");
+    // beta is one-sided (added): also renders through the Pierre surface
+    slot.getAllByText(/beta/)[0]!.click();
     await vi.waitFor(() => {
-      expect(slot.getAllByText(/return (1|42);/).length).toBeGreaterThanOrEqual(
-        2,
-      );
-    });
-    // beta is one-sided (added): the after side renders as context
-    slot.getByText(/beta/).click();
-    await vi.waitFor(() => {
-      slot.getByText(/function beta/);
+      expect(
+        slot.container.innerHTML.split('data-testid="pierre-diff"').length - 1,
+      ).toBeGreaterThanOrEqual(2);
     });
     slot.lifecycle.unmount();
   });
@@ -651,9 +653,9 @@ describe("entity summary flow (semantic entry)", () => {
     });
     slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await vi.waitFor(() => {
-      slot.getByText("modified");
+      expect(slot.getAllByText("modified").length).toBeGreaterThanOrEqual(1);
     });
-    slot.getByText(/alpha/).click();
+    slot.getAllByText(/alpha/)[0]!.click();
     await vi.waitFor(() => {
       expect(impactCalls).toHaveLength(1);
     });
@@ -695,7 +697,7 @@ describe("entity summary flow (semantic entry)", () => {
     });
     slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await vi.waitFor(() => {
-      slot.getByText("modified");
+      expect(slot.getAllByText("modified").length).toBeGreaterThanOrEqual(1);
     });
     slot.getByRole("button", { name: "Go to faraway" }).click();
     await slot.findByText(/faraway has no visible lines in the diff/);

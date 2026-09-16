@@ -65,13 +65,7 @@ export type EntityDiffLine =
   | { marker: "+"; text: string }
   | { marker: " "; text: string };
 
-export function entityContentDiff(
-  before: string | null | undefined,
-  after: string | null | undefined,
-): EntityDiffLine[] {
-  if (before == null || after == null) return [];
-  const a = before.split("\n");
-  const b = after.split("\n");
+function lcsLines(a: string[], b: string[]): EntityDiffLine[] {
   // LCS table (entities are small; capped server-side).
   const table: number[][] = Array.from({ length: a.length + 1 }, () =>
     new Array<number>(b.length + 1).fill(0),
@@ -103,6 +97,117 @@ export function entityContentDiff(
   while (i < a.length) lines.push({ marker: "-", text: a[i++] });
   while (j < b.length) lines.push({ marker: "+", text: b[j++] });
   return lines;
+}
+
+export function entityContentDiff(
+  before: string | null | undefined,
+  after: string | null | undefined,
+): EntityDiffLine[] {
+  if (before == null || after == null) return [];
+  return lcsLines(before.split("\n"), after.split("\n"));
+}
+
+// Synthesize a unified diff for a single entity so its expanded view renders
+// through the same Pierre FileDiff surface as the file diff. Context runs
+// longer than `contextLines` split into separate hunks, git-style, so a
+// one-line change does not drag the whole function along. `maxLines` caps
+// total emitted lines; `truncated` reports the cut.
+export function entityContentPatch(
+  before: string | null | undefined,
+  after: string | null | undefined,
+  filePath: string,
+  opts: {
+    oldStart?: number | null;
+    newStart?: number | null;
+    contextLines?: number;
+    maxLines?: number;
+  } = {},
+): { patch: string; truncated: boolean } | null {
+  if (before == null && after == null) return null;
+  const contextLines = opts.contextLines ?? 3;
+  const maxLines = opts.maxLines ?? 80;
+  const lines =
+    before == null
+      ? (after ?? "")
+          .split("\n")
+          .map((text) => ({ marker: "+" as const, text }))
+      : after == null
+        ? before.split("\n").map((text) => ({ marker: "-" as const, text }))
+        : lcsLines(before.split("\n"), after.split("\n"));
+  if (!lines.length) return null;
+
+  const header =
+    `diff --git a/${filePath} b/${filePath}\n` +
+    `--- a/${filePath}\n` +
+    `+++ b/${filePath}`;
+
+  // Indices of changed lines; group them into hunks with context.
+  const changed = lines.map((line) => line.marker !== " ");
+  const hunks: Array<[number, number]> = [];
+  let start = -1;
+  let end = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (!changed[i]) continue;
+    if (start === -1) {
+      start = i;
+      end = i;
+    } else if (i - end <= contextLines * 2) {
+      end = i;
+    } else {
+      hunks.push([start, end]);
+      start = i;
+      end = i;
+    }
+  }
+  if (start !== -1) hunks.push([start, end]);
+
+  // Whole-diff fallback: no changed lines means the entity moved wholesale
+  // (pure reorder); render the first maxLines lines as one hunk.
+  const hunkRanges = hunks.length
+    ? hunks.map(([s, e]) => [
+        Math.max(0, s - contextLines),
+        Math.min(lines.length, e + contextLines + 1),
+      ])
+    : [[0, Math.min(lines.length, maxLines)]];
+  const fallbackTruncated = !hunks.length && lines.length > maxLines;
+
+  // Line numbers of the first kept line per side, computed up front.
+  const numbering: Array<[number, number]> = [];
+  {
+    let o = opts.oldStart ?? 1;
+    let n = opts.newStart ?? 1;
+    for (const line of lines) {
+      numbering.push([o, n]);
+      if (line.marker !== "+") o++;
+      if (line.marker !== "-") n++;
+    }
+  }
+
+  let truncated = false;
+  let emitted = 0;
+  const parts: string[] = [header];
+  for (const [from, to] of hunkRanges) {
+    if (emitted >= maxLines) {
+      truncated = true;
+      break;
+    }
+    const kept = lines.slice(from, to);
+    const capped = kept.slice(0, Math.max(0, maxLines - emitted));
+    if (capped.length < kept.length) truncated = true;
+    if (!capped.length) break;
+    const [oStart] = numbering[from];
+    const [, nStart] = numbering[from];
+    const oCount = capped.filter((line) => line.marker !== "+").length;
+    const nCount = capped.filter((line) => line.marker !== "-").length;
+    parts.push(
+      `@@ -${oCount ? oStart : oStart - 1},${oCount} +${nCount ? nStart : nStart - 1},${nCount} @@`,
+    );
+    for (const line of capped) {
+      parts.push(`${line.marker} ${line.text}`);
+    }
+    emitted += capped.length;
+  }
+  return { patch: parts.join("\n"), truncated: truncated || fallbackTruncated };
 }
 
 // sem diff emits per-line entity ids for granular entities (properties,

@@ -1924,6 +1924,83 @@ describe("entity summary (experimental, sem)", () => {
     expect(runEntityDiff).toHaveBeenCalledTimes(1);
   });
 
+  it("backfills missing per-entity content from snapshot contents", async () => {
+    const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
+      runEntityDiff: ReturnType<typeof vi.fn>;
+    };
+    runEntityDiff.mockResolvedValue({
+      status: "ok",
+      changes: [
+        {
+          entityId: "src/example.ts::function::one",
+          changeType: "modified",
+          entityType: "function",
+          entityName: "one",
+          startLine: 1,
+          endLine: 3,
+          oldStartLine: 1,
+          oldEndLine: 3,
+          filePath: "src/example.ts",
+          structuralChange: true,
+          // sem omitted content; the server must backfill from the snapshot
+        },
+      ],
+    });
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+    });
+    await plugin(bb);
+    const db = bb.storage.database();
+    const reviewId = randomUUID();
+    seedReview(bb, { id: reviewId, threadId: "thread-entities", createdAt: 1 });
+    db.prepare(
+      "UPDATE review_files SET old_content = ?, new_content = ? WHERE review_id = ? AND path = ?",
+    ).run(
+      "function one() {\n  return 1;\n}",
+      "function one() {\n  return 42;\n}",
+      reviewId,
+      "src/example.ts",
+    );
+
+    await expect(
+      harness.behavior.callRpc("entitySummary", { reviewId }),
+    ).resolves.toMatchObject({
+      status: "ok",
+      changes: [
+        {
+          entityId: "src/example.ts::function::one",
+          beforeContent: "function one() {\n  return 1;\n}",
+          afterContent: "function one() {\n  return 42;\n}",
+        },
+      ],
+    });
+    // added entities never get old-side content, deleted never new-side
+    runEntityDiff.mockResolvedValue({
+      status: "ok",
+      changes: [
+        {
+          entityId: "src/example.ts::function::gone",
+          changeType: "deleted",
+          entityType: "function",
+          entityName: "gone",
+          startLine: 1,
+          endLine: 2,
+          oldStartLine: 1,
+          oldEndLine: 2,
+          filePath: "src/example.ts",
+          structuralChange: true,
+        },
+      ],
+    });
+    db.prepare("DELETE FROM review_entities WHERE review_id = ?").run(reviewId);
+    await expect(
+      harness.behavior.callRpc("entitySummary", { reviewId }),
+    ).resolves.toMatchObject({
+      status: "ok",
+      changes: [{ beforeContent: null, afterContent: null }],
+    });
+  });
+
   it("reports sem unavailability as a status instead of failing", async () => {
     const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
       runEntityDiff: ReturnType<typeof vi.fn>;

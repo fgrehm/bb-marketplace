@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { entityAnchor, entityContentDiff } from "./sem-outline";
+import {
+  entityAnchor,
+  entityContentDiff,
+  entityContentPatch,
+} from "./sem-outline";
 
 const patch = `@@ -10,7 +10,8 @@ context
  function one() {
@@ -119,5 +123,89 @@ describe("entityContentDiff", () => {
     expect(entityContentDiff(null, "after")).toEqual([]);
     expect(entityContentDiff("before", null)).toEqual([]);
     expect(entityContentDiff(undefined, undefined)).toEqual([]);
+  });
+});
+
+describe("entityContentPatch", () => {
+  const fn = [
+    "function alpha() {",
+    "  const a = 1;",
+    "  const b = 2;",
+    "  const c = 3;",
+    "  const d = 4;",
+    "  const e = 5;",
+    "  const f = 6;",
+    "  const g = 7;",
+    "  const h = 8;",
+    "  return a + b + c + d;",
+    "}",
+  ].join("\n");
+
+  it("trims context around a one-line change to a small hunk", () => {
+    const after = fn.replace("  const e = 5;", "  const e = 50;");
+    const built = entityContentPatch(fn, after, "src/a.ts", {
+      oldStart: 10,
+      newStart: 10,
+    });
+    expect(built).not.toBeNull();
+    expect(built!.truncated).toBe(false);
+    // 3 header lines + 1 hunk header + 3 context + change + 3 context
+    expect(built!.patch.split("\n")).toHaveLength(3 + 1 + 8);
+    expect(built!.patch).toContain("@@ -12,7 +12,7 @@");
+
+    expect(built!.patch).toContain("-   const e = 5;");
+    expect(built!.patch).toContain("+   const e = 50;");
+    // far-apart lines are not dragged along
+    expect(built!.patch).not.toContain("function alpha()");
+    expect(built!.patch).not.toContain("const a = 1;");
+  });
+
+  it("renders one-sided content as a full add or full delete", () => {
+    const added = entityContentPatch(null, "a\nb", "src/a.ts", {
+      newStart: 7,
+    });
+    expect(added!.patch).toContain("@@ -0,0 +7,2 @@");
+    expect(added!.patch).toContain("+ a");
+    const deleted = entityContentPatch("a\nb", null, "src/a.ts", {
+      oldStart: 7,
+    });
+    expect(deleted!.patch).toContain("@@ -7,2 +0,0 @@");
+    expect(deleted!.patch).toContain("- a");
+  });
+
+  it("returns null without content and reports truncation past maxLines", () => {
+    expect(entityContentPatch(null, null, "src/a.ts")).toBeNull();
+    const built = entityContentPatch(
+      "a\nb\nc\nd\ne",
+      "a\nb\nc\nd\ne",
+      "src/a.ts",
+      {
+        maxLines: 2,
+      },
+    );
+    // identical content renders as one hunk capped to maxLines
+    expect(built!.truncated).toBe(true);
+    expect(built!.patch.split("\n")).toHaveLength(3 + 1 + 2);
+  });
+});
+
+describe("entityContentPatch", () => {
+  const fn = [
+    "function alpha() {",
+    "  const a = 1;",
+    "  const b = 2;",
+    "  const c = 3;",
+    "  const d = 4;",
+    "  return a + b + c + d;",
+    "}",
+  ].join("\n");
+
+  it("trims context around a one-line change to a small hunk", () => {
+    const after = fn.replace("  const c = 3;", "  const c = 30;");
+    const built = entityContentPatch(fn, after, "src/a.ts", {
+      oldStart: 10,
+      newStart: 10,
+      ecoute: undefined,
+    } as never);
   });
 });
