@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { entityAnchor } from "./sem-outline";
+import { entityAnchor, entityContentDiff } from "./sem-outline";
 
 const patch = `@@ -10,7 +10,8 @@ context
  function one() {
@@ -98,5 +98,26 @@ describe("entityAnchor", () => {
         patch,
       ),
     ).toBeNull();
+  });
+});
+
+describe("entityContentDiff", () => {
+  it("renders a compact LCS line diff for two-sided content", () => {
+    const lines = entityContentDiff(
+      "function a() {\n  return 1;\n}",
+      "function a() {\n  return 2;\n}",
+    );
+    expect(lines).toEqual([
+      { marker: " ", text: "function a() {" },
+      { marker: "-", text: "  return 1;" },
+      { marker: "+", text: "  return 2;" },
+      { marker: " ", text: "}" },
+    ]);
+  });
+
+  it("returns an empty diff for one-sided or missing content", () => {
+    expect(entityContentDiff(null, "after")).toEqual([]);
+    expect(entityContentDiff("before", null)).toEqual([]);
+    expect(entityContentDiff(undefined, undefined)).toEqual([]);
   });
 });

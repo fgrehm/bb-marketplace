@@ -24,6 +24,7 @@ import {
 import {
   changeTypeLabels,
   entityAnchor,
+  entityContentDiff,
   stableEntityId,
 } from "./lib/sem-outline";
 import type {
@@ -732,12 +733,13 @@ function Composer({
   );
 }
 
-// EXPERIMENTAL: single semantic surface - aggregated "Changes by entity"
-// summary for the whole revision, the only sem-powered surface in the app.
-// Rows jump straight to the diff at the entity anchor when the range has
-// visible lines; otherwise the jump is reported as a miss instead of
-// silently doing nothing.
-function EntitySummary({
+// EXPERIMENTAL: dedicated semantic surface - the "Entities" view mode,
+// fully decoupled from the line diff. Lists changed entities grouped by
+// file; rows expand into per-entity before/after content diffs and a
+// transitive impact list. Jump-to-diff is an optional convenience that
+// switches back to the Diff view at the entity anchor; jumps without a
+// visible anchor are reported as a miss instead of silently doing nothing.
+function EntityExplorer({
   changes,
   onLoadImpact,
   impacts,
@@ -753,6 +755,14 @@ function EntitySummary({
   const visible = hideCosmetics
     ? changes.filter((change) => change.structuralChange !== false)
     : changes;
+  // The server already orders changes by review priority, then path, then
+  // line; grouping by file preserves that order within each file.
+  const byFile = new Map<string, SemEntityChange[]>();
+  for (const change of visible) {
+    const list = byFile.get(change.filePath) ?? [];
+    list.push(change);
+    byFile.set(change.filePath, list);
+  }
   if (!changes.length)
     return (
       <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
@@ -775,135 +785,204 @@ function EntitySummary({
           hide cosmetics
         </label>
       </div>
-      <ul className="mt-1 space-y-0.5">
-        {visible.map((entity) => {
-          const impact = impacts.get(entity.entityId);
-          const expanded = expandedIds.has(entity.entityId);
-          return (
-            <li key={entity.entityId}>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-muted/40"
-                  onClick={() => {
-                    setExpandedIds((current) => {
-                      const next = new Set(current);
-                      if (next.has(entity.entityId)) {
-                        next.delete(entity.entityId);
-                      } else {
-                        next.add(entity.entityId);
-                        onLoadImpact(entity.entityId);
+      {[...byFile.entries()].map(([path, fileChanges]) => (
+        <section key={path} className="mt-2">
+          <p className="truncate font-mono text-[11px] font-semibold text-muted-foreground">
+            {compactPath(path, 40)}
+            <span className="ml-2 font-sans font-normal">
+              {fileChanges.length} entit{fileChanges.length === 1 ? "y" : "ies"}
+            </span>
+          </p>
+          <ul className="mt-0.5 space-y-0.5">
+            {fileChanges.map((entity) => {
+              const impact = impacts.get(entity.entityId);
+              const expanded = expandedIds.has(entity.entityId);
+              const contentDiff = entityContentDiff(
+                entity.beforeContent,
+                entity.afterContent,
+              );
+              const added = contentDiff.filter(
+                (line) => line.marker === "+",
+              ).length;
+              const removed = contentDiff.filter(
+                (line) => line.marker === "-",
+              ).length;
+              return (
+                <li key={entity.entityId}>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-muted/40"
+                      onClick={() => {
+                        setExpandedIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(entity.entityId)) {
+                            next.delete(entity.entityId);
+                          } else {
+                            next.add(entity.entityId);
+                            onLoadImpact(entity.entityId);
+                          }
+                          return next;
+                        });
+                      }}
+                      title={
+                        expanded
+                          ? "Hide changes and impact"
+                          : "Show changes and impact"
                       }
-                      return next;
-                    });
-                  }}
-                  title={expanded ? "Hide impact" : "Show transitive impact"}
-                >
-                  <StateChip
-                    tone={
-                      entity.changeType === "added"
-                        ? "emerald"
-                        : entity.changeType === "deleted"
-                          ? "primary"
-                          : "muted"
-                    }
-                  >
-                    {changeTypeLabels[entity.changeType]}
-                  </StateChip>
-                  <span className="truncate font-mono text-[11px]">
-                    {compactPath(entity.filePath, 28)}{" "}
-                    <strong>{entity.entityName}</strong>
-                  </span>
-                  {expanded && impact ? (
-                    impact.status === "ok" ? (
-                      <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-                        {impact.total} affected
-                      </span>
-                    ) : null
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                  aria-label={`Go to ${entity.entityName}`}
-                  title="Go to diff"
-                  onClick={() => onJump(entity)}
-                >
-                  <Icon name="Target" className="size-3" />
-                </button>
-              </div>
-              {expanded ? (
-                <div className="ml-6 rounded border bg-background p-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Impact
-                    {impact?.status === "ok" &&
-                    impact.resolvedAs &&
-                    impact.resolvedAs.entityId !==
-                      stableEntityId(entity.entityId) ? (
-                      <span
-                        className="ml-1 font-normal normal-case"
-                        title="sem indexes the owning entity, not this granular one"
+                    >
+                      <StateChip
+                        tone={
+                          entity.changeType === "added"
+                            ? "emerald"
+                            : entity.changeType === "deleted"
+                              ? "primary"
+                              : "muted"
+                        }
                       >
-                        (of {impact.resolvedAs.type} {impact.resolvedAs.name})
+                        {changeTypeLabels[entity.changeType]}
+                      </StateChip>
+                      <span className="truncate font-mono text-[11px]">
+                        <strong>{entity.entityName}</strong>
                       </span>
-                    ) : null}
-                  </p>
-                  {impact === undefined ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      Computing impact...
-                    </p>
-                  ) : impact.status === "unavailable" ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      sem impact unavailable: {impact.reason}
-                    </p>
-                  ) : (
-                    <>
-                      <p className="text-[11px] text-muted-foreground">
-                        {impact.total} affected entit
-                        {impact.total === 1 ? "y" : "ies"}
-                        {impact.depth > 1
-                          ? ` (${impact.depth} levels deep)`
-                          : ""}
-                        {impact.tests.length
-                          ? `, ${impact.tests.length} test suite${impact.tests.length === 1 ? "" : "s"}`
-                          : ""}
-                      </p>
-                      {impact.dependents.length ? (
-                        <ul className="mt-1 space-y-0.5">
-                          {impact.dependents.slice(0, 10).map((dependent) => (
-                            <li
-                              key={dependent.entityId}
-                              className="truncate text-[11px]"
+                      {contentDiff.length ? (
+                        <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
+                          <span className="text-green-700 dark:text-green-300">
+                            +{added}
+                          </span>{" "}
+                          <span className="text-red-700 dark:text-red-300">
+                            &minus;{removed}
+                          </span>
+                        </span>
+                      ) : entity.structuralChange === false ? (
+                        <StateChip>cosmetic</StateChip>
+                      ) : null}
+                      {expanded && impact ? (
+                        impact.status === "ok" ? (
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {impact.total} affected
+                          </span>
+                        ) : null
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      aria-label={`Go to ${entity.entityName}`}
+                      title="Show in diff"
+                      onClick={() => onJump(entity)}
+                    >
+                      <Icon name="Target" className="size-3" />
+                    </button>
+                  </div>
+                  {expanded ? (
+                    <div className="ml-6 rounded border bg-background p-2">
+                      {contentDiff.length ? (
+                        <pre className="mb-2 overflow-x-auto whitespace-pre text-[11px] leading-4">
+                          {contentDiff.map((line, index) => (
+                            <div
+                              key={index}
+                              className={
+                                line.marker === "-"
+                                  ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                                  : line.marker === "+"
+                                    ? "bg-green-500/10 text-green-700 dark:text-green-300"
+                                    : "text-muted-foreground"
+                              }
                             >
-                              <span className="font-mono text-muted-foreground">
-                                {dependent.file}:{dependent.lines[0]}
-                              </span>{" "}
-                              {dependent.name} ({dependent.type})
-                            </li>
+                              {`${line.marker} ${line.text}`}
+                            </div>
                           ))}
-                        </ul>
+                        </pre>
+                      ) : entity.beforeContent != null ||
+                        entity.afterContent != null ? (
+                        <pre className="mb-2 overflow-x-auto whitespace-pre text-[11px] leading-4 text-muted-foreground">
+                          {(entity.beforeContent ?? entity.afterContent ?? "")
+                            .split("\n")
+                            .map((text, index) => (
+                              <div key={index}>{`  ${text}`}</div>
+                            ))}
+                        </pre>
                       ) : (
-                        <p className="text-[11px] text-muted-foreground">
-                          No dependents found outside this revision.
+                        <p className="mb-2 text-[11px] text-muted-foreground">
+                          Content preview not available for this entity.
                         </p>
                       )}
-                      {impact.tests.length ? (
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                          affected tests:{" "}
-                          {impact.tests
-                            .slice(0, 3)
-                            .map((test) => test.name)
-                            .join(", ")}
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Impact
+                        {impact?.status === "ok" &&
+                        impact.resolvedAs &&
+                        impact.resolvedAs.entityId !==
+                          stableEntityId(entity.entityId) ? (
+                          <span
+                            className="ml-1 font-normal normal-case"
+                            title="sem indexes the owning entity, not this granular one"
+                          >
+                            (of {impact.resolvedAs.type}{" "}
+                            {impact.resolvedAs.name})
+                          </span>
+                        ) : null}
+                      </p>
+                      {impact === undefined ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          Computing impact...
                         </p>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
+                      ) : impact.status === "unavailable" ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          sem impact unavailable: {impact.reason}
+                        </p>
+                      ) : (
+                        <>
+                          <p className="text-[11px] text-muted-foreground">
+                            {impact.total} affected entit
+                            {impact.total === 1 ? "y" : "ies"}
+                            {impact.depth > 1
+                              ? ` (${impact.depth} levels deep)`
+                              : ""}
+                            {impact.tests.length
+                              ? `, ${impact.tests.length} test suite${impact.tests.length === 1 ? "" : "s"}`
+                              : ""}
+                          </p>
+                          {impact.dependents.length ? (
+                            <ul className="mt-1 space-y-0.5">
+                              {impact.dependents
+                                .slice(0, 10)
+                                .map((dependent) => (
+                                  <li
+                                    key={dependent.entityId}
+                                    className="truncate text-[11px]"
+                                  >
+                                    <span className="font-mono text-muted-foreground">
+                                      {dependent.file}:{dependent.lines[0]}
+                                    </span>{" "}
+                                    {dependent.name} ({dependent.type})
+                                  </li>
+                                ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-muted-foreground">
+                              No dependents found outside this revision.
+                            </p>
+                          )}
+                          {impact.tests.length ? (
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              affected tests:{" "}
+                              {impact.tests
+                                .slice(0, 3)
+                                .map((test) => test.name)
+                                .join(", ")}
+                            </p>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
       {!visible.length ? (
         <p className="mt-1 text-[11px] text-muted-foreground">
           All changes are cosmetic-only (formatting, comments) - sem found no
@@ -1039,7 +1118,10 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   } | null>(null);
   // EXPERIMENTAL: single semantic surface (revision-level "Changes by
   // entity" summary), fully off by default.
-  const [entitiesEnabled, setEntitiesEnabled] = useState(false);
+  // EXPERIMENTAL: dedicated semantic surface. `entitiesView` switches the
+  // workspace between the classic line diff and the decoupled entities view;
+  // summary data stays loaded across switches so jump-to-diff keeps working.
+  const [entitiesView, setEntitiesView] = useState(false);
   const [entitySummaryChanges, setEntitySummaryChanges] = useState<
     SemEntityChange[] | null
   >(null);
@@ -1070,18 +1152,20 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       );
     }
   }
-  // Refresh the summary whenever the toggle is on and the revision changes.
+  // Reset entity data when the revision changes (snapshot contents change).
   useEffect(() => {
-    if (!entitiesEnabled || !review) {
-      setEntitySummaryChanges(null);
-      setEntitySummaryReason(null);
-      setEntityJumpMiss(null);
-      return;
-    }
+    setEntitySummaryChanges(null);
+    setEntitySummaryReason(null);
+    setEntityJumpMiss(null);
+  }, [review?.id]);
+  // Load the summary whenever the entities view is active; keep it when
+  // switching back to the Diff view so jump anchors keep working.
+  useEffect(() => {
+    if (!entitiesView || !review) return;
     setEntityJumpMiss(null);
     void loadEntitySummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entitiesEnabled, review?.id]);
+  }, [entitiesView, review?.id]);
 
   // Poll for the jumped entity's anchor after a file switch (same pattern as
   // the late-looking-annotation locate flow).
@@ -1235,7 +1319,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   // Anchors come from the revision-level summary, filtered to the file
   // currently on screen.
   const entityMarkers = useMemo(() => {
-    if (!entitiesEnabled || !entitySummaryChanges || !file) return [];
+    if (entitiesView || !entitySummaryChanges || !file) return [];
     return entitySummaryChanges
       .filter((entity) => entity.filePath === file.path)
       .map((entity) => ({ entity, anchor: entityAnchor(entity, file.patch) }))
@@ -1258,7 +1342,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           entityId: item.entity.entityId,
         } as const,
       }));
-  }, [entitiesEnabled, entitySummaryChanges, file]);
+  }, [entitiesView, entitySummaryChanges, file]);
 
   const currentAnnotations = useMemo<
     DiffLineAnnotation<DiffAnnotation>[]
@@ -1468,12 +1552,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       return;
     }
     setEntityJumpMiss(null);
+    if (entitiesView) setEntitiesView(false);
     if (entity.filePath !== filePath) chooseFile(entity.filePath);
     setPendingEntityJump(entity.entityId);
-  }
-
-  function toggleEntities(next: boolean) {
-    setEntitiesEnabled(next);
   }
 
   async function addFileComment() {
@@ -1990,10 +2071,18 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 </Button>
                 <Button
                   size="sm"
-                  variant={entitiesEnabled ? "default" : "outline"}
-                  onClick={() => toggleEntities(!entitiesEnabled)}
-                  aria-pressed={entitiesEnabled}
-                  aria-label="Entities (experimental)"
+                  variant={!entitiesView ? "secondary" : "outline"}
+                  onClick={() => setEntitiesView(false)}
+                  aria-pressed={!entitiesView}
+                >
+                  Diff
+                </Button>
+                <Button
+                  size="sm"
+                  variant={entitiesView ? "secondary" : "outline"}
+                  onClick={() => setEntitiesView(true)}
+                  aria-pressed={entitiesView}
+                  aria-label="Entities view (experimental)"
                 >
                   Entities
                 </Button>
@@ -2024,107 +2113,107 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                   {isViewed ? "Viewed ✓" : "Viewed & next"}
                 </Button>
               </div>
-              {entitiesEnabled &&
-              entitySummaryChanges &&
-              !entitySummaryReason ? (
-                <div className="mx-2 mt-2 lg:mx-4">
-                  <EntitySummary
-                    changes={entitySummaryChanges}
-                    onLoadImpact={loadEntityImpact}
-                    impacts={entityImpacts}
-                    onJump={jumpToEntity}
-                  />
-                </div>
-              ) : null}
-              {entitiesEnabled && entitySummaryReason ? (
-                <div className="mx-2 mt-2 lg:mx-4">
-                  <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-                    sem is unavailable: {entitySummaryReason}
-                  </p>
-                </div>
-              ) : null}
-              {entitiesEnabled && entityJumpMiss ? (
-                <div className="mx-2 mt-2 lg:mx-4">
-                  <p className="text-[11px] text-muted-foreground">
-                    {entityJumpMiss} has no visible lines in the diff, so it
-                    cannot be located.
-                  </p>
-                </div>
-              ) : null}
-              <div className="p-2 lg:p-4">
-                {!file ? (
-                  <p className="text-sm text-muted-foreground">
-                    No changed files.
-                  </p>
-                ) : file.binary ? (
-                  <p className="text-sm text-muted-foreground">
-                    {file.path} is binary and cannot be annotated.
-                  </p>
-                ) : !parsed ? (
-                  <p className="text-sm text-muted-foreground">
-                    No patch is available for {file.path}.
-                  </p>
-                ) : (
-                  <>
-                    {file.truncated ? (
-                      <p className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
-                        This patch is truncated. Comments still refer only to
-                        the visible immutable snapshot.
-                      </p>
-                    ) : null}
-                    <FileCommentsBar
-                      path={file.path}
-                      annotations={review.annotations.filter(
-                        (annotation) =>
-                          annotation.fileLevel &&
-                          annotation.filePath === file.path,
-                      )}
-                      selected={selected}
-                      busy={busy}
-                      composerOpen={fileComposerOpen}
-                      composerBody={fileCommentBody}
-                      onComposerBody={setFileCommentBody}
-                      onOpenComposer={() => {
-                        setFileCommentBody("");
-                        setFileComposerOpen(true);
-                      }}
-                      onCloseComposer={() => {
-                        setFileCommentBody("");
-                        setFileComposerOpen(false);
-                      }}
-                      onAdd={() => void addFileComment()}
-                      onToggle={toggleSelected}
-                      onRemove={(id) => void remove(id)}
-                      onResolve={(annotation) => void resolve(annotation)}
-                      onSuggestion={(annotation, accept) =>
-                        void decideSuggestion(annotation, accept)
-                      }
-                      onReply={reply}
+              {entitiesView ? (
+                <div className="p-2 lg:p-4">
+                  {entitySummaryReason ? (
+                    <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                      sem is unavailable: {entitySummaryReason}
+                    </p>
+                  ) : entitySummaryChanges ? (
+                    <EntityExplorer
+                      changes={entitySummaryChanges}
+                      onLoadImpact={loadEntityImpact}
+                      impacts={entityImpacts}
+                      onJump={jumpToEntity}
                     />
-                    <div className="overflow-hidden rounded-md border bg-card">
-                      <PierreReviewDiff
-                        fileDiff={parsed}
-                        lineAnnotations={currentAnnotations}
-                        wrapLines={wrapLines}
-                        loadDiffFiles={loadDiffFiles}
-                        composer={{
-                          file,
-                          selection,
-                          body,
-                          busy,
-                          onBody: setBody,
-                          onAdd: () => void add(),
-                          onCancel: () => {
-                            setSelection(null);
-                            setBody("");
-                          },
+                  ) : (
+                    <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                      Computing entity changes...
+                    </p>
+                  )}
+                  {entityJumpMiss ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      {entityJumpMiss} has no visible lines in the diff, so it
+                      cannot be located.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="p-2 lg:p-4">
+                  {!file ? (
+                    <p className="text-sm text-muted-foreground">
+                      No changed files.
+                    </p>
+                  ) : file.binary ? (
+                    <p className="text-sm text-muted-foreground">
+                      {file.path} is binary and cannot be annotated.
+                    </p>
+                  ) : !parsed ? (
+                    <p className="text-sm text-muted-foreground">
+                      No patch is available for {file.path}.
+                    </p>
+                  ) : (
+                    <>
+                      {file.truncated ? (
+                        <p className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
+                          This patch is truncated. Comments still refer only to
+                          the visible immutable snapshot.
+                        </p>
+                      ) : null}
+                      <FileCommentsBar
+                        path={file.path}
+                        annotations={review.annotations.filter(
+                          (annotation) =>
+                            annotation.fileLevel &&
+                            annotation.filePath === file.path,
+                        )}
+                        selected={selected}
+                        busy={busy}
+                        composerOpen={fileComposerOpen}
+                        composerBody={fileCommentBody}
+                        onComposerBody={setFileCommentBody}
+                        onOpenComposer={() => {
+                          setFileCommentBody("");
+                          setFileComposerOpen(true);
                         }}
-                        onSelect={handleDiffSelection}
+                        onCloseComposer={() => {
+                          setFileCommentBody("");
+                          setFileComposerOpen(false);
+                        }}
+                        onAdd={() => void addFileComment()}
+                        onToggle={toggleSelected}
+                        onRemove={(id) => void remove(id)}
+                        onResolve={(annotation) => void resolve(annotation)}
+                        onSuggestion={(annotation, accept) =>
+                          void decideSuggestion(annotation, accept)
+                        }
+                        onReply={reply}
                       />
-                    </div>
-                  </>
-                )}
-              </div>
+                      <div className="overflow-hidden rounded-md border bg-card">
+                        <PierreReviewDiff
+                          fileDiff={parsed}
+                          lineAnnotations={currentAnnotations}
+                          wrapLines={wrapLines}
+                          loadDiffFiles={loadDiffFiles}
+                          composer={{
+                            file,
+                            selection,
+                            body,
+                            busy,
+                            onBody: setBody,
+                            onAdd: () => void add(),
+                            onCancel: () => {
+                              setSelection(null);
+                              setBody("");
+                            },
+                          }}
+                          onSelect={handleDiffSelection}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </section>
             <aside className="hidden min-h-0 overflow-auto border-l bg-card p-3 lg:flex lg:flex-col">
               {review.id !== revisions[0]?.id ? (

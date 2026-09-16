@@ -450,9 +450,9 @@ describe("entity summary flow (semantic entry)", () => {
     );
 
     await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
+      slot.getByRole("button", { name: "Entities view (experimental)" });
     });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
+    slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await vi.waitFor(() => {
       expect(summaryCalls).toContainEqual({ reviewId: review.id });
       // priority order: deleted first, then modified
@@ -499,15 +499,110 @@ describe("entity summary flow (semantic entry)", () => {
     );
 
     await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
+      slot.getByRole("button", { name: "Entities view (experimental)" });
     });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
+    slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await vi.waitFor(() => {
       slot.getByText("modified");
     });
     slot.getByRole("button", { name: "Go to mod" }).click();
     // jump only switches file/pends the anchor; no error surfaced
     expect(slot.queryByText(/sem is unavailable/)).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("groups entities by file and renders per-entity content diffs", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = {
+      ...reviewFixture(),
+      files: [
+        reviewFixture().files[0],
+        {
+          path: "src/other.ts",
+          previousPath: null,
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+          patch: `diff --git a/src/other.ts b/src/other.ts
+--- a/src/other.ts
++++ b/src/other.ts
+@@ -1,2 +1,3 @@
+ first
++second
+ third
+`,
+          truncated: false,
+        },
+      ],
+    };
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          entitySummary: async () => ({
+            status: "ok",
+            reason: null,
+            changes: [
+              {
+                entityId: "src/example.ts::function::alpha",
+                changeType: "modified",
+                entityType: "function",
+                entityName: "alpha",
+                filePath: "src/example.ts",
+                startLine: 5,
+                endLine: 6,
+                structuralChange: true,
+                beforeContent: "function alpha() {\n  return 1;\n}",
+                afterContent: "function alpha() {\n  return 42;\n}",
+              },
+              {
+                entityId: "src/other.ts::function::beta",
+                changeType: "added",
+                entityType: "function",
+                entityName: "beta",
+                filePath: "src/other.ts",
+                startLine: 2,
+                endLine: 3,
+                structuralChange: true,
+                beforeContent: null,
+                afterContent: "function beta() {\n  return 2;\n}",
+              },
+            ],
+          }),
+        } as any,
+      },
+    );
+
+    await vi.waitFor(() => {
+      slot.getByRole("button", { name: "Entities view (experimental)" });
+    });
+    slot.getByRole("button", { name: "Entities view (experimental)" }).click();
+    // grouped by file, one count chip per file section
+    await vi.waitFor(() => {
+      expect(slot.getAllByText(/entit(y|ies)$/)).toHaveLength(2);
+    });
+    // alpha expands into a before/after content diff
+    slot.getByRole("button", { name: /modified alpha/ }).click();
+    await vi.waitFor(() => {
+      expect(slot.getAllByText(/return (1|42);/).length).toBeGreaterThanOrEqual(
+        2,
+      );
+    });
+    await vi.waitFor(() => {
+      expect(slot.getAllByText(/return (1|42);/).length).toBeGreaterThanOrEqual(
+        2,
+      );
+    });
+    // beta is one-sided (added): the after side renders as context
+    slot.getByText(/beta/).click();
+    await vi.waitFor(() => {
+      slot.getByText(/function beta/);
+    });
     slot.lifecycle.unmount();
   });
 
@@ -552,9 +647,9 @@ describe("entity summary flow (semantic entry)", () => {
     );
 
     await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
+      slot.getByRole("button", { name: "Entities view (experimental)" });
     });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
+    slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await vi.waitFor(() => {
       slot.getByText("modified");
     });
@@ -596,9 +691,9 @@ describe("entity summary flow (semantic entry)", () => {
     );
 
     await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
+      slot.getByRole("button", { name: "Entities view (experimental)" });
     });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
+    slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await vi.waitFor(() => {
       slot.getByText("modified");
     });
@@ -628,9 +723,9 @@ describe("entity summary flow (semantic entry)", () => {
     );
 
     await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
+      slot.getByRole("button", { name: "Entities view (experimental)" });
     });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
+    slot.getByRole("button", { name: "Entities view (experimental)" }).click();
     await slot.findByText(/sem is unavailable: sem binary not found/);
     slot.lifecycle.unmount();
   });

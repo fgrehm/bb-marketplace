@@ -237,6 +237,10 @@ export const rpcContract = defineRpcContract({
   },
 
   // EXPERIMENTAL: aggregated entity summary over the whole revision.
+  // EXPERIMENTAL: aggregated entity summary across the revision, ordered by
+  // review priority (structural churn first). One sem run per revision,
+  // shared with concurrent callers. Rows carry capped per-entity content so
+  // the dedicated entities view can render before/after diffs standalone.
   entitySummary: {
     input: z.object({ reviewId: z.string().uuid() }).strict(),
     output: z.object({
@@ -260,6 +264,8 @@ export const rpcContract = defineRpcContract({
             startLine: z.number().int().nullable(),
             endLine: z.number().int().nullable(),
             structuralChange: z.boolean().nullable(),
+            beforeContent: z.string().nullable().optional(),
+            afterContent: z.string().nullable().optional(),
           })
           .strict(),
       ),
@@ -1120,6 +1126,8 @@ export default async function plugin(bb: BbPluginApi) {
           startLine: change.startLine,
           endLine: change.endLine,
           structuralChange: change.structuralChange,
+          beforeContent: change.beforeContent ?? null,
+          afterContent: change.afterContent ?? null,
         })),
       };
     },
