@@ -2044,4 +2044,63 @@ describe("entity summary (experimental, sem)", () => {
       }),
     ).rejects.toThrow("Review revision was not found.");
   });
+
+  it("lists recent commits from the environment checkout", async () => {
+    const { execSync } = (await import("node:child_process")) as {
+      execSync: (cmd: string, opts?: unknown) => Buffer;
+    };
+    const { mkdtempSync } = (await import("node:fs")) as {
+      mkdtempSync: (prefix: string) => string;
+    };
+    const tmp = mkdtempSync("/tmp/git-log-test-");
+    execSync("git init -q", { cwd: tmp });
+    execSync("git -C . config user.email t@t", { cwd: tmp });
+    execSync("git -C . config user.name Tester", { cwd: tmp });
+    execSync("echo one > f.txt && git add f.txt && git commit -qm 'first'", {
+      cwd: tmp,
+    });
+    execSync("echo two > f.txt && git add f.txt && git commit -qm 'second'", {
+      cwd: tmp,
+    });
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+      sdk: {
+        threads: { get: async () => ({ environmentId: "env-git" }) },
+        environments: {
+          get: async () => ({ path: tmp, isGitRepo: true }),
+        },
+      },
+    });
+    await plugin(bb);
+
+    await expect(
+      harness.behavior.callRpc("recentCommits", { threadId: "thread-git" }),
+    ).resolves.toMatchObject({
+      status: "ok",
+      commits: [
+        { subject: "second", author: "Tester" },
+        { subject: "first", author: "Tester" },
+      ],
+    });
+  });
+
+  it("reports unavailability without a git checkout", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+      sdk: {
+        threads: { get: async () => ({ environmentId: "env-nogit" }) },
+        environments: {
+          get: async () => ({ path: "/tmp", isGitRepo: false }),
+        },
+      },
+    });
+    await plugin(bb);
+    await expect(
+      harness.behavior.callRpc("recentCommits", { threadId: "thread-nogit" }),
+    ).resolves.toEqual({
+      status: "unavailable",
+      reason: "The review target needs a git checkout.",
+      commits: [],
+    });
+  });
 });

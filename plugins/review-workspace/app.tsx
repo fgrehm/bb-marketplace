@@ -1333,6 +1333,47 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     "uncommitted" | "commit" | "branch"
   >("uncommitted");
   const [targetValue, setTargetValue] = useState("");
+  const [recentCommits, setRecentCommits] = useState<{
+    status: "ok" | "unavailable";
+    reason: string | null;
+    commits: Array<{
+      sha: string;
+      short: string;
+      date: string;
+      subject: string;
+      author: string;
+    }>;
+  } | null>(null);
+  // Load the checkout's recent commits whenever the commit target is picked;
+  // they feed the picker so shas never have to be pasted by hand.
+  useEffect(() => {
+    if (targetKind !== "commit") return;
+    let cancelled = false;
+    setRecentCommits(null);
+    rpc
+      .call("recentCommits", { threadId, limit: 15 })
+      .then((result) => {
+        if (cancelled) return;
+        setRecentCommits(
+          result as {
+            status: "ok" | "unavailable";
+            reason: string | null;
+            commits: never[];
+          },
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRecentCommits({
+          status: "unavailable",
+          reason: "Unable to list commits.",
+          commits: [],
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [targetKind, threadId, rpc]);
   const [fileComposerOpen, setFileComposerOpen] = useState(false);
   const [fileCommentBody, setFileCommentBody] = useState("");
   const scrollSectionRef = useRef<HTMLElement>(null);
@@ -1973,6 +2014,37 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           <option value="commit">Specific commit</option>
           <option value="branch">Branch vs base</option>
         </select>
+        {targetKind === "commit" ? (
+          recentCommits === null ? (
+            <span className="text-[11px] text-muted-foreground">
+              Loading commits...
+            </span>
+          ) : recentCommits.status === "ok" && recentCommits.commits.length ? (
+            <select
+              aria-label="Recent commits"
+              value={
+                recentCommits.commits.some(
+                  (commit) => commit.sha === targetValue,
+                )
+                  ? targetValue
+                  : ""
+              }
+              onChange={(event) => setTargetValue(event.target.value)}
+              className="h-8 max-w-64 rounded-md border bg-background px-1 text-xs"
+            >
+              <option value="">Pick a commit...</option>
+              {recentCommits.commits.map((commit) => (
+                <option
+                  key={commit.sha}
+                  value={commit.sha}
+                  title={`${commit.author} · ${commit.date}`}
+                >
+                  {`${commit.short} · ${commit.subject.slice(0, 60)} (${commit.date})`}
+                </option>
+              ))}
+            </select>
+          ) : null
+        ) : null}
         {targetKind !== "uncommitted" ? (
           <input
             value={targetValue}

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { runRecentCommits } from "./lib/git-log";
 import { normalizeChangeKind } from "./lib/utils";
 import {
   ENTITY_CONTENT_MAX_CHARS,
@@ -270,6 +271,32 @@ export const rpcContract = defineRpcContract({
             structuralChange: z.boolean().nullable(),
             beforeContent: z.string().nullable().optional(),
             afterContent: z.string().nullable().optional(),
+          })
+          .strict(),
+      ),
+    }),
+  },
+
+  // EXPERIMENTAL: recent commits of the thread's environment checkout, for
+  // the review target picker (pick a commit instead of pasting a sha).
+  recentCommits: {
+    input: z
+      .object({
+        threadId: z.string().min(1),
+        limit: z.number().int().min(1).max(50).optional(),
+      })
+      .strict(),
+    output: z.object({
+      status: z.enum(["ok", "unavailable"]),
+      reason: z.string().nullable(),
+      commits: z.array(
+        z
+          .object({
+            sha: z.string(),
+            short: z.string(),
+            date: z.string(),
+            subject: z.string(),
+            author: z.string(),
           })
           .strict(),
       ),
@@ -1130,6 +1157,38 @@ export default async function plugin(bb: BbPluginApi) {
     },
     async refreshReview(input) {
       return { review: await refreshReviewImpl(input) };
+    },
+    async recentCommits({ threadId, limit }) {
+      const thread = await bb.sdk.threads.get({ threadId });
+      if (!thread?.environmentId)
+        return {
+          status: "unavailable" as const,
+          reason: "This thread has no environment.",
+          commits: [],
+        };
+      const env = await bb.sdk.environments.get({
+        environmentId: thread.environmentId,
+      });
+      if (!env?.path || !env.isGitRepo)
+        return {
+          status: "unavailable" as const,
+          reason: "The review target needs a git checkout.",
+          commits: [],
+        };
+      try {
+        return {
+          status: "ok" as const,
+          reason: null,
+          commits: await runRecentCommits(env.path, limit ?? 15),
+        };
+      } catch (cause) {
+        return {
+          status: "unavailable" as const,
+          reason:
+            cause instanceof Error ? cause.message : "git log failed to run",
+          commits: [],
+        };
+      }
     },
     addAnnotation(input) {
       return { annotation: addAnnotationInternal(input.reviewId, input) };
