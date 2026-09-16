@@ -198,45 +198,7 @@ export const rpcContract = defineRpcContract({
     output: z.object({ summary: z.string().nullable() }),
   },
 
-  // EXPERIMENTAL: entity-level diff outline via sem.
-  entities: {
-    input: z
-      .object({
-        reviewId: z.string().uuid(),
-        filePath: z.string().min(1),
-      })
-      .strict(),
-    output: z.object({
-      status: z.enum(["ok", "unavailable"]),
-      reason: z.string().nullable(),
-      changes: z.array(
-        z
-          .object({
-            entityId: z.string(),
-            changeType: z.enum([
-              "added",
-              "modified",
-              "deleted",
-              "moved",
-              "renamed",
-              "reordered",
-            ]),
-            entityType: z.string(),
-            entityName: z.string(),
-            startLine: z.number().int().nullable(),
-            endLine: z.number().int().nullable(),
-            oldStartLine: z.number().int().nullable(),
-            oldEndLine: z.number().int().nullable(),
-            filePath: z.string(),
-            structuralChange: z.boolean().nullable(),
-            beforeContent: z.string().nullable().optional(),
-            afterContent: z.string().nullable().optional(),
-          })
-          .strict(),
-      ),
-    }),
-  },
-  // EXPERIMENTAL: transitive dependents/tests for an outlined entity.
+  // EXPERIMENTAL: transitive dependents/tests for a summarized entity.
   entityImpact: {
     input: z
       .object({
@@ -891,52 +853,86 @@ export default async function plugin(bb: BbPluginApi) {
     return read(id)!;
   }
 
-  // EXPERIMENTAL: entity-level changes for a single file of a revision,
-  // computed lazily through the sem CLI and cached per (revision, file).
-  async function entitiesForFile(
-    reviewId: string,
-    filePath: string,
-  ): Promise<{
+  // EXPERIMENTAL: entity-level changes for a whole review revision, computed
+  // lazily with a single sem CLI run over the revision's immutable snapshot
+  // contents and cached per (revision, file). sem never touches git, so
+  // results are identical across threads reviewing the same snapshot.
+  type EntityRevisionResult = {
     status: "ok" | "unavailable";
     reason: string | null;
-    changes: SemEntityChange[];
-  }> {
-    if (!read(reviewId)) throw new Error("Review revision was not found.");
-    const cached = db
-      .prepare(
-        "SELECT payload FROM review_entities WHERE review_id = ? AND path = ?",
-      )
-      .get(reviewId, filePath) as { payload: string } | undefined;
-    if (cached) {
-      const payload = JSON.parse(cached.payload) as
-        | { status: "ok"; changes: SemEntityChange[] }
-        | { status: "unavailable"; reason: string };
-      return {
-        status: payload.status,
-        reason: payload.status === "ok" ? null : payload.reason,
-        changes: payload.status === "ok" ? payload.changes : [],
-      };
-    }
+    byPath: Map<string, SemEntityChange[]>;
+  };
+
+  // Concurrent callers (summary + impact lookups) share one computation.
+  const inFlightEntityRuns = new Map<string, Promise<EntityRevisionResult>>();
+
+  async function computeEntitiesForRevision(
+    reviewId: string,
+  ): Promise<EntityRevisionResult> {
     const review = read(reviewId);
     if (!review) throw new Error("Review revision was not found.");
+    const textFiles = review.files.filter((file) => !file.binary);
     // Snapshot contents live in review_files.old_content / new_content.
     // Computing from the immutable stored blobs keeps results identical
     // across refreshes and keeps sem entirely off git.
     const contentQuery = db.prepare(
       "SELECT old_content, new_content FROM review_files WHERE review_id = ? AND path = ?",
     );
-    const inputs = review.files
-      .filter((file) => !file.binary)
-      .map((file) => {
-        const contents = contentQuery.get(review.id, file.path) as
-          | { old_content: string | null; new_content: string | null }
-          | undefined;
+    const upsertEntity = db.prepare(
+      "INSERT OR REPLACE INTO review_entities (review_id, path, payload, updated_at) VALUES (?, ?, ?, ?)",
+    );
+    const readCache = (): EntityRevisionResult | null => {
+      const rows = db
+        .prepare(
+          "SELECT path, payload FROM review_entities WHERE review_id = ?",
+        )
+        .all(reviewId) as Array<{ path: string; payload: string }>;
+      const payloads = new Map<
+        string,
+        | { status: "ok"; changes: SemEntityChange[] }
+        | { status: "unavailable"; reason: string }
+      >();
+      for (const row of rows) {
+        try {
+          payloads.set(row.path, JSON.parse(row.payload));
+        } catch {
+          return null;
+        }
+      }
+      // A partial cache (a file without a row, e.g. written by an older
+      // plugin version) triggers recomputation.
+      if (textFiles.some((file) => !payloads.has(file.path))) return null;
+      const unavailable = textFiles
+        .map((file) => payloads.get(file.path))
+        .find((payload) => payload?.status === "unavailable");
+      if (unavailable) {
         return {
-          filePath: file.path,
-          beforeContent: contents?.old_content ?? null,
-          afterContent: contents?.new_content ?? null,
+          status: "unavailable",
+          reason: unavailable.reason,
+          byPath: new Map(),
         };
-      });
+      }
+      const byPath = new Map<string, SemEntityChange[]>();
+      for (const file of textFiles) {
+        byPath.set(
+          file.path,
+          (payloads.get(file.path) as { changes: SemEntityChange[] }).changes ??
+            [],
+        );
+      }
+      return { status: "ok", reason: null, byPath };
+    };
+    const cached = readCache();
+    if (cached) return cached;
+    const inputs = textFiles.map((file) => {
+      const contents = contentQuery.get(review.id, file.path) as
+        { old_content: string | null; new_content: string | null } | undefined;
+      return {
+        filePath: file.path,
+        beforeContent: contents?.old_content ?? null,
+        afterContent: contents?.new_content ?? null,
+      };
+    });
     const result = await runEntityDiff(inputs);
     const perPath = new Map<string, SemEntityChange[]>();
     if (result.status === "ok") {
@@ -947,12 +943,8 @@ export default async function plugin(bb: BbPluginApi) {
       }
     }
     const now = Date.now();
-    const upsertEntity = db.prepare(
-      "INSERT OR REPLACE INTO review_entities (review_id, path, payload, updated_at) VALUES (?, ?, ?, ?)",
-    );
     db.transaction(() => {
-      for (const file of review.files) {
-        if (file.binary) continue;
+      for (const file of textFiles) {
         const pathChanges =
           result.status === "ok" ? (perPath.get(file.path) ?? []) : [];
         const payload =
@@ -965,8 +957,20 @@ export default async function plugin(bb: BbPluginApi) {
     return {
       status: result.status,
       reason: result.status === "ok" ? null : result.reason,
-      changes: result.status === "ok" ? (perPath.get(filePath) ?? []) : [],
+      byPath: result.status === "ok" ? perPath : new Map(),
     };
+  }
+
+  function entitiesForRevision(
+    reviewId: string,
+  ): Promise<EntityRevisionResult> {
+    const inFlight = inFlightEntityRuns.get(reviewId);
+    if (inFlight) return inFlight;
+    const run = computeEntitiesForRevision(reviewId).finally(() => {
+      inFlightEntityRuns.delete(reviewId);
+    });
+    inFlightEntityRuns.set(reviewId, run);
+    return run;
   }
 
   // Review-priority order for the summary: structural churn first
@@ -1081,26 +1085,16 @@ export default async function plugin(bb: BbPluginApi) {
     // EXPERIMENTAL: entity-level diff outline. Cached per (revision, file);
     // computed with sem from the immutable snapshot contents (via sem's stdin
     // mode), never from git, so results stay identical across refreshes.
-    async entities({ reviewId, filePath }) {
-      return entitiesForFile(reviewId, filePath);
-    },
-
     // EXPERIMENTAL: aggregated entity summary across the revision,
-    // ordered by review priority (structural churn first).
+    // ordered by review priority (structural churn first). One sem run
+    // per revision, shared with concurrent callers.
     async entitySummary({ reviewId }) {
       const review = read(reviewId);
       if (!review) throw new Error("Review revision was not found.");
-      const files = review.files.filter((file) => !file.binary);
-      const perFile = await Promise.all(
-        files.map((file) =>
-          entitiesForFile(reviewId, file.path).catch(() => ({
-            status: "unavailable" as const,
-            reason: "entity diff failed",
-            changes: [],
-          })),
-        ),
-      );
-      const changes = perFile.flatMap((entry) => entry.changes);
+      const { status, reason, byPath } = await entitiesForRevision(reviewId);
+      const changes = review.files
+        .filter((file) => !file.binary)
+        .flatMap((file) => byPath.get(file.path) ?? []);
       changes.sort((a, b) => {
         const priority =
           (CHANGE_PRIORITY[a.changeType] ?? 3) -
@@ -1111,18 +1105,12 @@ export default async function plugin(bb: BbPluginApi) {
           (a.startLine ?? 0) - (b.startLine ?? 0)
         );
       });
-      const unavailable = perFile.some(
-        (entry) => entry.status === "unavailable",
-      );
       return {
         status:
-          changes.length || !unavailable
+          changes.length || status === "ok"
             ? ("ok" as const)
             : ("unavailable" as const),
-        reason:
-          unavailable && !changes.length
-            ? "sem unavailable for this revision"
-            : null,
+        reason: status === "unavailable" && !changes.length ? reason : null,
         changes: changes.map((change) => ({
           entityId: change.entityId,
           changeType: change.changeType,

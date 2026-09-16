@@ -1822,7 +1822,7 @@ describe("Review Workspace server", () => {
   });
 });
 
-describe("entity-level outline (experimental, sem)", () => {
+describe("entity summary (experimental, sem)", () => {
   vi.mock("./lib/sem", async () => {
     const actual = await vi.importActual("./lib/sem");
     return {
@@ -1831,7 +1831,7 @@ describe("entity-level outline (experimental, sem)", () => {
     };
   });
 
-  it("computes and caches entity changes per revision and file", async () => {
+  it("computes the whole revision with a single sem run and caches it", async () => {
     const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
       runEntityDiff: ReturnType<typeof vi.fn>;
     };
@@ -1876,27 +1876,51 @@ describe("entity-level outline (experimental, sem)", () => {
     ).run(reviewId, "src/other.ts");
 
     await expect(
-      harness.behavior.callRpc("entities", {
-        reviewId,
-        filePath: "src/example.ts",
-      }),
+      harness.behavior.callRpc("entitySummary", { reviewId }),
     ).resolves.toMatchObject({
       status: "ok",
-      changes: [{ entityId: "src/example.ts::function::one" }],
+      changes: [
+        { entityId: "src/other.ts::function::two" },
+        { entityId: "src/example.ts::function::one" },
+      ],
     });
+    // One sem run covered every file of the revision.
+    expect(runEntityDiff).toHaveBeenCalledTimes(1);
+    expect(runEntityDiff.mock.calls[0][0]).toHaveLength(2);
     // Cached payload exists for both files of the revision.
     const rows = db
       .prepare("SELECT path FROM review_entities WHERE review_id = ?")
       .all(reviewId);
     expect(rows).toHaveLength(2);
     await expect(
-      harness.behavior.callRpc("entities", {
-        reviewId,
-        filePath: "src/other.ts",
+      harness.behavior.callRpc("entitySummary", { reviewId }),
+    ).resolves.toMatchObject({ status: "ok" });
+    expect(runEntityDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares a single sem run across concurrent callers", async () => {
+    const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
+      runEntityDiff: ReturnType<typeof vi.fn>;
+    };
+    let release!: () => void;
+    runEntityDiff.mockReturnValue(
+      new Promise((resolve) => {
+        release = () => resolve({ status: "ok", changes: [] });
       }),
-    ).resolves.toMatchObject({
-      changes: [{ entityId: "src/other.ts::function::two" }],
+    );
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
     });
+    await plugin(bb);
+    runEntityDiff.mockClear();
+    const reviewId = randomUUID();
+    seedReview(bb, { id: reviewId, threadId: "thread-entities", createdAt: 1 });
+
+    const first = harness.behavior.callRpc("entitySummary", { reviewId });
+    const second = harness.behavior.callRpc("entitySummary", { reviewId });
+    release();
+    await Promise.all([first, second]);
+    console.log("spawn count", runEntityDiff.mock.calls.length);
     expect(runEntityDiff).toHaveBeenCalledTimes(1);
   });
 
@@ -1908,7 +1932,6 @@ describe("entity-level outline (experimental, sem)", () => {
       status: "unavailable",
       reason: "sem binary not found",
     });
-    runEntityDiff.mockClear();
     const { bb, harness } = createFakePluginHost({
       pluginId: "review-workspace",
     });
@@ -1918,10 +1941,7 @@ describe("entity-level outline (experimental, sem)", () => {
     seedReview(bb, { id: reviewId, threadId: "thread-no-sem", createdAt: 1 });
 
     await expect(
-      harness.behavior.callRpc("entities", {
-        reviewId,
-        filePath: "src/example.ts",
-      }),
+      harness.behavior.callRpc("entitySummary", { reviewId }),
     ).resolves.toEqual({
       status: "unavailable",
       reason: "sem binary not found",
@@ -1931,10 +1951,7 @@ describe("entity-level outline (experimental, sem)", () => {
     // unavailability is also cached
     expect(runEntityDiff).toHaveBeenCalledTimes(1);
     await expect(
-      harness.behavior.callRpc("entities", {
-        reviewId,
-        filePath: "src/example.ts",
-      }),
+      harness.behavior.callRpc("entitySummary", { reviewId }),
     ).resolves.toMatchObject({ status: "unavailable" });
     expect(runEntityDiff).toHaveBeenCalledTimes(1);
   });
@@ -1945,9 +1962,8 @@ describe("entity-level outline (experimental, sem)", () => {
     });
     await plugin(bb);
     await expect(
-      harness.behavior.callRpc("entities", {
+      harness.behavior.callRpc("entitySummary", {
         reviewId: randomUUID(),
-        filePath: "src/example.ts",
       }),
     ).rejects.toThrow("Review revision was not found.");
   });

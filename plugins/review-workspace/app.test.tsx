@@ -393,237 +393,6 @@ describe("comment locate flow", () => {
   });
 });
 
-describe("entities toggle flow (experimental)", () => {
-  function load() {
-    return loadPluginApp(() => import("./app"));
-  }
-
-  it("fetches entity changes per file on toggle and renders the outline", async () => {
-    const entitiesCalls: any[] = [];
-    const review = reviewFixture();
-    const slot = renderSlot(
-      (await load()).navPanels[0]!,
-      { subPath: "review/thread-ui" },
-      {
-        context: { projectId: "project-ui", threadId: "thread-ui" },
-        rpc: {
-          review: async () => ({ review }),
-          revisions: async () => ({ revisions: [] }),
-          entities: async (input: any) => {
-            entitiesCalls.push(input);
-            return { status: "ok", reason: null, changes: [entityChange] };
-          },
-        } as any,
-      },
-    );
-
-    await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
-    });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
-    await vi.waitFor(() => {
-      expect(entitiesCalls).toContainEqual({
-        reviewId: review.id,
-        filePath: "src/example.ts",
-      });
-      slot.getByText("modified");
-      slot.getByText(/function alpha/);
-      // cosmetic-only chip
-      slot.getByText("cosmetic");
-    });
-
-    // Rows without a matching hunk line render no locator.
-    slot.getByRole("button", { name: /function alpha/ }).click();
-    slot.lifecycle.unmount();
-  });
-
-  it("shows the reason when sem is unavailable and never fails the review", async () => {
-    const review = reviewFixture();
-    const slot = renderSlot(
-      (await load()).navPanels[0]!,
-      { subPath: "review/thread-ui" },
-      {
-        context: { projectId: "project-ui", threadId: "thread-ui" },
-        rpc: {
-          review: async () => ({ review }),
-          revisions: async () => ({ revisions: [] }),
-          entities: async () => ({
-            status: "unavailable",
-            reason: "sem binary not found",
-            changes: [],
-          }),
-        } as any,
-      },
-    );
-
-    await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
-    });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
-    await slot.findByText(/sem is unavailable: sem binary not found/);
-    slot.lifecycle.unmount();
-  });
-
-  it("resets outline state and refetches on file switch", async () => {
-    const entitiesCalls: any[] = [];
-    const review = {
-      ...reviewFixture(),
-      files: [
-        reviewFixture().files[0],
-        {
-          path: "src/other.ts",
-          previousPath: null,
-          status: "modified",
-          additions: 1,
-          deletions: 0,
-          binary: false,
-          patch: `diff --git a/src/other.ts b/src/other.ts
---- a/src/other.ts
-+++ b/src/other.ts
-@@ -1,2 +1,3 @@
- first
-+second
- third
-`,
-          truncated: false,
-        },
-      ],
-    };
-    const slot = renderSlot(
-      (await load()).navPanels[0]!,
-      { subPath: "review/thread-ui" },
-      {
-        context: { projectId: "project-ui", threadId: "thread-ui" },
-        rpc: {
-          review: async () => ({ review }),
-          revisions: async () => ({ revisions: [] }),
-          entities: async (input: any) => {
-            entitiesCalls.push(input);
-            return {
-              status: "ok",
-              reason: null,
-              changes: [
-                input.filePath === "src/other.ts"
-                  ? {
-                      entityId: "src/other.ts::function::beta",
-                      changeType: "added",
-                      entityType: "function",
-                      entityName: "beta",
-                      startLine: 2,
-                      endLine: 2,
-                      oldStartLine: null,
-                      oldEndLine: null,
-                      filePath: "src/other.ts",
-                      structuralChange: null,
-                    }
-                  : entityChange,
-              ],
-            };
-          },
-        } as any,
-      },
-    );
-
-    await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
-    });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
-    await vi.waitFor(() => {
-      slot.getByText("modified");
-    });
-    slot.getByRole("button", { name: "Next changed file" }).click();
-    await vi.waitFor(() => {
-      slot.getByText("added");
-      slot.getByText(/function beta/);
-    });
-    // Outlines per file: the previous file's entity is gone from the bar.
-    expect(slot.queryByText(/function alpha/)).toBeNull();
-    expect(
-      entitiesCalls.filter((call) => call.filePath === "src/other.ts"),
-    ).toHaveLength(1);
-    slot.lifecycle.unmount();
-  });
-});
-describe("entities expand flow (content + impact)", () => {
-  async function renderEntities() {
-    const app = await loadPluginApp(() => import("./app"));
-    const review = reviewFixture();
-    const impactCalls: any[] = [];
-    const slot = renderSlot(
-      app.navPanels[0]!,
-      { subPath: "review/thread-ui" },
-      {
-        context: { projectId: "project-ui", threadId: "thread-ui" },
-        rpc: {
-          review: async () => ({ review }),
-          revisions: async () => ({ revisions: [] }),
-          entities: async () => ({
-            status: "ok" as const,
-            reason: null,
-            changes: [
-              {
-                ...entityChange,
-                beforeContent: "function alpha() {\n  return 1;\n}",
-                afterContent: "function alpha() {\n  return 3;\n}",
-              },
-            ],
-          }),
-          entityImpact: async (input: any) => {
-            impactCalls.push(input);
-            return {
-              status: "ok",
-              reason: null,
-              dependents: [
-                {
-                  entityId: "src/other.ts::function::caller",
-                  file: "src/other.ts",
-                  lines: [12, 20],
-                  name: "caller",
-                  type: "function",
-                },
-              ],
-              tests: [
-                {
-                  entityId: "src/alpha.test.ts::alpha suite",
-                  file: "src/alpha.test.ts",
-                  lines: [3, 30],
-                  name: "alpha suite",
-                  type: "test",
-                },
-              ],
-              total: 1,
-              depth: 1,
-            };
-          },
-        } as any,
-      },
-    );
-    return { slot, impactCalls };
-  }
-
-  it("expands into a content preview and the impact list", async () => {
-    const { slot, impactCalls } = await renderEntities();
-    await vi.waitFor(() => {
-      slot.getByRole("button", { name: "Entities (experimental)" });
-    });
-    slot.getByRole("button", { name: "Entities (experimental)" }).click();
-    await vi.waitFor(() => {
-      slot.getByText("modified");
-    });
-    slot.getByText(/function alpha/).click();
-    await vi.waitFor(() => {
-      expect(impactCalls).toHaveLength(1);
-    });
-    // content preview shows the changed line
-    await vi.waitFor(() => {
-      slot.getByText("+ return 3;");
-      slot.getByText("- return 1;");
-      slot.getByText(/affected tests/);
-    });
-    slot.getByText(/caller/);
-    slot.lifecycle.unmount();
-  });
-});
 describe("entity summary flow (semantic entry)", () => {
   it("renders the summary on toggle and hides cosmetics by default", async () => {
     const app = await loadPluginApp(() => import("./app"));
@@ -739,6 +508,130 @@ describe("entity summary flow (semantic entry)", () => {
     slot.getByRole("button", { name: "Go to mod" }).click();
     // jump only switches file/pends the anchor; no error surfaced
     expect(slot.queryByText(/sem is unavailable/)).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("expands a summary row and loads its transitive impact", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = reviewFixture();
+    const impactCalls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          entitySummary: async () => ({
+            status: "ok",
+            reason: null,
+            changes: [{ ...entityChange, structuralChange: true }],
+          }),
+          entityImpact: async (input: any) => {
+            impactCalls.push(input);
+            return {
+              status: "ok",
+              reason: null,
+              dependents: [
+                {
+                  entityId: "src/other.ts::function::caller",
+                  file: "src/other.ts",
+                  lines: [12, 20],
+                  name: "caller",
+                  type: "function",
+                },
+              ],
+              tests: [],
+              total: 1,
+              depth: 1,
+            };
+          },
+        } as any,
+      },
+    );
+
+    await vi.waitFor(() => {
+      slot.getByRole("button", { name: "Entities (experimental)" });
+    });
+    slot.getByRole("button", { name: "Entities (experimental)" }).click();
+    await vi.waitFor(() => {
+      slot.getByText("modified");
+    });
+    slot.getByText(/alpha/).click();
+    await vi.waitFor(() => {
+      expect(impactCalls).toHaveLength(1);
+    });
+    // impact detail lists dependents once the rpc resolves
+    await slot.findByText(/caller/);
+    slot.lifecycle.unmount();
+  });
+
+  it("reports when a summarized entity cannot be located in the diff", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = reviewFixture();
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          entitySummary: async () => ({
+            status: "ok",
+            reason: null,
+            changes: [
+              {
+                ...entityChange,
+                entityName: "faraway",
+                startLine: 900,
+                endLine: 910,
+                structuralChange: true,
+              },
+            ],
+          }),
+        } as any,
+      },
+    );
+
+    await vi.waitFor(() => {
+      slot.getByRole("button", { name: "Entities (experimental)" });
+    });
+    slot.getByRole("button", { name: "Entities (experimental)" }).click();
+    await vi.waitFor(() => {
+      slot.getByText("modified");
+    });
+    slot.getByRole("button", { name: "Go to faraway" }).click();
+    await slot.findByText(/faraway has no visible lines in the diff/);
+    slot.lifecycle.unmount();
+  });
+
+  it("shows the reason when the revision summary is unavailable", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = reviewFixture();
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          entitySummary: async () => ({
+            status: "unavailable",
+            reason: "sem binary not found",
+            changes: [],
+          }),
+        } as any,
+      },
+    );
+
+    await vi.waitFor(() => {
+      slot.getByRole("button", { name: "Entities (experimental)" });
+    });
+    slot.getByRole("button", { name: "Entities (experimental)" }).click();
+    await slot.findByText(/sem is unavailable: sem binary not found/);
     slot.lifecycle.unmount();
   });
 });

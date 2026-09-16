@@ -57,54 +57,6 @@ export const changeTypeLabels: Record<SemEntityChange["changeType"], string> = {
   reordered: "reordered",
 };
 
-// Compact LCS line diff for the per-entity content preview in the outline.
-// Returns only changed lines plus a bit of context; null when there is no
-// inline content (oversized blob or sem omitted it).
-export type EntityDiffLine =
-  | { marker: "-"; text: string }
-  | { marker: "+"; text: string }
-  | { marker: " "; text: string };
-
-export function entityContentDiff(
-  before: string | null | undefined,
-  after: string | null | undefined,
-): EntityDiffLine[] {
-  if (before == null || after == null) return [];
-  const a = before.split("\n");
-  const b = after.split("\n");
-  // LCS table (entities are small; capped server-side).
-  const table: number[][] = Array.from({ length: a.length + 1 }, () =>
-    new Array<number>(b.length + 1).fill(0),
-  );
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      table[i][j] =
-        a[i] === b[j]
-          ? table[i + 1][j + 1] + 1
-          : Math.max(table[i + 1][j], table[i][j + 1]);
-    }
-  }
-  const lines: EntityDiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      lines.push({ marker: " ", text: a[i] });
-      i++;
-      j++;
-    } else if (table[i + 1][j] >= table[i][j + 1]) {
-      lines.push({ marker: "-", text: a[i] });
-      i++;
-    } else {
-      lines.push({ marker: "+", text: b[j] });
-      j++;
-    }
-  }
-  while (i < a.length) lines.push({ marker: "-", text: a[i++] });
-  while (j < b.length) lines.push({ marker: "+", text: b[j++] });
-  return lines;
-}
-
 // sem diff emits per-line entity ids for granular entities (properties,
 // orphan chunks) with a `@L<n>` line suffix, while `sem impact --entity-id`
 // indexes stable ids without the suffix.

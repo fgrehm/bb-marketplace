@@ -22,14 +22,14 @@ Each refresh creates an immutable review revision. Comments stay anchored to the
 
 The workspace currently sends selected anchored comments through the existing `sendBatch` contract. Review-level verdicts and overall summaries are intentionally not persisted or sent yet, and are follow-up work rather than new semantics added to that contract.
 
-## Experimental: entity-level diff outline (sem)
+## Experimental: changes by entity (sem)
 
-The plugin ships an optional, fully experimental "Entities" toggle in the file header, isolated from the review flow above. When enabled, entity-level changes (functions, classes, methods) for the current file are computed with [sem](https://github.com/Ataraxy-Labs/sem) (`@ataraxy-labs/sem` dependency) and shown as an outline with change-type chips (`added`, `modified`, `renamed`, `cosmetic`, ...). Rows whose entity range has no corresponding changed lines in the visible diff render without a locator.
+The plugin ships an optional, fully experimental "Entities" toggle in the file header, isolated from the review flow above. When enabled, entity-level changes (functions, classes, methods) across the whole revision are computed with [sem](https://github.com/Ataraxy-Labs/sem) (`@ataraxy-labs/sem` dependency) and shown as a single revision-level "Changes by entity" summary above the diff, ordered by review priority (deleted/moved/renamed first, then modified, then added). Rows expand into a transitive impact list (dependents + affected tests), and a target button jumps to the entity's lines in the diff when its range has visible lines; jumps without a visible anchor are reported as a miss instead of silently doing nothing.
 
 - Data is computed from the revision's immutable snapshot contents via `sem diff --stdin --format json`. sem never touches git, so results are identical across threads reviewing the same snapshot and stay stable across refreshes.
-- Results are cached per (review revision, file) in a `review_entities` table, computed lazily on first use and swept when revisions are cleared.
+- The whole revision is computed with a single sem run on first use, cached per (review revision, file) in a `review_entities` table, shared across concurrent callers, and swept when revisions are cleared.
 - Binary resolution: prefers `SEM_BIN_PATH`, falls back to the vendored binary from `@ataraxy-labs/sem/vendor/sem` (installed via npm postinstall).
-- If sem cannot run, the panel shows a "sem is unavailable" reason and every other review path is unaffected; the `entities` rpc returns `status: "unavailable"` instead of throwing.
+- If sem cannot run, the panel shows a "sem is unavailable" reason and every other review path is unaffected; the `entitySummary` rpc returns `status: "unavailable"` instead of throwing.
 
 ## Development
 

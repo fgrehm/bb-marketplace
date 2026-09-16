@@ -24,14 +24,13 @@ import {
 import {
   changeTypeLabels,
   entityAnchor,
-  entityContentDiff,
+  stableEntityId,
 } from "./lib/sem-outline";
 import type {
   SemEntityChange,
   SemImpactResult,
   SemEntityBrief,
 } from "./lib/sem";
-import { stableEntityId, type EntityDiffLine } from "./lib/sem-outline";
 import { compactPath, normalizeChangeKind } from "./lib/utils";
 
 type File = {
@@ -679,213 +678,6 @@ function FileCommentsBar({
   );
 }
 
-// EXPERIMENTAL: entity outline bar (sem) - isolated from the main review
-// flow; only shown when the "Entities" header toggle is on. Rows expand into
-// a per-entity content preview (before/after line diff) and a transitive
-// impact list (dependents + affected tests) fetched on expand.
-function EntityChangesBar({
-  changes,
-  patch,
-  onLocate,
-  onLoadImpact,
-  impacts,
-}: {
-  changes: SemEntityChange[];
-  patch: string;
-  onLocate: (
-    entity: SemEntityChange,
-    anchor: { side: "new" | "old"; line: number },
-  ) => void;
-  onLoadImpact: (entityId: string) => void;
-  impacts: Map<string, SemImpactResult | undefined>;
-}) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  function toggleExpanded(entityId: string) {
-    setExpandedIds((current) => {
-      const next = new Set(current);
-      if (next.has(entityId)) {
-        next.delete(entityId);
-      } else {
-        next.add(entityId);
-        onLoadImpact(entityId);
-      }
-      return next;
-    });
-  }
-  if (!changes.length)
-    return (
-      <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-        No entity-level changes detected by sem for this file.
-      </p>
-    );
-  return (
-    <div className="mb-2 rounded-md border border-primary/40 bg-card p-2">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Entities (experimental - sem)
-      </p>
-      <ul className="mt-1 space-y-1">
-        {changes.map((entity) => {
-          const anchor = entityAnchor(entity, patch);
-          const expanded = expandedIds.has(entity.entityId);
-          const impact = impacts.get(entity.entityId);
-          const contentDiff = entityContentDiff(
-            entity.beforeContent,
-            entity.afterContent,
-          );
-          return (
-            <li key={entity.entityId}>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-muted/40"
-                  onClick={() => toggleExpanded(entity.entityId)}
-                  title={
-                    expanded
-                      ? "Hide impact and changes"
-                      : "Show impact and changes"
-                  }
-                >
-                  <StateChip
-                    tone={
-                      entity.changeType === "added"
-                        ? "emerald"
-                        : entity.changeType === "deleted"
-                          ? "primary"
-                          : "muted"
-                    }
-                  >
-                    {changeTypeLabels[entity.changeType]}
-                  </StateChip>
-                  <span className="truncate font-mono text-[11px]">
-                    {entity.entityType} {entity.entityName}
-                  </span>
-                  {entity.structuralChange === false ? (
-                    <StateChip>cosmetic</StateChip>
-                  ) : null}
-                  {!anchor ? (
-                    <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-                      not in diff
-                    </span>
-                  ) : (
-                    <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
-                      L{anchor.line}
-                    </span>
-                  )}
-                </button>
-                {anchor ? (
-                  <button
-                    type="button"
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                    aria-label={`Show ${entity.entityName} in diff`}
-                    title="Show in diff"
-                    onClick={() => onLocate(entity, anchor)}
-                  >
-                    <Icon name="Target" className="size-3" />
-                  </button>
-                ) : null}
-              </div>
-              {expanded ? (
-                <div className="ml-6 rounded border bg-background p-2">
-                  {/* Per-entity content: inline before/after line diff. */}
-                  {contentDiff.length ? (
-                    <pre className="mb-2 overflow-x-auto whitespace-pre text-[11px] leading-4">
-                      {contentDiff.map(
-                        (line: EntityDiffLine, index: number) => (
-                          <div
-                            key={index}
-                            className={
-                              line.marker === "-"
-                                ? "bg-red-500/10 text-red-700 dark:text-red-300"
-                                : line.marker === "+"
-                                  ? "bg-green-500/10 text-green-700 dark:text-green-300"
-                                  : "text-muted-foreground"
-                            }
-                          >
-                            {`${line.marker} ${line.text}`}
-                          </div>
-                        ),
-                      )}
-                    </pre>
-                  ) : (
-                    <p className="mb-2 text-[11px] text-muted-foreground">
-                      Inline content preview not available for this entity.
-                    </p>
-                  )}
-                  {/* Impact: transitive dependents + tests via sem impact. */}
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Impact
-                    {impact?.status === "ok" &&
-                    impact.resolvedAs &&
-                    impact.resolvedAs.entityId !==
-                      stableEntityId(entity.entityId) ? (
-                      <span
-                        className="ml-1 font-normal normal-case"
-                        title="sem indexes the owning entity, not this granular one"
-                      >
-                        (of {impact.resolvedAs.type} {impact.resolvedAs.name})
-                      </span>
-                    ) : null}
-                  </p>
-                  {impact === undefined ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      Computing impact...
-                    </p>
-                  ) : impact.status === "unavailable" ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      sem impact unavailable: {impact.reason}
-                    </p>
-                  ) : (
-                    <>
-                      <p className="text-[11px] text-muted-foreground">
-                        {impact.total} affected entit
-                        {impact.total === 1 ? "y" : "ies"}
-                        {impact.depth > 1
-                          ? ` (${impact.depth} levels deep)`
-                          : ""}
-                        {impact.tests.length
-                          ? `, ${impact.tests.length} test suite${impact.tests.length === 1 ? "" : "s"}`
-                          : ""}
-                      </p>
-                      {impact.dependents.length ? (
-                        <ul className="mt-1 space-y-0.5">
-                          {impact.dependents.slice(0, 10).map((dependent) => (
-                            <li
-                              key={dependent.entityId}
-                              className="truncate text-[11px]"
-                            >
-                              <span className="font-mono text-muted-foreground">
-                                {dependent.file}:{dependent.lines[0]}
-                              </span>{" "}
-                              {dependent.name} ({dependent.type})
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-[11px] text-muted-foreground">
-                          No dependents found outside this file.
-                        </p>
-                      )}
-                      {impact.tests.length ? (
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                          affected tests:{" "}
-                          {impact.tests
-                            .slice(0, 3)
-                            .map((test) => test.name)
-                            .join(", ")}
-                        </p>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
 function Composer({
   file,
   selection,
@@ -940,10 +732,11 @@ function Composer({
   );
 }
 
-// EXPERIMENTAL: semantic entry - aggregated "Changes by entity" summary for
-// the whole revision. Rows jump straight to the diff at the entity anchor.
-// Intended to eventually become the default review entry point if it proves
-// out; still hidden behind the experimental Entities toggle.
+// EXPERIMENTAL: single semantic surface - aggregated "Changes by entity"
+// summary for the whole revision, the only sem-powered surface in the app.
+// Rows jump straight to the diff at the entity anchor when the range has
+// visible lines; otherwise the jump is reported as a miss instead of
+// silently doing nothing.
 function EntitySummary({
   changes,
   onLoadImpact,
@@ -1039,6 +832,74 @@ function EntitySummary({
                   <Icon name="Target" className="size-3" />
                 </button>
               </div>
+              {expanded ? (
+                <div className="ml-6 rounded border bg-background p-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Impact
+                    {impact?.status === "ok" &&
+                    impact.resolvedAs &&
+                    impact.resolvedAs.entityId !==
+                      stableEntityId(entity.entityId) ? (
+                      <span
+                        className="ml-1 font-normal normal-case"
+                        title="sem indexes the owning entity, not this granular one"
+                      >
+                        (of {impact.resolvedAs.type} {impact.resolvedAs.name})
+                      </span>
+                    ) : null}
+                  </p>
+                  {impact === undefined ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Computing impact...
+                    </p>
+                  ) : impact.status === "unavailable" ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      sem impact unavailable: {impact.reason}
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-[11px] text-muted-foreground">
+                        {impact.total} affected entit
+                        {impact.total === 1 ? "y" : "ies"}
+                        {impact.depth > 1
+                          ? ` (${impact.depth} levels deep)`
+                          : ""}
+                        {impact.tests.length
+                          ? `, ${impact.tests.length} test suite${impact.tests.length === 1 ? "" : "s"}`
+                          : ""}
+                      </p>
+                      {impact.dependents.length ? (
+                        <ul className="mt-1 space-y-0.5">
+                          {impact.dependents.slice(0, 10).map((dependent) => (
+                            <li
+                              key={dependent.entityId}
+                              className="truncate text-[11px]"
+                            >
+                              <span className="font-mono text-muted-foreground">
+                                {dependent.file}:{dependent.lines[0]}
+                              </span>{" "}
+                              {dependent.name} ({dependent.type})
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground">
+                          No dependents found outside this revision.
+                        </p>
+                      )}
+                      {impact.tests.length ? (
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          affected tests:{" "}
+                          {impact.tests
+                            .slice(0, 3)
+                            .map((test) => test.name)
+                            .join(", ")}
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : null}
             </li>
           );
         })}
@@ -1176,29 +1037,32 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     id: string;
     fileLevel: boolean;
   } | null>(null);
-  // EXPERIMENTAL: entity-level outline, fully off by default.
+  // EXPERIMENTAL: single semantic surface (revision-level "Changes by
+  // entity" summary), fully off by default.
   const [entitiesEnabled, setEntitiesEnabled] = useState(false);
-  const [entityChanges, setEntityChanges] = useState<SemEntityChange[] | null>(
-    null,
-  );
-  const [entityReason, setEntityReason] = useState<string | null>(null);
-  const [entityImpacts, setEntityImpacts] = useState<
-    Map<string, SemImpactResult | undefined>
-  >(new Map());
   const [entitySummaryChanges, setEntitySummaryChanges] = useState<
     SemEntityChange[] | null
   >(null);
+  const [entitySummaryReason, setEntitySummaryReason] = useState<string | null>(
+    null,
+  );
+  const [entityImpacts, setEntityImpacts] = useState<
+    Map<string, SemImpactResult | undefined>
+  >(new Map());
   const [pendingEntityJump, setPendingEntityJump] = useState<string | null>(
     null,
   );
+  const [entityJumpMiss, setEntityJumpMiss] = useState<string | null>(null);
   async function loadEntitySummary() {
     if (!review) return;
     try {
       const result = await rpc.call("entitySummary", { reviewId: review.id });
       if (result.status === "ok") {
         setEntitySummaryChanges(result.changes as SemEntityChange[]);
+        setEntitySummaryReason(null);
       } else {
         setEntitySummaryChanges([]);
+        setEntitySummaryReason(result.reason ?? "sem is unavailable");
       }
     } catch (cause) {
       setError(
@@ -1210,8 +1074,11 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   useEffect(() => {
     if (!entitiesEnabled || !review) {
       setEntitySummaryChanges(null);
+      setEntitySummaryReason(null);
+      setEntityJumpMiss(null);
       return;
     }
+    setEntityJumpMiss(null);
     void loadEntitySummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entitiesEnabled, review?.id]);
@@ -1365,9 +1232,12 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         0) + 1
     : 0;
   // Entity outline markers placed at each anchor line, only while enabled.
+  // Anchors come from the revision-level summary, filtered to the file
+  // currently on screen.
   const entityMarkers = useMemo(() => {
-    if (!entitiesEnabled || !entityChanges || !file) return [];
-    return entityChanges
+    if (!entitiesEnabled || !entitySummaryChanges || !file) return [];
+    return entitySummaryChanges
+      .filter((entity) => entity.filePath === file.path)
       .map((entity) => ({ entity, anchor: entityAnchor(entity, file.patch) }))
       .filter(
         (
@@ -1388,7 +1258,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           entityId: item.entity.entityId,
         } as const,
       }));
-  }, [entitiesEnabled, entityChanges, file]);
+  }, [entitiesEnabled, entitySummaryChanges, file]);
 
   const currentAnnotations = useMemo<
     DiffLineAnnotation<DiffAnnotation>[]
@@ -1588,54 +1458,22 @@ function ReviewPanel({ threadId }: { threadId: string }) {
 
   function jumpToEntity(entity: SemEntityChange) {
     if (!review) return;
+    // Only jump when the entity has visible lines in the target diff;
+    // otherwise say so instead of silently timing out.
+    const target = review.files.find(
+      (candidate) => candidate.path === entity.filePath,
+    );
+    if (!target || !entityAnchor(entity, target.patch)) {
+      setEntityJumpMiss(entity.entityName);
+      return;
+    }
+    setEntityJumpMiss(null);
     if (entity.filePath !== filePath) chooseFile(entity.filePath);
     setPendingEntityJump(entity.entityId);
   }
 
-  function locateEntity(entityId: string) {
-    const element = scrollSectionRef.current?.querySelector(
-      `[data-entity-anchor="${entityId}"]`,
-    );
-    element?.scrollIntoView({ block: "center" });
-  }
-
-  // Fetch entity changes for the current file whenever the outline is on
-  // (also covers landing on a file with the toggle already enabled).
-  useEffect(() => {
-    if (!entitiesEnabled || !review || !file) return;
-    let cancelled = false;
-    rpc
-      .call("entities", { reviewId: review.id, filePath: file.path })
-      .then((result) => {
-        if (cancelled) return;
-        if (result.status === "ok") {
-          setEntityChanges(result.changes as SemEntityChange[]);
-          setEntityReason(null);
-        } else {
-          setEntityChanges([]);
-          setEntityReason(result.reason ?? "sem is unavailable");
-        }
-      })
-      .catch((cause) => {
-        if (cancelled) return;
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Unable to compute entity changes.",
-        );
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [entitiesEnabled, review?.id, file?.path, rpc]);
-
   function toggleEntities(next: boolean) {
     setEntitiesEnabled(next);
-    if (!next) {
-      setEntityChanges(null);
-      setEntityReason(null);
-    }
-    // Fetching itself is handled by the effect keyed on file path.
   }
 
   async function addFileComment() {
@@ -2186,7 +2024,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                   {isViewed ? "Viewed ✓" : "Viewed & next"}
                 </Button>
               </div>
-              {entitiesEnabled && entitySummaryChanges ? (
+              {entitiesEnabled &&
+              entitySummaryChanges &&
+              !entitySummaryReason ? (
                 <div className="mx-2 mt-2 lg:mx-4">
                   <EntitySummary
                     changes={entitySummaryChanges}
@@ -2194,6 +2034,21 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     impacts={entityImpacts}
                     onJump={jumpToEntity}
                   />
+                </div>
+              ) : null}
+              {entitiesEnabled && entitySummaryReason ? (
+                <div className="mx-2 mt-2 lg:mx-4">
+                  <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                    sem is unavailable: {entitySummaryReason}
+                  </p>
+                </div>
+              ) : null}
+              {entitiesEnabled && entityJumpMiss ? (
+                <div className="mx-2 mt-2 lg:mx-4">
+                  <p className="text-[11px] text-muted-foreground">
+                    {entityJumpMiss} has no visible lines in the diff, so it
+                    cannot be located.
+                  </p>
                 </div>
               ) : null}
               <div className="p-2 lg:p-4">
@@ -2246,28 +2101,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                       }
                       onReply={reply}
                     />
-                    {entitiesEnabled ? (
-                      entityReason ? (
-                        <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-                          sem is unavailable: {entityReason}
-                        </p>
-                      ) : entityChanges ? (
-                        <EntityChangesBar
-                          changes={entityChanges}
-                          patch={file.patch}
-                          onLocate={(entity, anchor) => {
-                            void anchor;
-                            locateEntity(entity.entityId);
-                          }}
-                          onLoadImpact={loadEntityImpact}
-                          impacts={entityImpacts}
-                        />
-                      ) : (
-                        <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-                          Computing entity changes...
-                        </p>
-                      )
-                    ) : null}
                     <div className="overflow-hidden rounded-md border bg-card">
                       <PierreReviewDiff
                         fileDiff={parsed}
