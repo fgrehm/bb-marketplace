@@ -2626,11 +2626,4 @@ export default definePluginApp((app) => {
     title: "Open Review Workspace",
     component: ReviewHeaderAction,
   });
-  app.slots.threadPanelAction({
-    id: "review-thread-panel",
-    title: "Review changes",
-    icon: "GitPullRequest",
-    layout: "flush",
-    component: ({ threadId }) => <ReviewPanel threadId={threadId} />,
-  });
 });
