@@ -1855,5 +1855,5 @@ function JomoPage({ subPath }: { subPath?: string }) {
 }
 
 export default definePluginApp((app) => {
-  app.slots.navPanel({ id: "jomo", title: "jomo", icon: "Explore", path: "feed", component: JomoPage });
+  app.slots.navPanel({ id: "jomo", title: "JOMO", icon: "Leaf", path: "feed", component: JomoPage });
 });
