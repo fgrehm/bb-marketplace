@@ -14,7 +14,7 @@
     "name": "JOMO",
     "description": "The joy of missing out: a hoard, not an inbox. A calm feed and reading room for collecting ideas alongside your BB work.",
     "branding": {
-      "icon": "Leaf"
+      "icon": "./assets/leaf.svg"
     },
     "server": "./server.ts",
     "app": "./app.tsx"
