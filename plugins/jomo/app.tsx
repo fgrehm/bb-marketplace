@@ -1334,21 +1334,18 @@ function ReservoirView({ backlog, onExit }: { backlog: Array<{ item: Item; ageDa
       {byAge.map(([age, dayEntries]) => {
         const undiscarded = dayEntries.filter((entry) => entry.item.saved !== "dropped");
         if (undiscarded.length === 0) return null;
-        const sourceColors: string[] = [];
-        let distinctSources = 0;
-        const seen = new Set<string>();
-        for (const entry of undiscarded) {
-          if (!seen.has(entry.item.source)) { seen.add(entry.item.source); distinctSources++; sourceColors.push(entry.item.sourceColor); }
-        }
-        const shownColors = sourceColors.slice(0, 8);
+        const sourceCounts = new Map<string, number>();
+        for (const entry of undiscarded) sourceCounts.set(entry.item.source, (sourceCounts.get(entry.item.source) ?? 0) + 1);
+        const ranked = [...sourceCounts.entries()].sort((a, b) => b[1] - a[1]);
+        const topSources = ranked.slice(0, 3).map(([source, count]) => `${source} ${count}`).join(" · ");
+        const others = ranked.length - 3;
         return (
           <section key={age} className="mt-2 rounded-2xl border border-border bg-card px-4 py-3">
             <div className="flex flex-wrap items-center gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-[13px] max-md:pointer-coarse:text-[15px] font-medium">{ageLabel(age)}{age >= 2 ? ` · ${age} days old` : ""}</p>
                 <p className="text-[11px] text-muted-foreground">
-                  {age > RETENTION_DAYS ? "already past the drain" : age === RETENTION_DAYS ? "drains tonight" : `drains in ${RETENTION_DAYS - age} days`} · from
-                  <span className="inline-flex items-center gap-1 pl-1">{shownColors.map((color, i) => <span key={i} className="size-2 rounded-full" style={{ backgroundColor: color }} />)}{distinctSources > shownColors.length ? ` ${distinctSources} sources` : ""}</span>
+                  {age > RETENTION_DAYS ? "already past the drain" : age === RETENTION_DAYS ? "drains tonight" : `drains in ${RETENTION_DAYS - age} days`} · {topSources}{others > 0 ? ` · ${others} other${others === 1 ? "" : "s"}` : ""}
                 </p>
               </div>
               <span className="rounded-full bg-muted px-2.5 py-0.5 font-mono text-[11px] text-muted-foreground">{undiscarded.length}</span>
