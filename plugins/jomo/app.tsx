@@ -836,7 +836,10 @@ function matchesKind(item: Item, feed: Feed): boolean {
   return item.kind === "repo" || item.kind === "release";
 }
 
-function Reader({ item, onBack, onToggleSaved }: { item: Item; onBack: () => void; onToggleSaved: () => void }) {
+function Reader({ item, note, onSaveNote, onBack, onToggleSaved }: { item: Item; note: string; onSaveNote: (note: string) => void; onBack: () => void; onToggleSaved: () => void }) {
+  const [noteOpen, setNoteOpen] = useState(Boolean(note));
+  const [noteDraft, setNoteDraft] = useState(note);
+  const noteDirty = noteDraft !== note;
   return (
     <main className="h-full min-h-0 overflow-y-auto pb-24 max-md:pointer-coarse:pb-28">
       <div className="mx-auto w-full max-w-2xl px-5 py-6 sm:px-8 sm:py-10">
@@ -897,6 +900,32 @@ function Reader({ item, onBack, onToggleSaved }: { item: Item; onBack: () => voi
               <p>A single "turn into thread" action attaches this item and its capture to a workspace thread without leaving the reading flow.</p>
             </div>
           </>
+        )}
+
+        {noteOpen ? (
+          <div className="mt-10 rounded-2xl border border-border bg-card/50 p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-amber-400">Your note</p>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => { setNoteOpen(false); setNoteDraft(note); }} className="text-xs text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground">collapse</button>
+                <Button size="sm" className="h-7" disabled={!noteDirty} onClick={() => onSaveNote(noteDraft)}>Save</Button>
+              </div>
+            </div>
+            <textarea
+              value={noteDraft}
+              onChange={(event) => setNoteDraft(event.target.value)}
+              rows={4}
+              placeholder="Why you saved it, what to do with it, who asked you about it…"
+              className="mt-3 w-full resize-y rounded-xl bg-background/60 px-3 py-2 font-mono text-sm leading-6 outline-none placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-primary/60"
+            />
+            <p className="mt-2 text-[11px] text-muted-foreground">Saved by JOMO, keyed to this item. Clear the text and save to remove the note.</p>
+          </div>
+        ) : (
+          <div className="mt-10">
+            <button type="button" onClick={() => setNoteOpen(true)} className="inline-flex items-center gap-2 rounded-full border border-dashed border-border px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-amber-400/60 hover:text-foreground">
+              <Icon name="Edit" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> {note ? "Your note is attached" : "Attach a note"}
+            </button>
+          </div>
         )}
 
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
@@ -1861,6 +1890,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const [sources, setSources] = useState(SOURCES);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
 
   const [view, setView] = useState<"home" | "cards" | "triage" | "sweep" | "reservoir">("home");
   const [backlog] = useState(buildReservoirBacklog);
@@ -1892,6 +1922,14 @@ function JomoPage({ subPath }: { subPath?: string }) {
     return () => { cancelled = true; };
   }, [profileReload, rpc]);
 
+  useEffect(() => {
+    let cancelled = false;
+    rpc.call("notes_list", {}).then(({ notes: stored }) => {
+      if (!cancelled) setNotes(Object.fromEntries(stored.map((entry) => [entry.id, entry.note])));
+    }).catch(() => { /* notes are optional — the reader degrades to no notes */ });
+    return () => { cancelled = true; };
+  }, [rpc]);
+
   const completeOnboarding = async (next: LibrarianProfile) => {
     await rpc.call("onboarding_save", next);
     setProfile(next);
@@ -1910,6 +1948,11 @@ function JomoPage({ subPath }: { subPath?: string }) {
 
   const openItem = (item: Item) => navigate.toPluginPanel("feed", { subPath: item.id });
   const closeReader = () => navigate.toPluginPanel("feed", { replace: true });
+
+  const saveNote = (id: string, note: string) => {
+    setNotes((current) => ({ ...current, [id]: note }));
+    void rpc.call("notes_save", { id, note }).catch(() => undefined);
+  };
 
   const visible = useMemo(() => {
     const enabled = new Set(sources.filter((source) => source.enabled).map((source) => source.id));
@@ -2025,7 +2068,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
 
   if (deskOpen) return <LibrarianDesk items={items} onClose={() => setDeskOpen(false)} onOpenItem={(id) => { setDeskOpen(false); const item = items.find((entry) => entry.id === id); if (item) openItem(item); }} onHoardLinks={hoardLinks} onSubscribe={addFeed} />;
 
-  if (activeItem) return <Reader item={activeItem} onBack={closeReader} onToggleSaved={() => toggleSaved(activeItem.id)} />;
+  if (activeItem) return <Reader key={activeItem.id} item={activeItem} note={notes[activeItem.id] ?? ""} onSaveNote={(note) => saveNote(activeItem.id, note)} onBack={closeReader} onToggleSaved={() => toggleSaved(activeItem.id)} />;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">

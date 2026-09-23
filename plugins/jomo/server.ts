@@ -31,6 +31,14 @@ export const rpcContract = defineRpcContract({
     input: z.object({ notebook: z.string().max(20_000) }).strict(),
     output: z.object({ saved: z.boolean() }).strict(),
   },
+  notes_list: {
+    input: z.object({}).strict(),
+    output: z.object({ notes: z.array(z.object({ id: z.string().min(1), note: z.string().max(5000) })) }).strict(),
+  },
+  notes_save: {
+    input: z.object({ id: z.string().min(1), note: z.string().max(5000) }).strict(),
+    output: z.object({ saved: z.boolean() }).strict(),
+  },
 });
 
 export default async function plugin(bb: BbPluginApi) {
@@ -48,6 +56,16 @@ export default async function plugin(bb: BbPluginApi) {
       if (!profile) return { saved: false };
       await bb.storage.kv.set("librarian-profile", { ...profile, notebook });
       return { saved: true };
+    },
+    async notes_list() {
+      const notes = await bb.storage.kv.get<Record<string, string>>("item-notes") ?? {};
+      return { notes: Object.entries(notes).filter(([, note]) => note.trim().length > 0).map(([id, note]) => ({ id, note })) };
+    },
+    async notes_save({ id, note }) {
+      const notes = await bb.storage.kv.get<Record<string, string>>("item-notes") ?? {};
+      if (note.trim().length === 0) delete notes[id]; else notes[id] = note;
+      await bb.storage.kv.set("item-notes", notes);
+      return { saved: true as const };
     },
   });
 
