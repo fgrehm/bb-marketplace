@@ -117,7 +117,7 @@ export function LibrarianDesk({ items, onClose, onOpenItem, onHoardLinks, onSubs
 
   return (
     <main className="jomo-enter flex h-full min-h-0 flex-col bg-background">
-      <header className="flex items-center gap-3 border-b border-border/60 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-8">
+      <header className="flex items-center gap-3 border-b border-border/60 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] py-3 max-sm:pointer-coarse:pl-16 sm:px-8">
         <button type="button" onClick={onClose} className="grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Leave librarian desk"><Icon name="ChevronLeft" className="size-4" /></button>
         <div><h1 className="font-semibold tracking-tight">Librarian desk</h1><p className="text-xs text-muted-foreground">{archivedCount} mock items resting · changes always ask first</p></div>
       </header>
