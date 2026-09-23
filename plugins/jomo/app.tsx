@@ -930,9 +930,10 @@ const STATE_CYCLE: Record<SavedState, SavedState> = { new: "later", later: "save
 let lastActedItemId: string | null = null;
 let adHocSequence = 0;
 
-function TriageRow({ item, focused, onOpen, onSet, registerRef }: {
+function TriageRow({ item, focused, selected, onOpen, onSet, registerRef }: {
   item: Item;
   focused: boolean;
+  selected?: boolean;
   onOpen: () => void;
   onSet: (state: SavedState) => void;
   registerRef: (el: HTMLDivElement | null) => void;
@@ -1026,6 +1027,7 @@ function TriageRow({ item, focused, onOpen, onSet, registerRef }: {
           "relative flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card px-3 max-md:pointer-coarse:px-4 py-2.5 max-md:pointer-coarse:py-3 transition-[border-color,transform,opacity] border-l-4",
           STATE_ACCENT[item.saved],
           focused && "border-border/0 ring-2 ring-primary/60",
+          selected && "ring-2 ring-sky-400/70 border-sky-400/40",
           item.saved === "dropped" && "line-through decoration-muted-foreground/60",
         )}
       >
@@ -1058,6 +1060,32 @@ function TriageView({ items, onOpen, onSet, activeKindLabel }: { items: Item[]; 
   const lastSet = useRef(onSet);
   lastSet.current = onSet;
 
+  // BBM-3 slice 2 mocks: keyboard range selection over focused rows.
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Bulk-by-source: staged action awaiting inline confirmation.
+  const [sourceBulk, setSourceBulk] = useState<{ source: string; action: SavedState } | null>(null);
+
+  const sourceChips = useMemo(() => {
+    const counts = new Map<string, { count: number; color: string }>();
+    for (const item of items) {
+      if (item.saved !== "new" && item.saved !== "later") continue;
+      const entry = counts.get(item.source) ?? { count: 0, color: item.sourceColor };
+      entry.count += 1;
+      counts.set(item.source, entry);
+    }
+    return [...counts.entries()]
+      .filter(([, { count }]) => count >= 3)
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 6);
+  }, [items]);
+
+  const sourcePending = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of items) if (item.saved === "new" || item.saved === "later") counts.set(item.source, (counts.get(item.source) ?? 0) + 1);
+    return counts;
+  }, [items]);
+
   const counts = useMemo(() => {
     const acc: Record<SavedState, number> = { new: 0, later: 0, saved: 0, dropped: 0 };
     for (const item of items) acc[item.saved] += 1;
@@ -1072,6 +1100,24 @@ function TriageView({ items, onOpen, onSet, activeKindLabel }: { items: Item[]; 
     setToast(`"${item.title ?? item.fullName}" → ${state}`);
     lastActedItemId = item.id;
     if (advance && state !== "later") setFocus((f) => Math.min(f + 1, Math.max(0, items.length - 1)));
+  };
+
+  const applyBulk = (indices: number[], state: SavedState) => {
+    for (const i of indices) {
+      const item = items[i];
+      if (!item) continue;
+      undoStack.current.push({ id: item.id, state: item.saved, label: item.title ?? item.fullName ?? "item" });
+      lastSet.current(item.id, state);
+    }
+    setSelected(new Set());
+    setAnchor(null);
+    setToast(`${indices.length} items → ${state}`);
+  };
+
+  const extendSelection = (to: number) => {
+    if (anchor == null) { setAnchor(to); setSelected(new Set([to])); return; }
+    const [from, end] = anchor <= to ? [anchor, to] : [to, anchor];
+    setSelected(new Set(Array.from({ length: end - from + 1 }, (_, i) => i + from)));
   };
 
   useEffect(() => {
@@ -1090,6 +1136,10 @@ function TriageView({ items, onOpen, onSet, activeKindLabel }: { items: Item[]; 
       };
       if (event.key === "j" || event.key === "ArrowDown") return move(1);
       if (event.key === "k" || event.key === "ArrowUp") return move(-1);
+      if (event.key === "J") { event.preventDefault(); extendSelection(Math.min(items.length - 1, anchor ?? focus)); return; }
+      if (event.key === "K") { event.preventDefault(); extendSelection(Math.max(0, anchor ?? focus)); return; }
+      if (event.key === "v") { event.preventDefault(); setAnchor(focus); setSelected(new Set([focus])); return; }
+      if (event.key === "Escape") { setSelected(new Set()); setAnchor(null); return; }
       if (event.key === "o" || event.key === "Enter") {
         const item = items[focus];
         if (item) { event.preventDefault(); onOpen(item); }
@@ -1123,26 +1173,213 @@ function TriageView({ items, onOpen, onSet, activeKindLabel }: { items: Item[]; 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 max-h-full flex-1 space-y-1 overflow-y-auto">
+        {sourceChips.length > 0 && (
+          <div className="pb-2">
+            <div className="flex flex-wrap gap-1.5">
+              <span className="py-1 text-[11px] text-muted-foreground">Bulk by source:</span>
+              {sourceChips.map(([source, { count, color }]) => (
+                <button key={source} type="button" onClick={() => setSourceBulk({ source, action: "dropped" })}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-red-500/60 hover:text-foreground">
+                  <span className="size-2 rounded-full" style={{ backgroundColor: color }} />
+                  {source} <span className="font-mono text-muted-foreground">{count}</span>
+                </button>
+              ))}
+            </div>
+            {sourceBulk && (() => {
+              const pending = sourcePending.get(sourceBulk.source) ?? 0;
+              const indices = items.map((item, i) => (item.source === sourceBulk.source ? i : -1)).filter((i) => i >= 0);
+              return (
+                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-amber-400/50 bg-amber-400/10 px-3 py-2 text-xs">
+                  <span className="text-foreground">Send {pending} untriaged from <span className="font-medium">{sourceBulk.source}</span> to…</span>
+                  {(["dropped", "saved", "later"] as const).map((action) => (
+                    <button key={action} type="button" onClick={() => { applyBulk(indices, action); setSourceBulk(null); }}
+                      className={cn("rounded-lg border px-2.5 py-1 transition-colors", action === "dropped" && "border-red-500/60 text-red-400 hover:bg-red-500/10", action === "saved" && "border-emerald-500/60 text-emerald-400 hover:bg-emerald-500/10", action === "later" && "border-amber-400/60 text-amber-400 hover:bg-amber-400/10")}>
+                      {action === "dropped" ? "drop" : action === "saved" ? "ingest" : "later"} ({indices.length})
+                    </button>
+                  ))}
+                  <button type="button" onClick={() => setSourceBulk(null)} className="text-muted-foreground underline hover:text-foreground">cancel</button>
+                </div>
+              );
+            })()}
+          </div>
+        )}
         {items.map((item, index) => (
           <TriageRow
             key={item.id}
             item={item}
             focused={index === focus}
+            selected={selected.has(index)}
             onOpen={() => onOpen(item)}
             onSet={(state) => apply(index, state, true)}
             registerRef={(el) => { rowRefs.current[index] = el; }}
           />
         ))}
       </div>
+      {selected.size > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-primary/50 bg-primary/10 px-3 py-2 text-xs">
+          <span className="font-medium text-foreground">{selected.size} selected</span>
+          {(["saved", "later", "dropped"] as const).map((action) => (
+            <button key={action} type="button" onClick={() => applyBulk([...selected].sort((a, b) => a - b), action)}
+              className={cn("rounded-lg border px-2.5 py-1 transition-colors", action === "saved" && "border-emerald-500/60 text-emerald-400 hover:bg-emerald-500/10", action === "later" && "border-amber-400/60 text-amber-400 hover:bg-amber-400/10", action === "dropped" && "border-red-500/60 text-red-400 hover:bg-red-500/10")}>
+              {action === "saved" ? "s ingest" : action === "later" ? "l later" : "x drop"}
+            </button>
+          ))}
+          <button type="button" onClick={() => { setSelected(new Set()); setAnchor(null); }} className="text-muted-foreground underline hover:text-foreground">esc clears</button>
+        </div>
+      )}
       <div className="sticky bottom-0 mt-3 border-t border-border bg-background/95 px-1 py-2.5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" /> {counts.new + counts.later} in queue</span>
           <span className="inline-flex items-center gap-1.5 text-emerald-400">✓ {counts.saved} ingested</span>
           <span className="inline-flex items-center gap-1.5 text-amber-400">◔ {counts.later} later</span>
-          <span className="hidden sm:inline-flex items-center gap-1">{toast ?? (undoStack.current.length ? "press u to undo" : "j/k move · s ingest · l later · x drop · o read")}</span>
+          <span className="hidden sm:inline-flex items-center gap-1">{toast ?? (undoStack.current.length ? "press u to undo" : "j/k move · v select · J/K extend · s ingest · l later · x drop · o read")}</span>
           {toast && <button type="button" className="underline hover:text-foreground" onClick={() => { const prev = undoStack.current.pop(); if (prev) { lastSet.current(prev.id, prev.state); setToast(`undid: "${prev.label}"`); } }}>undo</button>}
         </div>
       </div>
+    </div>
+  );
+}
+
+// BBM-3 slice 3 mock: the backlog reservoir. Whatever was never triaged
+// keeps aging here. The mock reuses the volume batch as raw material and
+// spreads it across a 30-day retention window.
+
+function buildReservoirBacklog(): Array<{ item: Item; ageDays: number }> {
+  const rand = mulberry32(77760916);
+  const base = buildVolumeBatch();
+  const entries: Array<{ item: Item; ageDays: number }> = [];
+  for (const item of base) {
+    if (item.saved !== "new" && item.saved !== "later") continue;
+    entries.push({
+      item: { ...item, id: `res-${item.id}`, saved: rand() < 0.75 ? "later" : "new" },
+      ageDays: 2 + Math.floor(rand() * 26),
+    });
+  }
+  entries.sort((a, b) => b.ageDays - a.ageDays);
+  return entries;
+}
+
+const RETENTION_DAYS = 30;
+
+function ageLabel(days: number): string {
+  if (days <= 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 14) return "last week";
+  if (days < 21) return "two weeks ago";
+  return "weeks ago";
+}
+
+function ReservoirView({ backlog, onExit }: { backlog: Array<{ item: Item; ageDays: number }>; onExit: () => void }) {
+  const [entries, setEntries] = useState(backlog);
+  const [drainConfirm, setDrainConfirm] = useState(false);
+  const [dayConfirm, setDayConfirm] = useState<number | null>(null);
+  const [peek, setPeek] = useState<number | null>(null);
+
+  const byAge = useMemo(() => {
+    const groups = new Map<number, Array<{ item: Item; ageDays: number }>>();
+    for (const entry of entries) {
+      const list = groups.get(entry.ageDays) ?? [];
+      list.push(entry);
+      groups.set(entry.ageDays, list);
+    }
+    return [...groups.entries()].sort((a, b) => b[0] - a[0]);
+  }, [entries]);
+
+  const entriesLeft = entries.filter((entry) => entry.item.saved !== "dropped");
+  const expiringSoon = entriesLeft.filter((entry) => entry.ageDays >= 23);
+  const drainEligible = entriesLeft.filter((entry) => entry.ageDays >= 7);
+
+  const setEntry = (id: string, state: SavedState) => setEntries((current) => current.map((entry) => entry.item.id === id ? { ...entry, item: { ...entry.item, saved: state } } : entry));
+  const drainAge = (minAge: number) => {
+    setEntries((current) => current.map((entry) => entry.ageDays >= minAge ? { ...entry, item: { ...entry.item, saved: "dropped" } } : entry));
+    setDrainConfirm(false);
+    setDayConfirm(null);
+  };
+
+  return (
+    <div className="jomo-enter mx-auto max-w-3xl">
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <button type="button" onClick={onExit} className="inline-flex items-center gap-1 hover:text-foreground"><Icon name="ChevronLeft" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> back to calm</button>
+        <span>the drain · {RETENTION_DAYS}-day retention</span>
+      </div>
+
+      <section className="mt-4 rounded-3xl bg-card/60 px-5 py-5 ring-1 ring-border/50">
+        <h2 className="text-lg font-medium tracking-tight">{entriesLeft.length} things are aging quietly.</h2>
+        <p className="mt-1.5 max-w-xl text-sm leading-6 text-muted-foreground">Nobody has decided on them yet, and that is allowed. Each one drains by itself after {RETENTION_DAYS} days — dropped, with a note in the receipt, nothing to catch up on.</p>
+        {expiringSoon.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3.5 py-3 text-xs">
+            <p className="text-amber-400"><span className="font-medium">{expiringSoon.length}</span> are within their last week (oldest from {expiringSoon[0].item.source})</p>
+            <p className="mt-1 text-muted-foreground">Oldest first, if you ever feel like deciding — or just let them go.</p>
+          </div>
+        )}
+      </section>
+
+      {drainEligible.length > 0 && (
+        <section className="mt-3">
+          {drainConfirm ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-500/50 bg-red-500/10 px-3.5 py-2.5 text-xs">
+              <span className="text-foreground">Drain <span className="font-medium">{drainEligible.length}</span> items 7+ days old?</span>
+              <button type="button" onClick={() => drainAge(7)} className="rounded-lg border border-red-500/60 px-2.5 py-1 text-red-400 hover:bg-red-500/10">Drain them</button>
+              <button type="button" onClick={() => setDrainConfirm(false)} className="text-muted-foreground underline hover:text-foreground">keep</button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setDrainConfirm(true)} className="w-full rounded-xl border border-dashed border-border px-3.5 py-2.5 text-left text-xs text-muted-foreground transition-colors hover:border-red-500/50 hover:text-foreground">
+              Let the drain do its thing · <span className="font-medium">{drainEligible.length}</span> items are already 7+ days old
+            </button>
+          )}
+        </section>
+      )}
+
+      {byAge.length === 0 && <p className="mt-6 rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">The reservoir is drained. Everything here has been decided or has quietly left.</p>}
+      {byAge.map(([age, dayEntries]) => {
+        const undiscarded = dayEntries.filter((entry) => entry.item.saved !== "dropped");
+        if (undiscarded.length === 0) return null;
+        const sourceColors: string[] = [];
+        let distinctSources = 0;
+        const seen = new Set<string>();
+        for (const entry of undiscarded) {
+          if (!seen.has(entry.item.source)) { seen.add(entry.item.source); distinctSources++; sourceColors.push(entry.item.sourceColor); }
+        }
+        const shownColors = sourceColors.slice(0, 8);
+        return (
+          <section key={age} className="mt-2 rounded-2xl border border-border bg-card px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] max-md:pointer-coarse:text-[15px] font-medium">{ageLabel(age)}{age >= 2 ? ` · ${age} days old` : ""}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {age > RETENTION_DAYS ? "already past the drain" : age === RETENTION_DAYS ? "drains tonight" : `drains in ${RETENTION_DAYS - age} days`} · from
+                  <span className="inline-flex items-center gap-1 pl-1">{shownColors.map((color, i) => <span key={i} className="size-2 rounded-full" style={{ backgroundColor: color }} />)}{distinctSources > shownColors.length ? ` ${distinctSources} sources` : ""}</span>
+                </p>
+              </div>
+              <span className="rounded-full bg-muted px-2.5 py-0.5 font-mono text-[11px] text-muted-foreground">{undiscarded.length}</span>
+              {dayConfirm === age ? (
+                <span className="flex items-center gap-2 text-xs">
+                  <button type="button" onClick={() => drainAge(age)} className="rounded-lg border border-red-500/60 px-2.5 py-1 text-red-400 hover:bg-red-500/10">Drop all {undiscarded.length}</button>
+                  <button type="button" onClick={() => setDayConfirm(null)} className="text-muted-foreground underline hover:text-foreground">no</button>
+                </span>
+              ) : (
+                <button type="button" onClick={() => setDayConfirm(age)} aria-label={`Consider draining ${ageLabel(age)}`} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground")}><Icon name="Trash2" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
+              )}
+              <button type="button" onClick={() => setPeek(peek === age ? null : age)} className="text-[11px] text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground">{peek === age ? "put away" : "peek"}</button>
+            </div>
+            {peek === age && (
+              <div className="mt-3 space-y-1.5 border-t border-border/60 pt-3">
+                {undiscarded.slice(0, 6).map(({ item }) => (
+                  <div key={item.id} className="flex items-center gap-3 rounded-xl border border-border/70 bg-background/60 px-3 py-2">
+                    <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: item.sourceColor }} />
+                    <p className="min-w-0 flex-1 truncate text-[13px] max-md:pointer-coarse:text-[15px]">{item.title ?? item.fullName ?? item.body}</p>
+                    <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">{item.source}</span>
+                    <button type="button" onClick={() => setEntry(item.id, "saved")} aria-label="Ingest" className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-lg text-emerald-400 hover:bg-emerald-500/10")}><Icon name="Check" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
+                    <button type="button" onClick={() => setEntry(item.id, "dropped")} aria-label="Drop" className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground")}><Icon name="X" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /></button>
+                  </div>
+                ))}
+                {undiscarded.length > 6 && <p className="text-center text-[11px] text-muted-foreground">…and {undiscarded.length - 6} more on this shelf</p>}
+              </div>
+            )}
+          </section>
+        );
+      })}
+      <p className="mt-6 text-center text-xs text-muted-foreground">Mock reservoir. Ages are invented; the real drain would age round items automatically.</p>
     </div>
   );
 }
@@ -1218,6 +1455,16 @@ function inferKindFromUrl(rawUrl: string): { kind: ItemKind; label: string } {
 
 function RoundupCard({ items, hasProfile, onOpen }: { items: Item[]; hasProfile: boolean; onOpen: (item: Item) => void }) {
   const [dismissed, setDismissed] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  // Mock receipt numbers: deterministic from the round size. In the real
+  // backend these would come from the rules/classification pass over the
+  // round (BBM-3: invisible labor with a visible summary receipt).
+  const receipt = useMemo(() => {
+    const autoDrop = Math.round(items.length * 0.55);
+    const ingested = Math.round(items.length * 0.09);
+    const later = Math.round(items.length * 0.07);
+    return { autoDrop, ingested, later, handled: autoDrop + ingested + later };
+  }, [items.length]);
   if (dismissed) {
     return <section className="jomo-enter rounded-3xl bg-card/40 px-6 py-12 text-center ring-1 ring-border/40"><Icon name="Check" className="mx-auto size-5 text-emerald-400" /><h2 className="mt-3 text-xl font-medium tracking-tight">All quiet.</h2><p className="mt-2 text-sm text-muted-foreground">The report is tucked away. Everything else is still resting.</p><button type="button" onClick={() => setDismissed(false)} className="mt-5 text-xs text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground">Show today&apos;s report</button></section>;
   }
@@ -1251,9 +1498,19 @@ function RoundupCard({ items, hasProfile, onOpen }: { items: Item[]; hasProfile:
           </li>
         ))}
       </ul>
-      <div className="flex items-center justify-between px-4 py-3 text-[11px] text-muted-foreground">
-        <span>Everything else is resting safely out of sight.</span>
-        <span className="inline-flex items-center gap-1 opacity-60"><Icon name="Repeat" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> a new report follows each sweep</span>
+      <div className="border-t border-border/60 px-4 py-2.5 text-[11px] text-muted-foreground">
+        <button type="button" onClick={() => setReceiptOpen((current) => !current)} className="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground">
+          <Icon name={receiptOpen ? "ChevronDown" : "ChevronRight"} className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} />
+          the librarian also did the chores: {receipt.handled} handled
+        </button>
+        {receiptOpen && (
+          <div className="mt-2 space-y-1 rounded-xl bg-muted/40 px-3 py-2.5">
+            <p className="text-[12px]"><span className="font-mono text-foreground">{receipt.autoDrop}</span> auto-dropped by your standing rules (A TARDE local news past 3 days, GitHub releases you never open, duplicates)</p>
+            <p className="text-[12px]"><span className="font-mono text-foreground">{receipt.ingested}</span> ingested straight into the library (matches kept interests)</p>
+            <p className="text-[12px]"><span className="font-mono text-foreground">{receipt.later}</span> parked for a possible later look</p>
+            <p className="pt-1 text-[11px] text-muted-foreground/70">Nothing left the hoard unrecoverably. <span className="opacity-70">Mock receipt — the numbers are invented.</span></p>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -1608,7 +1865,8 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [view, setView] = useState<"home" | "cards" | "triage" | "sweep">("home");
+  const [view, setView] = useState<"home" | "cards" | "triage" | "sweep" | "reservoir">("home");
+  const [backlog] = useState(buildReservoirBacklog);
 
   useEffect(() => {
     if (!utilityOpen) return;
@@ -1787,8 +2045,9 @@ function JomoPage({ subPath }: { subPath?: string }) {
                 ["cards", "GridView"],
                 ["triage", "ListView"],
                 ["sweep", "Zap"],
-              ] as Array<["cards" | "triage" | "sweep", "GridView" | "ListView" | "Zap"]>).map(([mode, icon]) => (
-                <button key={mode} type="button" aria-pressed={view === mode} aria-label={mode === "cards" ? "Card view" : mode === "triage" ? "Triage view" : "Sweep mode"} onClick={() => setView(mode)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md transition-colors", view === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+                ["reservoir", "Archive"],
+              ] as Array<["cards" | "triage" | "sweep" | "reservoir", "GridView" | "ListView" | "Zap" | "Archive"]>).map(([mode, icon]) => (
+                <button key={mode} type="button" aria-pressed={view === mode} aria-label={mode === "cards" ? "Card view" : mode === "triage" ? "Triage view" : mode === "sweep" ? "Sweep mode" : "Reservoir view"} onClick={() => setView(mode)} className={cn(COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS + " grid place-items-center rounded-md transition-colors", view === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
                   <Icon name={icon} className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} />
                 </button>
               ))}
@@ -1819,6 +2078,10 @@ function JomoPage({ subPath }: { subPath?: string }) {
                 </div>
               </div>
             </section>
+          ) : view === "reservoir" ? (
+            <div className="w-full">
+              <ReservoirView backlog={backlog} onExit={() => setView("home")} />
+            </div>
           ) : view === "sweep" ? (
             <SweepView items={sweepItems} onOpen={openItem} onSet={setState} onExit={() => setView("home")} />
           ) : view === "triage" ? (
