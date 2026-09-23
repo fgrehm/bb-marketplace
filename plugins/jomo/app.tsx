@@ -839,6 +839,8 @@ function matchesKind(item: Item, feed: Feed): boolean {
 function Reader({ item, note, onSaveNote, onBack, onToggleSaved }: { item: Item; note: string; onSaveNote: (note: string) => void; onBack: () => void; onToggleSaved: () => void }) {
   const [noteOpen, setNoteOpen] = useState(Boolean(note));
   const [noteDraft, setNoteDraft] = useState(note);
+  const [savedPulse, setSavedPulse] = useState(false);
+  const save = () => { onSaveNote(noteDraft); setSavedPulse(true); window.setTimeout(() => setSavedPulse(false), 2500); };
   const noteDirty = noteDraft !== note;
   return (
     <main className="h-full min-h-0 overflow-y-auto pb-24 max-md:pointer-coarse:pb-28">
@@ -908,7 +910,7 @@ function Reader({ item, note, onSaveNote, onBack, onToggleSaved }: { item: Item;
               <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-amber-400">Your note</p>
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => { setNoteOpen(false); setNoteDraft(note); }} className="text-xs text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground">collapse</button>
-                <Button size="sm" className="h-7" disabled={!noteDirty} onClick={() => onSaveNote(noteDraft)}>Save</Button>
+                <Button size="sm" className="h-7" disabled={!noteDirty} onClick={save}>{noteDirty ? "Save" : savedPulse ? "Noted." : "Saved"}</Button>
               </div>
             </div>
             <textarea
