@@ -144,7 +144,7 @@ export function LibrarianDesk({ items, onClose, onOpenItem, onHoardLinks, onSubs
 
       <footer className="border-t border-border/60 bg-background/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:px-8">
         <form className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl bg-card/60 p-2 ring-1 ring-border/50" onSubmit={(event) => { event.preventDefault(); send(); }}>
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={2} placeholder="Drop links, subscribe to a feed, or ask the archive…" className="max-h-32 min-h-12 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" />
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={2} placeholder="Drop links, subscribe to a feed, or ask the archive…" className="max-h-32 min-h-12 flex-1 resize-none bg-transparent px-2 py-2 text-sm max-md:pointer-coarse:!text-base leading-5 outline-none placeholder:text-muted-foreground" />
           <Button type="submit" size="sm" disabled={!draft.trim()} aria-label="Send to librarian"><Icon name="ChevronRight" className="size-4" /></Button>
         </form>
         <p className="mx-auto mt-2 max-w-2xl text-center text-[10px] text-muted-foreground/70">Mock conversation · heuristic replies · no network or real ingestion</p>

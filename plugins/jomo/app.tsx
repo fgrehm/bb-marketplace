@@ -918,7 +918,7 @@ function Reader({ item, note, onSaveNote, onBack, onToggleSaved }: { item: Item;
               onChange={(event) => setNoteDraft(event.target.value)}
               rows={4}
               placeholder="Why you saved it, what to do with it, who asked you about it…"
-              className="mt-3 w-full resize-y rounded-xl bg-background/60 px-3 py-2 font-mono text-sm leading-6 outline-none placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-primary/60"
+              className="mt-3 w-full resize-y rounded-xl bg-background/60 px-3 py-2 font-mono text-sm max-md:pointer-coarse:!text-base leading-6 outline-none placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-primary/60"
             />
             <p className="mt-2 text-[11px] text-muted-foreground">Saved by JOMO, keyed to this item. Clear the text and save to remove the note.</p>
           </div>
@@ -1788,7 +1788,7 @@ function SourcesDrawer({ open, onClose, sources, onToggle, onRemove, onAddFeed, 
                 onChange={(event) => setLinkUrl(event.target.value)}
                 onKeyDown={(event) => { if (event.key === "Enter" && linkLooksValid) { onIngest(linkUrl); setLinkUrl(""); } }}
                 placeholder="https://…"
-                className="h-10 flex-1 rounded-lg border border-border bg-card px-3 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+                className="h-10 flex-1 rounded-lg border border-border bg-card text-sm max-md:pointer-coarse:!text-base outline-none placeholder:text-muted-foreground/50 focus:border-primary"
               />
               <Button size="sm" className="h-10" disabled={!linkLooksValid} onClick={() => { onIngest(linkUrl); setLinkUrl(""); }}>
                 <Icon name="Plus" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> Capture
@@ -1805,13 +1805,13 @@ function SourcesDrawer({ open, onClose, sources, onToggle, onRemove, onAddFeed, 
                 value={feedUrl}
                 onChange={(event) => setFeedUrl(event.target.value)}
                 placeholder="https://example.com/feed.xml"
-                className="h-10 rounded-lg border border-border bg-card px-3 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+                className="h-10 rounded-lg border border-border bg-card px-3 text-sm max-md:pointer-coarse:!text-base outline-none placeholder:text-muted-foreground/50 focus:border-primary"
               />
               <input
                 value={feedName}
                 onChange={(event) => setFeedName(event.target.value)}
                 placeholder="Optional display name"
-                className="h-10 rounded-lg border border-border bg-card px-3 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+                className="h-10 rounded-lg border border-border bg-card px-3 text-sm max-md:pointer-coarse:!text-base outline-none placeholder:text-muted-foreground/50 focus:border-primary"
               />
               <Button size="sm" className="h-10" disabled={!feedLooksValid} onClick={() => { onAddFeed(feedName || new URL(feedUrl).hostname, feedUrl); setFeedUrl(""); setFeedName(""); }}>
                 <Icon name="Plus" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> Add feed
