@@ -18,15 +18,17 @@ import type {
  * v6: persist workspace cwd / projectPath on each record.
  * v9: prefer assistant provider over session wrapper provider.
  * v10: invalidate v9 caches that may predate corrected provider parsing.
+ * v11: persist per-record provider (v10 rewrote every record as `pi` on decode).
  */
-export const USAGE_SCAN_CACHE_VERSION = 10 as const;
+export const USAGE_SCAN_CACHE_VERSION = 11 as const;
 
 /**
  * v4: homogeneous pricing-source buckets; v5: include projectPath;
  * v8: per-provider breakdown from Pi session metadata.
  * v10: invalidate bases derived from stale v9 file records.
+ * v11: invalidate bases built from v10 file records that lost per-record providers.
  */
-export const USAGE_BASE_CACHE_VERSION = 10 as const;
+export const USAGE_BASE_CACHE_VERSION = 11 as const;
 
 export interface CachedFile {
   size: number;
@@ -50,6 +52,7 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   projectIndex: number,
+  providerIndex: number,
 ];
 
 interface SerializedFile {
@@ -65,6 +68,7 @@ interface SerializedCache {
   models: readonly string[];
   sessions: readonly string[];
   paths: readonly string[];
+  providers: readonly string[];
   files: Readonly<Record<string, SerializedFile>>;
 }
 
@@ -85,9 +89,11 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
   const models: string[] = [];
   const sessions: string[] = [];
   const paths: string[] = [];
+  const providers: string[] = [];
   const modelIndex = new Map<string, number>();
   const sessionIndex = new Map<string, number>();
   const pathIndex = new Map<string, number>();
+  const providerIndex = new Map<string, number>();
   const files: Record<string, SerializedFile> = {};
 
   for (const [path, entry] of cache) {
@@ -108,11 +114,19 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
         record.dedupeKey,
         record.reportedCostUsd,
         intern(paths, pathIndex, record.projectPath),
+        intern(providers, providerIndex, record.provider),
       ]),
     };
   }
 
-  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, paths, files };
+  return {
+    version: USAGE_SCAN_CACHE_VERSION,
+    models,
+    sessions,
+    paths,
+    providers,
+    files,
+  };
 }
 
 export function decodeScanCache(document: unknown): ScanCache {
@@ -122,15 +136,17 @@ export function decodeScanCache(document: unknown): ScanCache {
   const root = document as Partial<SerializedCache>;
   if (root.version !== USAGE_SCAN_CACHE_VERSION) return cache;
   if (!Array.isArray(root.models) || !Array.isArray(root.sessions)) return cache;
-  if (!Array.isArray(root.paths)) return cache;
+  if (!Array.isArray(root.paths) || !Array.isArray(root.providers)) return cache;
   if (typeof root.files !== "object" || root.files === null) return cache;
   if (!root.models.every((value) => typeof value === "string")) return cache;
   if (!root.sessions.every((value) => typeof value === "string")) return cache;
   if (!root.paths.every((value) => typeof value === "string")) return cache;
+  if (!root.providers.every(isProvider)) return cache;
 
   const models = root.models as readonly string[];
   const sessions = root.sessions as readonly string[];
   const paths = root.paths as readonly string[];
+  const providers = root.providers as readonly UsageProviderKind[];
 
   for (const [path, raw] of Object.entries(root.files)) {
     if (typeof raw !== "object" || raw === null) continue;
@@ -142,18 +158,14 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
-    if (
-      entry.p !== "pi"
-    ) {
-      continue;
-    }
+    if (!isProvider(entry.p)) continue;
     if (!Array.isArray(entry.r)) continue;
 
     const provider = entry.p;
     const records: UsageRecord[] = [];
     let corrupt = false;
     for (const row of entry.r) {
-      if (!Array.isArray(row) || row.length !== 11) {
+      if (!Array.isArray(row) || row.length !== 12) {
         corrupt = true;
         break;
       }
@@ -169,7 +181,14 @@ export function decodeScanCache(document: unknown): ScanCache {
         dedupeKey,
         reportedCostUsd,
         projectIdx,
+        providerIdx,
       ] = row as unknown as SerializedRecord;
+      const provider =
+        typeof providerIdx === "number" &&
+        Number.isInteger(providerIdx) &&
+        providers[providerIdx] !== undefined
+        ? providers[providerIdx]!
+        : entry.p;
       const model = typeof modelIdx === "number" ? models[modelIdx] : undefined;
       if (
         !isNonNegativeFiniteNumber(timestampMs) ||
@@ -184,7 +203,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         !isNonNegativeFiniteNumber(reasoning) ||
         reasoning > output ||
         (dedupeKey !== null && typeof dedupeKey !== "string") ||
-        (reportedCostUsd !== null && !Number.isFinite(reportedCostUsd))
+        (reportedCostUsd !== null && !Number.isFinite(reportedCostUsd)) ||
+        !Number.isInteger(providerIdx)
       ) {
         corrupt = true;
         break;
