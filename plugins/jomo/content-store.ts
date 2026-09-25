@@ -15,7 +15,6 @@ export type ContentItem = {
   retrieved: string;
   tags: string[];
   state: string;
-  note: string;
   body: string;
 };
 
@@ -100,7 +99,7 @@ export function createContentStore(settings: ContentSettings) {
       const metadata: Record<string, string | string[] | null> = {
         id: item.id, site: item.site, sourceId: item.sourceId, source: item.source,
         title: item.title, kind: item.kind, published: item.published, retrieved: item.retrieved,
-        tags: item.tags, state: item.state, note: item.note,
+        tags: item.tags, state: item.state,
       };
       const frontmatter = Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
       let handle;

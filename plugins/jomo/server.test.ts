@@ -56,7 +56,7 @@ describe("JOMO storage cutover", () => {
     expect(await harness.behavior.callRpc("library_list", { offset: 0, state: "new" })).toEqual({ items: [], hasMore: false });
     const root = await mkdtemp(join(tmpdir(), "jomo-library-"));
     await harness.behavior.setSettings({ contentRoot: root });
-    const path = await createContentStore({ contentRoot: root, filenamePattern: "{{domain}}/{{date}}-{{slug}}.md" }).write({ id: "itm_one123", site: "Example", sourceId: null, source: "https://example.org/a", title: "A real article", kind: "article", published: "2026-09-23", retrieved: "2026-09-23", tags: [], state: "saved", note: "", body: "Real content" });
+    const path = await createContentStore({ contentRoot: root, filenamePattern: "{{domain}}/{{date}}-{{slug}}.md" }).write({ id: "itm_one123", site: "Example", sourceId: null, source: "https://example.org/a", title: "A real article", kind: "article", published: "2026-09-23", retrieved: "2026-09-23", tags: [], state: "saved", body: "Real content" });
     db.prepare("UPDATE items SET content_path = ?, content_state = 'ready' WHERE id = ?").run(path, "itm_one");
     expect(await harness.behavior.callRpc("library_read", { id: "itm_one" })).toEqual({ body: "Real content", missing: false });
     await harness.lifecycle.dispose();
@@ -160,7 +160,7 @@ describe("JOMO storage cutover", () => {
     await harness.behavior.setSettings({ contentRoot: root, inboxLinksFile: file });
     const id = "itm_ready123";
     const store = createContentStore({ contentRoot: root, filenamePattern: "{{domain}}/{{date}}-{{slug}}.md" });
-    const path = await store.write({ id, site: "Example", sourceId: null, source: "https://example.org/ready", title: "Ready", kind: "article", published: "2026-09-23", retrieved: "2026-09-23", tags: [], state: "new", note: "", body: "Ready content" });
+    const path = await store.write({ id, site: "Example", sourceId: null, source: "https://example.org/ready", title: "Ready", kind: "article", published: "2026-09-23", retrieved: "2026-09-23", tags: [], state: "new", body: "Ready content" });
     bb.storage.database().prepare("INSERT INTO items (id, display_source, kind, title, url, published_at, content_state, content_path) VALUES (?, 'Example', 'article', 'Ready', 'https://example.org/ready', 1, 'ready', ?)").run(id, path);
     expect(await harness.behavior.callRpc("rss_action", { id, action: "save" })).toEqual({ outcome: "saved" });
     expect((bb.storage.database().prepare("SELECT state FROM items WHERE id = ?").get(id) as { state: string }).state).toBe("saved");
@@ -168,26 +168,16 @@ describe("JOMO storage cutover", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("discards legacy notes and keeps new notes, including orphan IDs", async () => {
+  it("removes legacy item-note storage while preserving settings and profile data", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
-    await bb.storage.kv.set("item-notes", { orphan: "Old note" });
     await bb.storage.kv.set("librarian-profile", { marker: "preserve" });
     await plugin(bb);
     expect(DEFAULT_CONTENT_ROOT).toBe("/data/obsidian/Agent/Library");
+    expect(bb.storage.database().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'item_notes'").get()).toBeUndefined();
+    expect((bb.storage.database().prepare("PRAGMA table_info(sources)").all() as Array<{ name: string }>).some(({ name }) => name === "paused_note")).toBe(false);
     await harness.behavior.setSettings({ filenamePattern: "{{domain}}/{{date}}-{{slug}}.md" });
     await harness.behavior.setSettings({ contentRoot: "/tmp/jomo-content", filenamePattern: "{{slug}}-{{idSuffix}}.md", pruneDrainedFiles: false });
-    expect(await harness.behavior.callRpc("notes_list", {})).toEqual({ notes: [] });
-    expect(await bb.storage.kv.get("item-notes")).toBeUndefined();
     expect(await bb.storage.kv.get("librarian-profile")).toEqual({ marker: "preserve" });
-
-    await harness.behavior.callRpc("notes_save", { id: "orphan", note: "Edited" });
-    await harness.behavior.callRpc("notes_save", { id: "new-id", note: "Another" });
-    expect(await harness.behavior.callRpc("notes_list", {})).toEqual({ notes: [
-      { id: "new-id", note: "Another" },
-      { id: "orphan", note: "Edited" },
-    ] });
-    await harness.behavior.callRpc("notes_save", { id: "orphan", note: " " });
-    expect(await harness.behavior.callRpc("notes_list", {})).toEqual({ notes: [{ id: "new-id", note: "Another" }] });
     await harness.lifecycle.dispose();
   });
 

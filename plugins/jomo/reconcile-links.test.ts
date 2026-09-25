@@ -17,7 +17,7 @@ describe("vault reconciliation", () => {
     await writeFile(linksFile, "## QUEUE\n- https://example.org/good\n- https://example.org/bad\n- https://example.org/later\n\n## FAILED\n\n## 2026-09-15\n- old entry\n");
     const store = createContentStore({ contentRoot: library, filenamePattern: "{{domain}}/{{date}}-{{slug}}.md" });
     const id = "itm_test123";
-    const path = await store.write({ id, site: "Example", sourceId: null, source: "https://example.org/good", title: "Good story", kind: "article", published: "2026-09-24T10:00:00Z", retrieved: "2026-09-24T11:00:00Z", tags: [], state: "saved", note: "", body: "Body stays here" });
+    const path = await store.write({ id, site: "Example", sourceId: null, source: "https://example.org/good", title: "Good story", kind: "article", published: "2026-09-24T10:00:00Z", retrieved: "2026-09-24T11:00:00Z", tags: [], state: "saved", body: "Body stays here" });
     const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
     await plugin(bb);
     const db = bb.storage.database();

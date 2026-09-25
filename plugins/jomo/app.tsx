@@ -89,7 +89,6 @@ function JomoPage({ subPath }: { subPath?: string }) {
   const [sources, setSources] = useState<Source[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [notes, setNotes] = useState<Record<string, string>>({});
   const [readerBody, setReaderBody] = useState<string | null>(null);
   const [deepItem, setDeepItem] = useState<Item | null>(null);
   const [itemMissing, setItemMissing] = useState(false);
@@ -145,14 +144,6 @@ function JomoPage({ subPath }: { subPath?: string }) {
     });
     return () => { cancelled = true; };
   }, [profileReload, rpc]);
-
-  useEffect(() => {
-    let cancelled = false;
-    rpc.call("notes_list", {}).then(({ notes: stored }) => {
-      if (!cancelled) setNotes(Object.fromEntries(stored.map((entry) => [entry.id, entry.note])));
-    }).catch(() => { /* notes are optional — the reader degrades to no notes */ });
-    return () => { cancelled = true; };
-  }, [rpc]);
 
   useEffect(() => {
     if (!libraryOpen) return;
@@ -215,11 +206,6 @@ function JomoPage({ subPath }: { subPath?: string }) {
 
   const openItem = (item: Item) => goTo(`item/${item.id}`);
   const closeReader = () => goBack(lastScreen.current);
-
-  const saveNote = async (id: string, note: string) => {
-    await rpc.call("notes_save", { id, note });
-    setNotes((current) => ({ ...current, [id]: note }));
-  };
 
   const visible = useMemo(() => {
     const enabled = new Set(sources.filter((source) => source.enabled).map((source) => source.id));
@@ -303,7 +289,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
     if (librarySelected) {
       // One reader for hoard items and library articles: library/<id> reuses
       // the same deep-load path (hoard_get + library_read) as item/<id>.
-      if (activeItem) return <Reader key={activeItem.id} item={activeItem} body={readerBody} loading={readerLoading} note={notes[activeItem.id] ?? ""} onSaveNote={(note) => saveNote(activeItem.id, note)} onBack={() => goBack("library")} onToggleSaved={() => { if (activeItem.saved === "new" || activeItem.saved === "later") toggleSaved(activeItem.id); }} />;
+      if (activeItem) return <Reader key={activeItem.id} item={activeItem} body={readerBody} loading={readerLoading} onBack={() => goBack("library")} onToggleSaved={() => { if (activeItem.saved === "new" || activeItem.saved === "later") toggleSaved(activeItem.id); }} />;
       return <div className="grid h-full place-items-center bg-background px-5 text-center text-sm text-muted-foreground">{itemMissing ? <div><p>This article is no longer available.</p><Button variant="outline" className="mt-4" onClick={() => goBack("library")}>Back to library</Button></div> : "Opening article…"}</div>;
     }
     return <div className="flex h-full flex-col bg-background text-foreground">
@@ -318,7 +304,7 @@ function JomoPage({ subPath }: { subPath?: string }) {
   if (deskOpen) return <LibrarianDesk items={items} onClose={() => goBack(lastScreen.current)} onOpenItem={(id) => { const item = items.find((entry) => entry.id === id); if (item) openItem(item); }} onHoardLinks={hoardLinks} onSubscribe={addFeed} />;
 
   if (itemId && !activeItem) return <div className="grid h-full place-items-center bg-background px-5 text-center text-sm text-muted-foreground">{itemMissing ? <div><p>This item is no longer available.</p><Button variant="outline" className="mt-4" onClick={closeReader}>Back to JOMO</Button></div> : "Opening item…"}</div>;
-  if (activeItem) return <Reader key={activeItem.id} item={activeItem} body={readerBody} loading={readerLoading} note={notes[activeItem.id] ?? ""} onSaveNote={(note) => saveNote(activeItem.id, note)} onBack={closeReader} onToggleSaved={() => toggleSaved(activeItem.id)} />;
+  if (activeItem) return <Reader key={activeItem.id} item={activeItem} body={readerBody} loading={readerLoading} onBack={closeReader} onToggleSaved={() => toggleSaved(activeItem.id)} />;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">

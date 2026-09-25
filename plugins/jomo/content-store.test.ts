@@ -7,7 +7,7 @@ import { createContentStore } from "./content-store";
 const item = {
   id: "itm_abcdef123456", site: "Example", sourceId: "example", source: "https://example.org/post",
   title: "An actual article", kind: "article", published: "2026-09-23T08:14:00Z",
-  retrieved: "2026-09-23T09:02:11Z", tags: ["reading"], state: "new", note: "",
+  retrieved: "2026-09-23T09:02:11Z", tags: ["reading"], state: "new",
   body: "First paragraph.\n\nSecond paragraph.",
 };
 
@@ -19,6 +19,7 @@ describe("JOMO content files", () => {
     expect(path).toBe("example.org/2026-09-23-an-actual-article.md");
     const text = await readFile(join(root, path), "utf8");
     expect(text).toContain('source: "https://example.org/post"');
+    expect(text).not.toContain("\nnote:");
     expect(text).toContain("\n---\n\nFirst paragraph.\n\nSecond paragraph.");
     expect(await store.readBody(path)).toBe(item.body);
     await expect(store.write(item)).rejects.toThrow();

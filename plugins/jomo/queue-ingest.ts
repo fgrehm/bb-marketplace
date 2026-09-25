@@ -72,7 +72,7 @@ export async function ingestArticle(db: Database.Database, store: Store, rawUrl:
     db.prepare("UPDATE items SET source_id = COALESCE(source_id, ?), display_source = ?, kind = ?, author = ?, title = ?, excerpt = ?, url = ?, published_at = ?, tags = ?, expires_at = NULL, content_state = 'pending' WHERE id = ? AND content_state IN ('pending','missing','staged') AND content_origin = 'jomo'")
       .run(sourceId, sourceName, kind, page.author ?? null, page.title, excerpt, url, publishedAt, JSON.stringify(tags), id);
   }
-    const path = await store.write({ id, site: sourceName, sourceId, source: url, title: page.title, author: page.author, kind, published: publishedDate.toISOString(), retrieved: now.toISOString(), tags, state: "saved", note: "", body: page.body }, Boolean(existing && existing.contentState === "pending"));
+    const path = await store.write({ id, site: sourceName, sourceId, source: url, title: page.title, author: page.author, kind, published: publishedDate.toISOString(), retrieved: now.toISOString(), tags, state: "saved", body: page.body }, Boolean(existing && existing.contentState === "pending"));
   db.prepare("UPDATE items SET content_path = ?, content_state = 'ready', state = 'saved', expires_at = NULL WHERE id = ? AND content_state = 'pending' AND content_origin = 'jomo'").run(path, id);
   if (incoming !== url) db.prepare("INSERT OR REPLACE INTO url_aliases (alias, url) VALUES (?, ?)").run(incoming, url);
   return { id, path, alreadyPresent: false, preview: page.preview };

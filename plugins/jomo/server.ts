@@ -89,14 +89,6 @@ export const rpcContract = defineRpcContract({
     input: z.object({ notebook: z.string().max(20_000) }).strict(),
     output: z.object({ saved: z.boolean() }).strict(),
   },
-  notes_list: {
-    input: z.object({}).strict(),
-    output: z.object({ notes: z.array(z.object({ id: z.string().min(1), note: z.string().max(5000) })) }).strict(),
-  },
-  notes_save: {
-    input: z.object({ id: z.string().min(1), note: z.string().max(5000) }).strict(),
-    output: z.object({ saved: z.boolean() }).strict(),
-  },
   queue_link: {
     input: z.object({ url: z.string().trim().min(1).max(2048).url() }).strict(),
     output: z.object({ added: z.boolean() }).strict(),
@@ -185,7 +177,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
   // Append new statements only: the host hashes migration statements by index.
   bb.storage.migrate(db, [
-    `CREATE TABLE sources (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, kind TEXT NOT NULL, color TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, paused_note TEXT, last_fetch_at INTEGER, created_at INTEGER NOT NULL)`,
+    `CREATE TABLE sources (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, kind TEXT NOT NULL, color TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, paused_note TEXT, last_fetch_at INTEGER, created_at INTEGER NOT NULL)`, // Historical migration index; unused pause-note column removed below.
     `CREATE TABLE rounds (id TEXT PRIMARY KEY, started_at INTEGER NOT NULL, completed_at INTEGER, receipt_json TEXT)`,
     `CREATE TABLE items (id TEXT PRIMARY KEY, round_id TEXT REFERENCES rounds(id), source_id TEXT REFERENCES sources(id), display_source TEXT NOT NULL, kind TEXT NOT NULL, author TEXT, title TEXT, excerpt TEXT, url TEXT, published_at INTEGER NOT NULL, tags TEXT NOT NULL DEFAULT '[]', kind_extras TEXT, state TEXT NOT NULL DEFAULT 'new', state_changed_at INTEGER, state_changed_by TEXT, expires_at INTEGER, drained_at INTEGER, content_path TEXT, content_state TEXT NOT NULL DEFAULT 'pending', deleted_file_at INTEGER)`,
     `CREATE INDEX idx_items_round_state_pub ON items(round_id, published_at DESC)`,
@@ -193,7 +185,7 @@ export default async function plugin(bb: BbPluginApi) {
     `CREATE INDEX idx_items_reservoir ON items(published_at) WHERE state IN ('new','later')`,
     `CREATE INDEX idx_items_source_pub ON items(source_id, published_at DESC)`,
     `CREATE INDEX idx_items_source_round ON items(source_id, round_id)`,
-    `CREATE TABLE item_notes (item_id TEXT PRIMARY KEY, note TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+    `CREATE TABLE item_notes (item_id TEXT PRIMARY KEY, note TEXT NOT NULL, updated_at INTEGER NOT NULL)`, // Historical migration index; removed by the final statement below.
     `CREATE TABLE seen_entries (source_id TEXT NOT NULL, guid TEXT NOT NULL, seen_at INTEGER NOT NULL, PRIMARY KEY (source_id, guid))`,
     `ALTER TABLE items ADD COLUMN content_origin TEXT NOT NULL DEFAULT 'jomo'`, // Imported vault files are read-only references, not JOMO-owned outputs.
     `CREATE TABLE queue_jobs (id TEXT PRIMARY KEY, started_at INTEGER NOT NULL, status TEXT NOT NULL, queued INTEGER NOT NULL, processed INTEGER NOT NULL DEFAULT 0, ingested INTEGER NOT NULL DEFAULT 0, already_present INTEGER NOT NULL DEFAULT 0, failures_json TEXT NOT NULL DEFAULT '[]', failed_count INTEGER NOT NULL DEFAULT 0, remaining INTEGER, error TEXT)`,
@@ -204,12 +196,11 @@ export default async function plugin(bb: BbPluginApi) {
     `ALTER TABLE queue_jobs ADD COLUMN log_json TEXT NOT NULL DEFAULT '[]'`,
     `ALTER TABLE queue_jobs ADD COLUMN current_url TEXT`,
     `CREATE TABLE url_aliases (alias TEXT PRIMARY KEY, url TEXT NOT NULL)`, // Queue links that redirected: original URL to the archived canonical URL.
+    `DROP TABLE IF EXISTS item_notes`,
+    `ALTER TABLE sources DROP COLUMN paused_note`,
   ]);
   db.prepare("UPDATE queue_jobs SET status = 'interrupted', error = 'JOMO reloaded before this run completed' WHERE status = 'running'").run();
   db.prepare("UPDATE rss_sync_jobs SET status = 'interrupted', error = 'JOMO reloaded before this run completed' WHERE status = 'running'").run();
-
-  // Legacy mock notes are deliberately discarded; the profile and notebook remain in KV.
-  await bb.storage.kv.delete("item-notes");
 
   const drainExpired = () => {
     const now = Math.floor(Date.now() / 1000);
@@ -314,18 +305,6 @@ export default async function plugin(bb: BbPluginApi) {
       if (!profile) return { saved: false };
       await bb.storage.kv.set("librarian-profile", { ...profile, notebook });
       return { saved: true };
-    },
-    async notes_list() {
-      const notes = db.prepare("SELECT item_id AS id, note FROM item_notes ORDER BY item_id").all() as Array<{ id: string; note: string }>;
-      return { notes };
-    },
-    async notes_save({ id, note }) {
-      if (note.trim().length === 0) {
-        db.prepare("DELETE FROM item_notes WHERE item_id = ?").run(id);
-      } else {
-        db.prepare("INSERT INTO item_notes (item_id, note, updated_at) VALUES (?, ?, ?) ON CONFLICT(item_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at").run(id, note, Math.floor(Date.now() / 1000));
-      }
-      return { saved: true as const };
     },
     async queue_link({ url }) {
       const parsed = new URL(url);

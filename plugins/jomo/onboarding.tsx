@@ -56,7 +56,7 @@ const QUESTIONS: Question[] = [
     key: "autonomy",
     kicker: "the autonomy dial",
     title: "How much librarian do you want?",
-    why: "The librarian can take notes, or quietly clear the obvious noise. You remain in charge.",
+    why: "The librarian can suggest what to keep, or quietly clear the obvious noise. You remain in charge.",
     options: ["show me everything", "suggest, never act", "auto-triage the obvious", "curate the residue"],
     multi: false,
   },
@@ -216,7 +216,7 @@ export function Onboarding({ onComplete, onSkip }: { onComplete: (profile: Libra
           <h2 className="mt-3 text-2xl font-semibold tracking-tight">One last thing, let me look at what you already have.</h2>
           <p className="mt-2 text-sm text-muted-foreground">This prototype uses the configured sources and sample history. Nothing below becomes a rule until your confirmation.</p>
           <div className="mt-7 grid gap-2">
-            {[['12 feeds + OPML export', 'read', 'text-emerald-400'], ['358 sample and past ingests', 'skimmed', 'text-emerald-400'], ['research notes', 'drafted locally', 'text-amber-400'], ['browser bookmarks', 'skipped', 'text-muted-foreground']].map(([label, status, color]) => <div key={label} className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm"><Icon name={status === 'skipped' ? 'Circle' : 'Check'} className="size-4" /><span>{label}</span><span className={cn("ml-auto text-xs", color)}>{status}</span></div>)}
+            {[['12 feeds + OPML export', 'read', 'text-emerald-400'], ['358 sample and past ingests', 'skimmed', 'text-emerald-400'], ['browser bookmarks', 'skipped', 'text-muted-foreground']].map(([label, status, color]) => <div key={label} className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm"><Icon name={status === 'skipped' ? 'Circle' : 'Check'} className="size-4" /><span>{label}</span><span className={cn("ml-auto text-xs", color)}>{status}</span></div>)}
           </div>
           <div className="mt-7 flex flex-wrap gap-2">{DRAFTS.map((draft) => <span key={draft} className="rounded-full border border-emerald-500/40 px-3 py-1.5 text-sm text-emerald-400">#{draft.replaceAll(' ', '-')} ✓</span>)}</div>
           <p className="mt-3 text-xs text-muted-foreground">Everything lands on the next screen for your yes or no.</p>

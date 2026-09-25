@@ -16,7 +16,6 @@ const profile = {
 function rpcFixture() {
   return {
     onboarding_get: async () => ({ profile }),
-    notes_list: async () => ({ notes: [] }),
     hoard_list: async () => ({ items: [{ id: "itm_rss_test", sourceId: "src_test", source: "Example", sourceColor: "#64748b", kind: "article", author: null, title: "A saved-for-later story", excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000, tags: "[]", state: "new", contentState: "staged", expiresAt: null }], total: 1, hasMore: false }),
     rss_review_list: async () => ({
       items: [{ id: "itm_rss_test", source: "Example", kind: "article", title: "A saved-for-later story", author: null, excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000 }],

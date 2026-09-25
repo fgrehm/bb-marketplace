@@ -22,7 +22,7 @@ describe("inbox link ingestion", () => {
     const url = "https://example.org/a";
     const id = `itm_${(await import("node:crypto")).createHash("sha256").update(url).digest("hex").slice(0, 24)}`;
     db.prepare("INSERT INTO items (id, display_source, kind, title, excerpt, url, published_at) VALUES (?, 'Example', 'article', 'Actual story', '', ?, 1790164800)").run(id, url);
-    await store.write({ id, site: "Example", sourceId: null, source: url, title: "Actual story", kind: "article", published: "2026-09-23T12:00:00Z", retrieved: "2026-09-23T12:00:00Z", tags: [], state: "new", note: "", body: "Body" });
+    await store.write({ id, site: "Example", sourceId: null, source: url, title: "Actual story", kind: "article", published: "2026-09-23T12:00:00Z", retrieved: "2026-09-23T12:00:00Z", tags: [], state: "new", body: "Body" });
     const result = await ingestQueue(db, store, `## QUEUE\n- ${url}\n`, async () => ({ title: "Actual story", site: "Example", published: "2026-09-23T12:00:00Z", body: "Body" }), 10, undefined, undefined, 0);
     expect(result.ingested).toBe(1);
     expect((db.prepare("SELECT content_state AS state FROM items WHERE id = ?").get(id) as { state: string }).state).toBe("ready");
