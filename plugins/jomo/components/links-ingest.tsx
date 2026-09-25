@@ -103,14 +103,17 @@ export function LinksIngest({ onClose }: { onClose: () => void }) {
         <p className="mt-2 text-sm text-muted-foreground">{savedFull} saved · {savedPreview} preview bookmarks · {job.alreadyPresent} already in Library · {job.failedCount} failed (they stay in FAILED with reasons).</p>
         {job.error && <p className="mt-2 text-sm text-red-400">{job.error}</p>}
         {job.log.filter((event) => event.outcome === "failed").length > 0 && <ul className="mt-4 space-y-1 text-xs text-red-400">{job.log.filter((event) => event.outcome === "failed").map((event, index) => <li key={`${event.url}:${index}`}>{domain(event.url)}: {event.reason}</li>)}</ul>}
-        {queued !== null && queued > 0 && <Button className="mt-5" disabled={busy || running} onClick={() => void start()}>{busy ? "Starting…" : `Bring in ${queued} more`}</Button>}
+        {queued !== null && queued > 0 && <div className="mt-5 border-t border-border pt-4">
+          <p className="text-sm font-medium">{queued} link{queued === 1 ? "" : "s"} still waiting</p>
+          <Button className="mt-3" disabled={busy || running} onClick={() => void start()}>{busy ? "Starting…" : `Bring in ${queued} link${queued === 1 ? "" : "s"}`}</Button>
+        </div>}
       </section>}
 
-      {!running && (queued === null || queued === 0) && !done && <p className="py-12 text-center text-sm text-muted-foreground">{queued === 0 ? "Nothing waiting in LINKS.md. Paste links in the sources drawer to queue them." : "Opening the links queue…"}</p>}
+      {!running && !done && (queued === null || queued === 0) && <p className="py-12 text-center text-sm text-muted-foreground">{queued === 0 ? "Nothing waiting in LINKS.md. Paste links in the sources drawer to queue them." : "Opening the links queue…"}</p>}
 
-      {!running && queued !== null && queued > 0 && <section className="rounded-2xl border border-border bg-card p-5">
+      {!running && !done && queued !== null && queued > 0 && <section className="rounded-2xl border border-border bg-card p-5">
         <p className="text-sm text-muted-foreground">{queued} link{queued === 1 ? "" : "s"} waiting in LINKS.md. Successful links move to the Library; failures land in FAILED with their reasons; preview bookmarks are saved when a page only allows share-preview access.</p>
-        <Button className="mt-4" disabled={busy || running} onClick={() => void start()}>{busy ? "Starting…" : `Bring in all ${queued} links`}</Button>
+        <Button className="mt-4" disabled={busy || running} onClick={() => void start()}>{busy ? "Starting…" : `Bring in ${queued} link${queued === 1 ? "" : "s"}`}</Button>
       </section>}
     </main>
   </div>;

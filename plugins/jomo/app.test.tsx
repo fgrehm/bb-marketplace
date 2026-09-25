@@ -314,4 +314,16 @@ describe("bring in links screen", () => {
     expect(await slot.findByText(/failed \(HTTP 403\)/)).toBeTruthy();
     slot.lifecycle.unmount();
   });
+
+  it("shows one follow-up CTA after a completed ingestion run", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const fixture = { ...rpcFixture(), queue_preview: async () => ({ queued: 13 }), queue_status: async () => ({ job: { id: "j1", type: "links" as const, status: "completed" as const, queued: 24, processed: 24, ingested: 11, alreadyPresent: 0, failures: [], failedCount: 0, remaining: 13, error: null, log: Array.from({ length: 11 }, (_, index) => ({ url: `https://example.org/${index}`, outcome: "saved" as const, preview: false })), currentUrl: null } }) } as any;
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: fixture });
+    (await slot.findByRole("button", { name: "Bring in links" })).click();
+    expect(await slot.findByText("13 links still waiting")).toBeTruthy();
+    expect(await slot.findByRole("button", { name: "Bring in 13 links" })).toBeTruthy();
+    expect(slot.queryByRole("button", { name: "Bring in 13 more" })).toBeNull();
+    expect(slot.queryByRole("button", { name: "Bring in all 13 links" })).toBeNull();
+    slot.lifecycle.unmount();
+  });
 });
