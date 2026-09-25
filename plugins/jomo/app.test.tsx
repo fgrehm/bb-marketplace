@@ -18,11 +18,15 @@ function rpcFixture() {
     onboarding_get: async () => ({ profile }),
     hoard_list: async () => ({ items: [{ id: "itm_rss_test", sourceId: "src_test", source: "Example", sourceColor: "#64748b", kind: "article", author: null, title: "A saved-for-later story", excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000, tags: "[]", state: "new", contentState: "staged", expiresAt: null }], total: 1, hasMore: false }),
     rss_review_list: async () => ({
-      items: [{ id: "itm_rss_test", source: "Example", kind: "article", title: "A saved-for-later story", author: null, excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000 }],
+      items: [{ id: "itm_rss_test", sourceId: "src_test", source: "Example", kind: "article", title: "A saved-for-later story", author: null, excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000 }],
       total: 1,
+      allTotal: 1,
       hasMore: false,
       sourceCount: 1,
+      sources: [{ id: "src_test", name: "Example", count: 1 }],
       lastFetchedAt: null,
+      drainScheduled: 0,
+      drainExempt: 1,
     }),
     rss_sync_status: async () => ({ job: null }),
     rss_sources_list: async () => ({ sources: [{ id: "src_test", name: "Example", url: "https://example.org/feed", kind: "rss", color: "#64748b", enabled: true, lastFetchedAt: null }] }),
@@ -136,6 +140,37 @@ describe("JOMO RSS review app", () => {
     slot.lifecycle.unmount();
   });
 
+  it("filters RSS review by source and scopes Salvage to that source", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const fixture = rpcFixture();
+    const sourceRows = [
+      { id: "itm_example", sourceId: "src_test", source: "Example", kind: "article", title: "Example story", author: null, excerpt: "Preview", url: "https://example.org/story", publishedAt: 1790244000 },
+      { id: "itm_other", sourceId: "src_other", source: "Other", kind: "article", title: "Other story", author: null, excerpt: "Preview", url: "https://other.org/story", publishedAt: 1790243000 },
+    ];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { ...fixture, rss_review_list: async ({ sourceId }: { sourceId?: string }) => ({
+      items: sourceId ? sourceRows.filter((row) => row.sourceId === sourceId) : sourceRows,
+      total: sourceId ? 1 : 2,
+      allTotal: 2,
+      hasMore: false,
+      sourceCount: 2,
+      sources: [{ id: "src_test", name: "Example", count: 1 }, { id: "src_other", name: "Other", count: 1 }],
+      lastFetchedAt: null,
+      drainScheduled: 0,
+      drainExempt: 2,
+    }) } as any });
+    (await slot.findByRole("button", { name: "RSS review" })).click();
+    await slot.findByText("Example story");
+    (await slot.findByRole("button", { name: "Other (1)" })).click();
+    await vi.waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "rss_review_list", input: { offset: 0, sourceId: "src_other" } }));
+    expect(await slot.findByText("Other story")).toBeTruthy();
+    expect(slot.queryByText("Example story")).toBeNull();
+    expect(await slot.findByRole("button", { name: "Salvage this source" })).toBeTruthy();
+    (await slot.findByRole("button", { name: "Salvage this source" })).click();
+    await vi.waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "feed", options: { subPath: "rss/salvage" } }));
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "rss_review_list" && (call.input as { sourceId?: string }).sourceId === "src_test")).toBe(false);
+    slot.lifecycle.unmount();
+  });
+
   it("persists triage decisions and never treats a failed save as success", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { ...rpcFixture(), rss_action: async () => { throw new Error("Extraction failed"); } } as any });
@@ -177,7 +212,7 @@ describe("JOMO RSS review app", () => {
     const Panel = app.navPanels[0]!.component;
     const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: rpcFixture() as any });
     (await slot.findByRole("button", { name: "RSS review" })).click();
-    (await slot.findByRole("button", { name: "Sweep the queue (one at a time)" })).click();
+    (await slot.findByRole("button", { name: "Sweep all sources (one at a time)" })).click();
     await vi.waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "feed", options: { subPath: "rss/sweep" } }));
     slot.lifecycle.rerender(<Panel subPath="rss/sweep" />);
     expect(await slot.findByRole("heading", { name: "RSS sweep" })).toBeTruthy();
@@ -189,7 +224,7 @@ describe("JOMO RSS review app", () => {
     const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: rpcFixture() as any });
     (await slot.findByRole("button", { name: "RSS review" })).click();
     await slot.findByText("A saved-for-later story");
-    slot.getByRole("button", { name: "Sweep the queue (one at a time)" }).click();
+    slot.getByRole("button", { name: "Sweep all sources (one at a time)" }).click();
     await slot.findByText("1 / 1");
     expect(await slot.findByRole("heading", { name: "A saved-for-later story" })).toBeTruthy();
     slot.getByRole("button", { name: "Queue for later" }).click();

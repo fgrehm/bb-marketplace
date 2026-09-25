@@ -60,24 +60,18 @@ describe("SalvageView", () => {
     root.unmount();
   });
 
-  it("bulk-marks a whole source from its chip", async () => {
+  it("keeps marking per-item instead of offering source bulk actions", async () => {
     const items = [item("a", "Alpha"), item("b", "Beta"), item("c", "Gamma")].map((entry) => ({ ...entry, sourceId: "src_x", source: "Example" }));
-    let discardedIds: string[] | null = null;
-    const view = <SalvageView items={items}
+    const view = <SalvageView items={items} scopeLabel="Example"
       onAction={async () => undefined}
-      onDiscardIds={async (ids) => { discardedIds = ids; return ids.length; }}
+      onDiscardIds={async (ids) => ids.length}
       onExit={() => undefined} delayMs={0} />;
     const { container, root } = await render(view);
 
-    await act(async () => { Array.from(container.querySelectorAll("button")).find((button) => button.textContent!.includes("Example (0/3)"))!.click(); });
-    await act(async () => { Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Save all")!.click(); });
-    await act(async () => { Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Finish (3 marked)")!.click(); });
-    expect(container.textContent).toContain("3 marked to save");
-    await act(async () => { Array.from(container.querySelectorAll("button")).find((button) => button.textContent!.startsWith("Save 3"))!.click(); });
-    await act(async () => {});
-    await act(async () => {});
-    expect(discardedIds).toBe(null);
-    expect(container.textContent).toContain("0 discarded");
+    expect(container.textContent).toContain("Source: Example");
+    expect(container.textContent).not.toContain("Bulk by source");
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "Save all")).toBe(false);
+    expect(Array.from(container.querySelectorAll("button")).filter((button) => button.getAttribute("aria-label") === "Mark for saving")).toHaveLength(3);
 
     root.unmount();
   });

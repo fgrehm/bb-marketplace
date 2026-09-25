@@ -130,8 +130,8 @@ export const rpcContract = defineRpcContract({
     output: z.object({ items: z.array(z.object({ id: z.string(), sourceId: z.string().nullable(), source: z.string(), sourceColor: z.string(), kind: z.string(), author: z.string().nullable(), title: z.string(), excerpt: z.string(), url: z.string().nullable(), publishedAt: z.number(), tags: z.string(), state: z.enum(["new", "later"]), contentState: z.string(), expiresAt: z.number().nullable() })), total: z.number(), hasMore: z.boolean() }).strict(),
   },
   rss_review_list: {
-    input: z.object({ offset: z.number().int().min(0).max(100_000) }).strict(),
-    output: z.object({ items: z.array(z.object({ id: z.string(), source: z.string(), kind: z.string(), title: z.string(), author: z.string().nullable(), excerpt: z.string(), url: z.string(), publishedAt: z.number() })), total: z.number(), hasMore: z.boolean(), sourceCount: z.number(), lastFetchedAt: z.number().nullable(), drainScheduled: z.number(), drainExempt: z.number() }).strict(),
+    input: z.object({ offset: z.number().int().min(0).max(100_000), sourceId: z.string().min(1).max(200).nullable().default(null) }).strict(),
+    output: z.object({ items: z.array(z.object({ id: z.string(), sourceId: z.string().nullable(), source: z.string(), kind: z.string(), title: z.string(), author: z.string().nullable(), excerpt: z.string(), url: z.string(), publishedAt: z.number() })), total: z.number(), allTotal: z.number(), hasMore: z.boolean(), sourceCount: z.number(), sources: z.array(z.object({ id: z.string(), name: z.string(), count: z.number().int().nonnegative() })), lastFetchedAt: z.number().nullable(), drainScheduled: z.number(), drainExempt: z.number() }).strict(),
   },
   rss_sync_start: {
     input: z.object({}).strict(),
@@ -399,15 +399,21 @@ export default async function plugin(bb: BbPluginApi) {
       const rows = db.prepare("SELECT i.id, i.source_id AS sourceId, i.display_source AS source, COALESCE(s.color, '#64748b') AS sourceColor, i.kind, i.author, COALESCE(i.title, '') AS title, COALESCE(i.excerpt, '') AS excerpt, i.url, i.published_at AS publishedAt, i.tags, i.state, i.content_state AS contentState, i.expires_at AS expiresAt FROM items i LEFT JOIN sources s ON s.id = i.source_id WHERE i.state IN ('new','later') AND i.content_state IN ('staged','pending','ready') ORDER BY i.published_at DESC, i.id LIMIT 26 OFFSET ?").all(offset) as Array<{ id: string; sourceId: string | null; source: string; sourceColor: string; kind: string; author: string | null; title: string; excerpt: string; url: string | null; publishedAt: number; tags: string; state: "new" | "later"; contentState: string; expiresAt: number | null }>;
       return { items: rows.slice(0, 25), total, hasMore: rows.length > 25 };
     },
-    async rss_review_list({ offset }) {
+    async rss_review_list({ offset, sourceId }) {
       drainExpired();
-      const total = (db.prepare("SELECT COUNT(*) AS count FROM items WHERE state = 'new' AND content_state IN ('staged','pending')").get() as { count: number }).count;
+      const reviewWhere = "state = 'new' AND content_state IN ('staged','pending') AND url IS NOT NULL";
+      const allTotal = (db.prepare(`SELECT COUNT(*) AS count FROM items WHERE ${reviewWhere}`).get() as { count: number }).count;
+      const filterSql = sourceId ? " AND source_id = ?" : "";
+      const params = sourceId ? [sourceId] : [];
+      const total = (db.prepare(`SELECT COUNT(*) AS count FROM items WHERE ${reviewWhere}${filterSql}`).get(...params) as { count: number }).count;
+      const sourceRows = db.prepare(`SELECT source_id AS id, MAX(display_source) AS name, COUNT(*) AS count FROM items WHERE ${reviewWhere} GROUP BY source_id ORDER BY count DESC, name COLLATE NOCASE, id`).all() as Array<{ id: string | null; name: string; count: number }>;
+      const sources = sourceRows.filter((source): source is { id: string; name: string; count: number } => source.id !== null);
       const drainScheduled = (db.prepare("SELECT COUNT(*) AS count FROM items WHERE state IN ('new','later') AND content_state IN ('staged','pending','ready') AND expires_at IS NOT NULL").get() as { count: number }).count;
       const drainExempt = (db.prepare("SELECT COUNT(*) AS count FROM items WHERE state IN ('new','later') AND content_state IN ('staged','pending','ready') AND expires_at IS NULL").get() as { count: number }).count;
-      const rows = db.prepare("SELECT i.id, i.display_source AS source, i.kind, COALESCE(i.title, '') AS title, i.author, COALESCE(i.excerpt, '') AS excerpt, i.url, i.published_at AS publishedAt FROM items i WHERE i.state = 'new' AND i.content_state IN ('staged','pending') AND i.url IS NOT NULL ORDER BY i.published_at DESC, i.id LIMIT 26 OFFSET ?").all(offset) as Array<{ id: string; source: string; kind: string; title: string; author: string | null; excerpt: string; url: string; publishedAt: number }>;
+      const rows = db.prepare(`SELECT id, source_id AS sourceId, display_source AS source, kind, COALESCE(title, '') AS title, author, COALESCE(excerpt, '') AS excerpt, url, published_at AS publishedAt FROM items WHERE ${reviewWhere}${filterSql} ORDER BY published_at DESC, id LIMIT 26 OFFSET ?`).all(...params, offset) as Array<{ id: string; sourceId: string | null; source: string; kind: string; title: string; author: string | null; excerpt: string; url: string; publishedAt: number }>;
       const sourceCount = (db.prepare("SELECT COUNT(*) AS count FROM sources WHERE enabled = 1").get() as { count: number }).count;
       const lastFetchedAt = (db.prepare("SELECT MAX(last_fetch_at) AS fetched FROM sources WHERE enabled = 1").get() as { fetched: number | null }).fetched;
-      return { items: rows.slice(0, 25), total, hasMore: rows.length > 25, sourceCount, lastFetchedAt, drainScheduled, drainExempt };
+      return { items: rows.slice(0, 25), total, allTotal, hasMore: rows.length > 25, sourceCount, sources, lastFetchedAt, drainScheduled, drainExempt };
     },
     async rss_sync_start() {
       if (rssSyncRunning) {

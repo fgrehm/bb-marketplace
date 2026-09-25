@@ -37,10 +37,10 @@ bookmarks rather than dropped.
 fetched on its own). New entries are staged in jomo's database as excerpts.
 Then review them your way:
 
-- *Salvage* (the batch flow): mark entries with the star (save) or clock
-  (queue) icons, or mark a whole source from its chip, then press Finish.
-  One confirmation, then jomo processes the marks and discards the unmarked
-  leftovers. Anything that fails stays staged.
+- *Salvage* (the source-scoped batch flow): choose a source filter, mark
+  entries one by one with the star (save) or clock (queue) icons, then press
+  Finish. One confirmation, then jomo processes the marks and discards the
+  unmarked leftovers from that source only. Anything that fails stays staged.
 - *Triage*: decide one entry at a time (keyboard: `j`/`k` move, `s` save,
   `l` queue, `x` discard, `o` open).
 - *Sweep*: one card at a time for a focused sitting (space save, backspace
@@ -100,7 +100,7 @@ The plugin owns a full-bleed nav-panel page with:
 - A JOMO report that frames the roundup as proof that missing out was safe, not another list of arrivals.
 - A heuristic Librarian Desk for link queueing, staged feed subscriptions, and citations from loaded real items. Confirmed mutations persist; AI prose remains heuristic, not provider-backed.
 - A Library tab backed by saved SQLite metadata (including ingested QUEUE links), paginated 50 at a time, rendering vault Markdown and sanitized HTML on open. Imported files remain read-only references. Use `bb jomo import-library --dry-run` to inspect the configured content root, then `bb jomo import-library --apply` to insert metadata and file pointers without modifying existing Markdown. Repeated imports skip existing IDs.
-- An RSS review hub with SQLite staging, explicit refresh, a phone-sized triage list, Salvage (mark, then process the batch once and discard the leftovers), a one-card-at-a-time sweep, drain status, and source add/pause controls. Approved saves share the same article extraction and content-store path as Links. Legacy deep links to the old hoard triage, sweep, and reservoir views redirect here.
+- An RSS review hub with SQLite staging, explicit refresh, a phone-sized triage list, source filtering, source-scoped Salvage (mark entries individually, then process that source's batch once and discard its unmarked leftovers), a one-card-at-a-time sweep, drain status, and source add/pause controls. Approved saves share the same article extraction and content-store path as Links. Legacy deep links to the old hoard triage, sweep, and reservoir views redirect here.
 - A calm card grid of the hoard (the only hoard browsing surface), with feed filters and the reader behind each card.
 - A sources drawer backed by SQLite: enable or pause feeds (pausing hides their items from the hoard), add feeds paused (adding probes the feed once to validate it, resolving YouTube channels to their `channel_id` feed), and queue pasted URLs into `LINKS.md` without fetching. Feed `<category>` terms become staged item tags.
 - A roundup card at the top of the feed: a render-only AI briefing seam — the

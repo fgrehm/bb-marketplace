@@ -181,6 +181,21 @@ describe("JOMO storage cutover", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("filters review rows by source while retaining global source counts", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
+    await plugin(bb);
+    const db = bb.storage.database();
+    db.prepare("INSERT INTO sources (id, name, url, kind, color, enabled, created_at) VALUES ('src_a', 'Alpha', 'https://alpha.example/feed', 'rss', '#000', 1, 1), ('src_b', 'Beta', 'https://beta.example/feed', 'rss', '#000', 1, 1)").run();
+    const insert = db.prepare("INSERT INTO items (id, source_id, display_source, kind, title, excerpt, url, published_at, state, content_state) VALUES (?, ?, ?, 'article', ?, 'Preview', ?, ?, 'new', 'staged')");
+    insert.run("itm_alpha", "src_a", "Alpha", "Alpha story", "https://alpha.example/story", 2000);
+    insert.run("itm_beta", "src_b", "Beta", "Beta story", "https://beta.example/story", 1000);
+    const all = await harness.behavior.callRpc("rss_review_list", { offset: 0 }) as { total: number; allTotal: number; sources: Array<{ id: string; count: number }> };
+    expect(all).toMatchObject({ total: 2, allTotal: 2, sources: [{ id: "src_a", count: 1 }, { id: "src_b", count: 1 }] });
+    const filtered = await harness.behavior.callRpc("rss_review_list", { offset: 0, sourceId: "src_b" }) as { total: number; allTotal: number; items: Array<{ source: string }>; sources: Array<{ id: string; count: number }> };
+    expect(filtered).toMatchObject({ total: 1, allTotal: 2, items: [{ source: "Beta" }], sources: [{ id: "src_a", count: 1 }, { id: "src_b", count: 1 }] });
+    await harness.lifecycle.dispose();
+  });
+
   it("stages feed entries only after an explicit fetch request", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
     await plugin(bb);

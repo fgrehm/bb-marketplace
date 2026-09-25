@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { COARSE_POINTER_ICON_SIZE_SHRINK_CLASS } from "@/components/ui/coarse-pointer-sizing";
@@ -9,20 +9,17 @@ type Phase = "mark" | "confirm" | "processing" | "done";
 type Outcome = { item: Item; outcome: "saved" | "queued" | "already_queued" | "already_present" | "failed"; reason?: string };
 
 /**
- * Salvage: a two-phase batch review. Mark what is worth keeping first
- * (nothing is fetched yet), then confirm once, then process the marks
- * sequentially and discard everything left unmarked in the batch.
- * Marking happens on a dense list with per-row Save/Queue buttons and
- * source-chip bulk marking, so a large queue can be cleared quickly.
+ * Salvage: a two-phase review for one source. Mark what is worth keeping
+ * first (nothing is fetched yet), then confirm once, then process the marks
+ * sequentially and discard everything left unmarked in that source.
  */
-export function SalvageView({ items, onAction, onDiscardIds, onExit, delayMs = 3000, onBusyChange }: { items: Item[]; onAction: (item: Item, state: SavedState) => Promise<void>; onDiscardIds: (ids: string[]) => Promise<number>; onExit: () => void; delayMs?: number; onBusyChange?: (busy: boolean) => void }) {
+export function SalvageView({ items, scopeLabel, onAction, onDiscardIds, onExit, delayMs = 3000, onBusyChange }: { items: Item[]; scopeLabel?: string; onAction: (item: Item, state: SavedState) => Promise<void>; onDiscardIds: (ids: string[]) => Promise<number>; onExit: () => void; delayMs?: number; onBusyChange?: (busy: boolean) => void }) {
   const [marks, setMarks] = useState<Record<string, Mark>>({});
   const [focus, setFocus] = useState(0);
   const [phase, setPhase] = useState<Phase>("mark");
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [discardedCount, setDiscardedCount] = useState<number | null>(null);
-  const [bulkSource, setBulkSource] = useState<string | null>(null);
   const processingRef = useRef(false);
   const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
 
@@ -30,18 +27,6 @@ export function SalvageView({ items, onAction, onDiscardIds, onExit, delayMs = 3
   const queueIds = items.filter((entry) => marks[entry.id] === "queue").map((entry) => entry.id);
   const markedCount = saveIds.length + queueIds.length;
   const unmarkedIds = items.filter((entry) => !marks[entry.id]).map((entry) => entry.id);
-
-  const sourceChips = useMemo(() => {
-    const grouped = new Map<string, { name: string; color: string; count: number; marked: number }>();
-    for (const item of items) {
-      const key = item.sourceId ?? item.source;
-      const current = grouped.get(key) ?? { name: item.source, color: item.sourceColor, count: 0, marked: 0 };
-      current.count++;
-      if (marks[item.id]) current.marked++;
-      grouped.set(key, current);
-    }
-    return [...grouped].filter(([, entry]) => entry.count >= 3).sort((a, b) => b[1].count - a[1].count).slice(0, 6);
-  }, [items, marks]);
 
   const setMark = (id: string, mark: Mark | null) => {
     setMarks((current) => {
@@ -54,12 +39,6 @@ export function SalvageView({ items, onAction, onDiscardIds, onExit, delayMs = 3
       return { ...current, [id]: mark };
     });
   };
-  const bulkSourceItems = bulkSource === null ? [] : items.filter((item) => (item.sourceId ?? item.source) === bulkSource);
-  const applyBulk = (mark: Mark | null) => {
-    for (const item of bulkSourceItems) setMark(item.id, mark);
-    setBulkSource(null);
-  };
-
   useEffect(() => { setFocus((current) => Math.min(current, Math.max(0, items.length - 1))); }, [items.length]);
   useEffect(() => { rowRefs.current[focus]?.scrollIntoView?.({ block: "nearest" }); }, [focus]);
 
@@ -183,12 +162,11 @@ export function SalvageView({ items, onAction, onDiscardIds, onExit, delayMs = 3
     <div className="jomo-enter flex min-h-[calc(100%-56px)] flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-2 px-4 pt-1 text-[11px] text-muted-foreground">
         <button type="button" onClick={onExit} className="inline-flex items-center gap-1 hover:text-foreground"><Icon name="ChevronLeft" className={COARSE_POINTER_ICON_SIZE_SHRINK_CLASS} /> exit salvage</button>
+        <span className="truncate">{scopeLabel ? `Source: ${scopeLabel}` : "Selected source"}</span>
         <span className="ml-auto font-mono">{items.length} staged · {markedCount} marked ({saveIds.length} save / {queueIds.length} queue)</span>
       </div>
       <div className="flex min-h-0 flex-1 flex-col px-4 pt-2">
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pb-2">
-          {sourceChips.length > 0 && <div className="flex flex-wrap items-center gap-2 pb-2 text-xs"><span className="text-muted-foreground">Bulk by source:</span>{sourceChips.map(([id, entry]) => <button key={id} type="button" onClick={() => setBulkSource((current) => current === id ? null : id)} className="rounded-full border border-border px-3 py-1 hover:border-primary"><span className="mr-1.5 inline-block size-2 rounded-full" style={{ backgroundColor: entry.color }} />{entry.name} ({entry.marked}/{entry.count})</button>)}</div>}
-          {bulkSource !== null && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-400/50 bg-amber-400/10 p-3 text-xs"><span>Mark all {bulkSourceItems.length} from this source?</span><button type="button" onClick={() => applyBulk("save")} className="rounded-lg border border-emerald-500/60 px-2 py-1">Save all</button><button type="button" onClick={() => applyBulk("queue")} className="rounded-lg border border-amber-400/60 px-2 py-1">Queue all</button><button type="button" onClick={() => applyBulk(null)} className="rounded-lg border border-border px-2 py-1">Clear marks</button><button type="button" onClick={() => setBulkSource(null)} className="underline">Cancel</button></div>}
           {items.map((item, index) => {
             const mark = marks[item.id];
             return (
@@ -202,10 +180,10 @@ export function SalvageView({ items, onAction, onDiscardIds, onExit, delayMs = 3
                     <span className="ml-auto shrink-0">{KIND_META[item.kind].label}</span>
                   </div>
                   <div className="mt-0.5 flex min-w-0 items-start justify-between gap-2">
-                    {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-[13px] max-md:pointer-coarse:text-[15px] font-medium text-foreground/90">{item.title ?? item.fullName}</a> : <p className="min-w-0 flex-1 truncate text-[13px] max-md:pointer-coarse:text-[15px] font-medium text-foreground/90">{item.title ?? item.fullName}</p>}
+                    {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 break-words line-clamp-2 text-[13px] max-md:pointer-coarse:text-[15px] font-medium leading-5 text-foreground/90">{item.title ?? item.fullName}</a> : <p className="min-w-0 flex-1 break-words line-clamp-2 text-[13px] max-md:pointer-coarse:text-[15px] font-medium leading-5 text-foreground/90">{item.title ?? item.fullName}</p>}
                     <div className="flex shrink-0 gap-1">
-                      <button type="button" aria-label={mark === "save" ? "Clear save mark" : "Mark for saving"} title={mark === "save" ? "Clear save mark" : "Mark for saving"} onClick={() => setMark(item.id, mark === "save" ? null : "save")} className={mark === "save" ? "grid size-9 place-items-center rounded-lg bg-emerald-500/20 text-emerald-400 max-md:pointer-coarse:size-11" : "grid size-9 place-items-center rounded-lg border border-border text-muted-foreground hover:border-emerald-500/60 hover:text-foreground max-md:pointer-coarse:size-11"}><Icon name="Star" className={mark === "save" ? "size-4 fill-current" : "size-4"} /></button>
-                      <button type="button" aria-label={mark === "queue" ? "Clear queue mark" : "Mark for queueing"} title={mark === "queue" ? "Clear queue mark" : "Mark for queueing"} onClick={() => setMark(item.id, mark === "queue" ? null : "queue")} className={mark === "queue" ? "grid size-9 place-items-center rounded-lg bg-amber-400/20 text-amber-400 max-md:pointer-coarse:size-11" : "grid size-9 place-items-center rounded-lg border border-border text-muted-foreground hover:border-amber-400/60 hover:text-foreground max-md:pointer-coarse:size-11"}><Icon name="Clock" className="size-4" /></button>
+                      <button type="button" aria-label={mark === "save" ? "Clear save mark" : "Mark for saving"} title={mark === "save" ? "Clear save mark" : "Mark for saving"} onClick={() => setMark(item.id, mark === "save" ? null : "save")} className={mark === "save" ? "grid size-8 place-items-center rounded-lg bg-emerald-500/20 text-emerald-400 max-md:pointer-coarse:size-9" : "grid size-8 place-items-center rounded-lg border border-border text-muted-foreground hover:border-emerald-500/60 hover:text-foreground max-md:pointer-coarse:size-9"}><Icon name="Star" className={mark === "save" ? "size-4 fill-current max-md:pointer-coarse:size-[18px]" : "size-4 max-md:pointer-coarse:size-[18px]"} /></button>
+                      <button type="button" aria-label={mark === "queue" ? "Clear queue mark" : "Mark for queueing"} title={mark === "queue" ? "Clear queue mark" : "Mark for queueing"} onClick={() => setMark(item.id, mark === "queue" ? null : "queue")} className={mark === "queue" ? "grid size-8 place-items-center rounded-lg bg-amber-400/20 text-amber-400 max-md:pointer-coarse:size-9" : "grid size-8 place-items-center rounded-lg border border-border text-muted-foreground hover:border-amber-400/60 hover:text-foreground max-md:pointer-coarse:size-9"}><Icon name="Clock" className="size-4 max-md:pointer-coarse:size-[18px]" /></button>
                     </div>
                   </div>
                 </div>
