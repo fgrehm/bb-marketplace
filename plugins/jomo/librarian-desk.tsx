@@ -11,7 +11,7 @@ export type DeskItem = {
   body: string;
   description?: string;
   tags: string[];
-  day: "today" | "yesterday";
+  day: "today" | "yesterday" | "older";
   time: string;
   saved: "new" | "later" | "saved" | "dropped";
 };
@@ -71,21 +71,22 @@ function assistantReply(items: DeskItem[], text: string, id: number): Message {
   }
   const results = searchArchive(items, text);
   if (results.length > 0) {
-    return { id, role: "librarian", body: `I found ${results.length === 1 ? "one thing" : `${results.length} things`} in the mock archive that seem relevant.`, results };
+    return { id, role: "librarian", body: `I found ${results.length === 1 ? "one thing" : `${results.length} things`} in the loaded archive that seem relevant.`, results };
   }
-  return { id, role: "librarian", body: "I could not find that in the mock archive. I did not broaden the search or invent an answer. Try a source, topic, or date." };
+  return { id, role: "librarian", body: "I could not find that in the loaded archive. I did not broaden the search or invent an answer. Try a source, topic, or date." };
 }
 
 export function LibrarianDesk({ items, onClose, onOpenItem, onHoardLinks, onSubscribe }: {
   items: DeskItem[];
   onClose: () => void;
   onOpenItem: (id: string) => void;
-  onHoardLinks: (urls: string[]) => void;
-  onSubscribe: (name: string, url: string) => void;
+  onHoardLinks: (urls: string[]) => Promise<void>;
+  onSubscribe: (name: string, url: string) => Promise<void>;
 }) {
   const nextId = useRef(Math.max(...rememberedMessages.map((message) => message.id)) + 1);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>(rememberedMessages);
   const archivedCount = useMemo(() => items.filter((item) => item.saved === "saved" || item.saved === "later").length, [items]);
 
@@ -106,9 +107,12 @@ export function LibrarianDesk({ items, onClose, onOpenItem, onHoardLinks, onSubs
     setDraft("");
   };
 
-  const decide = (message: Message, decision: "confirmed" | "dismissed") => {
-    if (decision === "confirmed" && message.proposal?.kind === "hoard") onHoardLinks(message.proposal.urls);
-    if (decision === "confirmed" && message.proposal?.kind === "subscribe") onSubscribe(message.proposal.name, message.proposal.url);
+  const decide = async (message: Message, decision: "confirmed" | "dismissed") => {
+    setError(null);
+    try {
+      if (decision === "confirmed" && message.proposal?.kind === "hoard") await onHoardLinks(message.proposal.urls);
+      if (decision === "confirmed" && message.proposal?.kind === "subscribe") await onSubscribe(message.proposal.name, message.proposal.url);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not apply that change."); return; }
     setMessages((current) => {
       rememberedMessages = current.map((entry) => entry.id === message.id ? { ...entry, decided: decision } : entry);
       return rememberedMessages;
@@ -119,9 +123,10 @@ export function LibrarianDesk({ items, onClose, onOpenItem, onHoardLinks, onSubs
     <main className="jomo-enter flex h-full min-h-0 flex-col bg-background">
       <header className="flex items-center gap-3 border-b border-border/60 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] py-3 max-sm:pointer-coarse:pl-16 sm:px-8">
         <button type="button" onClick={onClose} className="grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Leave librarian desk"><Icon name="ChevronLeft" className="size-4" /></button>
-        <div><h1 className="font-semibold tracking-tight">Librarian desk</h1><p className="text-xs text-muted-foreground">{archivedCount} mock items resting · changes always ask first</p></div>
+        <div><h1 className="font-semibold tracking-tight">Librarian desk</h1><p className="text-xs text-muted-foreground">{archivedCount} loaded items resting · changes always ask first</p></div>
       </header>
 
+      {error && <p role="alert" className="px-4 pt-2 text-sm text-red-400">{error}</p>}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8">
         <div className="mx-auto max-w-2xl space-y-8">
           {messages.map((message) => (
@@ -129,12 +134,12 @@ export function LibrarianDesk({ items, onClose, onOpenItem, onHoardLinks, onSubs
               <p className={cn("text-[10px] font-semibold uppercase tracking-[0.16em]", message.role === "librarian" ? "text-amber-400" : "text-muted-foreground")}>{message.role === "librarian" ? "Librarian" : "You"}</p>
               <p className="mt-2 text-sm leading-6 text-foreground/85">{message.body}</p>
 
-              {message.results && <div className="mt-4 space-y-2">{message.results.map((item) => <button type="button" key={item.id} onClick={() => onOpenItem(item.id)} className="block w-full rounded-2xl bg-card/50 px-4 py-3 text-left ring-1 ring-border/40 transition-colors hover:bg-card"><span className="text-sm font-medium">{item.title ?? item.fullName ?? item.body}</span><span className="mt-1 block text-xs text-muted-foreground">{item.source} · {item.day} at {item.time} · {item.saved === "saved" ? "in the hoard" : "resting for later"}</span></button>)}</div>}
+              {message.results && <div className="mt-4 space-y-2">{message.results.map((item) => <button type="button" key={item.id} onClick={() => onOpenItem(item.id)} className="block w-full rounded-2xl bg-card/50 px-4 py-3 text-left ring-1 ring-border/40 transition-colors hover:bg-card"><span className="text-sm font-medium">{item.title ?? item.fullName ?? item.body}</span><span className="mt-1 block text-xs text-muted-foreground">{item.source} · {item.day === "older" ? "published" : item.day} {item.time} · {item.saved === "saved" ? "in the hoard" : "resting for later"}</span></button>)}</div>}
 
               {message.proposal && <div className="mt-4 rounded-2xl bg-card/50 p-4 ring-1 ring-border/40">
                 <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Staged, not applied</p>
-                {message.proposal.kind === "hoard" ? <ul className="mt-3 space-y-1.5 text-sm">{message.proposal.urls.map((url) => <li key={url} className="truncate font-mono text-xs text-foreground/75">{url}</li>)}</ul> : <div className="mt-3"><p className="text-sm font-medium">{message.proposal.name}</p><p className="truncate font-mono text-xs text-muted-foreground">{message.proposal.url}</p><p className="mt-2 text-xs text-muted-foreground">Starts paused. You decide when it enters the mock round.</p></div>}
-                {message.decided ? <p className="mt-4 text-xs text-muted-foreground">{message.decided === "confirmed" ? "Confirmed. A mock receipt was added locally." : "Left untouched."}</p> : <div className="mt-4 flex gap-2"><Button size="sm" onClick={() => decide(message, "confirmed")}>Confirm</Button><Button size="sm" variant="ghost" onClick={() => decide(message, "dismissed")}>Leave it</Button></div>}
+                {message.proposal.kind === "hoard" ? <ul className="mt-3 space-y-1.5 text-sm">{message.proposal.urls.map((url) => <li key={url} className="truncate font-mono text-xs text-foreground/75">{url}</li>)}</ul> : <div className="mt-3"><p className="text-sm font-medium">{message.proposal.name}</p><p className="truncate font-mono text-xs text-muted-foreground">{message.proposal.url}</p><p className="mt-2 text-xs text-muted-foreground">Starts paused. Fetch feeds explicitly in RSS review.</p></div>}
+                {message.decided ? <p className="mt-4 text-xs text-muted-foreground">{message.decided === "confirmed" ? "Confirmed. The change was saved." : "Left untouched."}</p> : <div className="mt-4 flex gap-2"><Button size="sm" onClick={() => void decide(message, "confirmed")}>Confirm</Button><Button size="sm" variant="ghost" onClick={() => void decide(message, "dismissed")}>Leave it</Button></div>}
               </div>}
             </article>
           ))}
@@ -147,7 +152,7 @@ export function LibrarianDesk({ items, onClose, onOpenItem, onHoardLinks, onSubs
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={2} placeholder="Drop links, subscribe to a feed, or ask the archive…" className="max-h-32 min-h-12 flex-1 resize-none bg-transparent px-2 py-2 text-sm max-md:pointer-coarse:!text-base leading-5 outline-none placeholder:text-muted-foreground" />
           <Button type="submit" size="sm" disabled={!draft.trim()} aria-label="Send to librarian"><Icon name="ChevronRight" className="size-4" /></Button>
         </form>
-        <p className="mx-auto mt-2 max-w-2xl text-center text-[10px] text-muted-foreground/70">Mock conversation · heuristic replies · no network or real ingestion</p>
+        <p className="mx-auto mt-2 max-w-2xl text-center text-[10px] text-muted-foreground/70">Heuristic conversation · confirmed links go to LINKS.md, feeds start paused</p>
       </footer>
     </main>
   );

@@ -20,17 +20,5 @@
     "noEmit": true,
     "skipLibCheck": false
   },
-  "include": [
-    "server.ts",
-    "app.tsx",
-    "librarian-desk.tsx",
-    "onboarding.tsx",
-    "components/ui/button.tsx",
-    "components/ui/coarse-pointer-sizing.ts",
-    "components/ui/icon-extended.tsx",
-    "components/ui/icon-registry.ts",
-    "components/ui/icon.tsx",
-    "components/ui/motion.ts",
-    "lib/utils.ts"
-  ]
+  "include": ["*.ts", "*.tsx", "components/**/*.ts", "components/**/*.tsx", "lib/**/*.ts"]
 }
