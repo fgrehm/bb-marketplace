@@ -121,13 +121,9 @@ export const rpcContract = defineRpcContract({
     input: z.object({ id: z.string().min(1).max(200), enabled: z.boolean() }).strict(),
     output: z.object({ saved: z.boolean() }).strict(),
   },
-  hoard_get: {
+  item_get: {
     input: z.object({ id: z.string().min(1).max(200) }).strict(),
     output: z.object({ item: z.object({ id: z.string(), sourceId: z.string().nullable(), source: z.string(), sourceColor: z.string(), kind: z.string(), author: z.string().nullable(), title: z.string(), excerpt: z.string(), url: z.string().nullable(), publishedAt: z.number(), tags: z.string(), state: z.enum(["new", "later", "saved"]), contentState: z.string(), expiresAt: z.number().nullable() }).nullable() }).strict(),
-  },
-  hoard_list: {
-    input: z.object({ offset: z.number().int().min(0).max(100_000) }).strict(),
-    output: z.object({ items: z.array(z.object({ id: z.string(), sourceId: z.string().nullable(), source: z.string(), sourceColor: z.string(), kind: z.string(), author: z.string().nullable(), title: z.string(), excerpt: z.string(), url: z.string().nullable(), publishedAt: z.number(), tags: z.string(), state: z.enum(["new", "later"]), contentState: z.string(), expiresAt: z.number().nullable() })), total: z.number(), hasMore: z.boolean() }).strict(),
   },
   rss_review_list: {
     input: z.object({ offset: z.number().int().min(0).max(100_000), sourceId: z.string().min(1).max(200).nullable().default(null) }).strict(),
@@ -389,15 +385,9 @@ export default async function plugin(bb: BbPluginApi) {
       const result = db.prepare("UPDATE sources SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
       return { saved: result.changes === 1 };
     },
-    async hoard_get({ id }) {
+    async item_get({ id }) {
       const item = db.prepare("SELECT i.id, i.source_id AS sourceId, i.display_source AS source, COALESCE(s.color, '#64748b') AS sourceColor, i.kind, i.author, COALESCE(i.title, '') AS title, COALESCE(i.excerpt, '') AS excerpt, i.url, i.published_at AS publishedAt, i.tags, i.state, i.content_state AS contentState, i.expires_at AS expiresAt FROM items i LEFT JOIN sources s ON s.id = i.source_id WHERE i.id = ? AND i.state IN ('new','later','saved') AND i.content_state IN ('staged','pending','ready','missing')").get(id) as { id: string; sourceId: string | null; source: string; sourceColor: string; kind: string; author: string | null; title: string; excerpt: string; url: string | null; publishedAt: number; tags: string; state: "new" | "later" | "saved"; contentState: string; expiresAt: number | null } | undefined;
       return { item: item ?? null };
-    },
-    async hoard_list({ offset }) {
-      drainExpired();
-      const total = (db.prepare("SELECT COUNT(*) AS count FROM items WHERE state IN ('new','later') AND content_state IN ('staged','pending','ready')").get() as { count: number }).count;
-      const rows = db.prepare("SELECT i.id, i.source_id AS sourceId, i.display_source AS source, COALESCE(s.color, '#64748b') AS sourceColor, i.kind, i.author, COALESCE(i.title, '') AS title, COALESCE(i.excerpt, '') AS excerpt, i.url, i.published_at AS publishedAt, i.tags, i.state, i.content_state AS contentState, i.expires_at AS expiresAt FROM items i LEFT JOIN sources s ON s.id = i.source_id WHERE i.state IN ('new','later') AND i.content_state IN ('staged','pending','ready') ORDER BY i.published_at DESC, i.id LIMIT 26 OFFSET ?").all(offset) as Array<{ id: string; sourceId: string | null; source: string; sourceColor: string; kind: string; author: string | null; title: string; excerpt: string; url: string | null; publishedAt: number; tags: string; state: "new" | "later"; contentState: string; expiresAt: number | null }>;
-      return { items: rows.slice(0, 25), total, hasMore: rows.length > 25 };
     },
     async rss_review_list({ offset, sourceId }) {
       drainExpired();
@@ -502,5 +492,5 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  bb.log.info("JOMO loaded with SQLite hoard, explicit RSS review, and librarian interview");
+  bb.log.info("JOMO loaded with SQLite review queue, explicit RSS review, and librarian interview");
 }

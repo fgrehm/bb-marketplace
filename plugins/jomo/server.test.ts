@@ -18,7 +18,7 @@ describe("JOMO storage cutover", () => {
     insert.run("legacy", "Old but exempt", null);
     insert.run("expired", "Staged over 30 days ago", now - 1);
     insert.run("waiting", "Still waiting", now + 86400);
-    await harness.behavior.callRpc("hoard_list", { offset: 0 });
+    await harness.behavior.callRpc("rss_review_list", { offset: 0 });
     expect(db.prepare("SELECT id, state, drained_at AS drainedAt FROM items ORDER BY id").all()).toEqual([
       { id: "expired", state: "dropped", drainedAt: expect.any(Number) },
       { id: "legacy", state: "new", drainedAt: null },
@@ -27,21 +27,16 @@ describe("JOMO storage cutover", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("pages actual review items without including dropped rows or full bodies", async () => {
+  it("loads reader items without exposing dropped rows or full bodies", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
     await plugin(bb);
     const db = bb.storage.database();
     const insert = db.prepare("INSERT INTO items (id, display_source, kind, title, excerpt, url, published_at, state, content_state) VALUES (?, 'Example', 'article', ?, 'Preview', ?, ?, ?, 'staged')");
     for (let i = 0; i < 27; i++) insert.run(`rss_${i}`, `Story ${i}`, `https://example.org/${i}`, 2000 - i, i === 26 ? "dropped" : "new");
-    const first = await harness.behavior.callRpc("hoard_list", { offset: 0 }) as { items: Array<{ id: string; excerpt: string }>; hasMore: boolean; total: number };
-    expect(first).toMatchObject({ total: 26, hasMore: true });
-    expect(first.items).toHaveLength(25);
-    expect(first.items[0]).toMatchObject({ id: "rss_0", excerpt: "Preview" });
-    expect(await harness.behavior.callRpc("hoard_list", { offset: 25 })).toMatchObject({ total: 26, hasMore: false, items: [expect.objectContaining({ id: "rss_25" })] });
-    expect(await harness.behavior.callRpc("hoard_get", { id: "rss_25" })).toMatchObject({ item: { id: "rss_25", excerpt: "Preview", state: "new" } });
-    expect(await harness.behavior.callRpc("hoard_get", { id: "rss_26" })).toEqual({ item: null });
+    expect(await harness.behavior.callRpc("item_get", { id: "rss_25" })).toMatchObject({ item: { id: "rss_25", excerpt: "Preview", state: "new" } });
+    expect(await harness.behavior.callRpc("item_get", { id: "rss_26" })).toEqual({ item: null });
     db.prepare("UPDATE items SET state = 'saved', content_state = 'ready' WHERE id = 'rss_25'").run();
-    expect(await harness.behavior.callRpc("hoard_get", { id: "rss_25" })).toMatchObject({ item: { id: "rss_25", state: "saved" } });
+    expect(await harness.behavior.callRpc("item_get", { id: "rss_25" })).toMatchObject({ item: { id: "rss_25", state: "saved" } });
     await harness.lifecycle.dispose();
   });
 

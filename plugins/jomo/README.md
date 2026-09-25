@@ -49,9 +49,9 @@ Then review them your way:
 Staged entries that you never touch drain after 30 days. Entries that were
 already staged before this policy never drain.
 
-**Browse and keep.** The cards view is the hoard at rest. Opening anything
-gives you the reader with full text. The Library lists everything you kept,
-newest first.
+**Review and keep.** RSS review is the active queue for deciding what to save,
+queue, or discard. The Library lists everything you kept, newest first, and
+opens saved articles in the reader.
 
 ### What goes over the network
 
@@ -85,10 +85,10 @@ bb jomo import-library --dry-run      # preview importing existing vault notes
 
 ## How it works
 
-The hoard and review queue read from SQLite. Links ingested on demand from the
-Obsidian QUEUE go straight into the saved Library. RSS sources are explicitly
-fetched into jomo's SQLite review queue; only an explicit Save action fetches
-an article page and writes its content to the Library.
+The RSS review queue and Library read from SQLite. Links ingested on demand from
+the Obsidian QUEUE go straight into the saved Library. RSS sources are
+explicitly fetched into jomo's SQLite review queue; only an explicit Save
+action fetches an article page and writes its content to the Library.
 
 Content settings in the plugin settings page: `contentRoot` (defaults to `/data/obsidian/Agent/Library`, accepts another absolute path or `~/...`), `filenamePattern` (defaults to `{{domain}}/{{date}}-{{slug}}.md`, with GitHub, YouTube, and social paths matching the existing vault ingestion layout; supports `{{date}}`, `{{site}}`, `{{slug}}`, and optional `{{idSuffix}}` tokens), and `pruneDrainedFiles` (default true; staged feed entries have no content file to prune). These settings alone do not start ingestion. JOMO-owned content files are writable artifacts, not a backup of triage state.
 
@@ -100,20 +100,19 @@ The plugin owns a full-bleed nav-panel page with:
 - A JOMO report that frames the roundup as proof that missing out was safe, not another list of arrivals.
 - A heuristic Librarian Desk for link queueing, staged feed subscriptions, and citations from loaded real items. Confirmed mutations persist; AI prose remains heuristic, not provider-backed.
 - A Library tab backed by saved SQLite metadata (including ingested QUEUE links), paginated 50 at a time, rendering vault Markdown and sanitized HTML on open. Imported files remain read-only references. Use `bb jomo import-library --dry-run` to inspect the configured content root, then `bb jomo import-library --apply` to insert metadata and file pointers without modifying existing Markdown. Repeated imports skip existing IDs.
-- An RSS review hub with SQLite staging, explicit refresh, a phone-sized triage list, source filtering, source-scoped Salvage (mark entries individually, then process that source's batch once and discard its unmarked leftovers), a one-card-at-a-time sweep, drain status, and source add/pause controls. Approved saves share the same article extraction and content-store path as Links. Legacy deep links to the old hoard triage, sweep, and reservoir views redirect here.
-- A calm card grid of the hoard (the only hoard browsing surface), with feed filters and the reader behind each card.
-- A sources drawer backed by SQLite: enable or pause feeds (pausing hides their items from the hoard), add feeds paused (adding probes the feed once to validate it, resolving YouTube channels to their `channel_id` feed), and queue pasted URLs into `LINKS.md` without fetching. Feed `<category>` terms become staged item tags.
+- An RSS review hub with SQLite staging, explicit refresh, a phone-sized triage list, source filtering, source-scoped Salvage (mark entries individually, then process that source's batch once and discard its unmarked leftovers), a one-card-at-a-time sweep, drain status, and source add/pause controls. Approved saves share the same article extraction and content-store path as Links. Legacy triage, sweep, and reservoir deep links redirect here.
+- A sources drawer backed by SQLite: enable or pause feeds, add feeds paused (adding probes the feed once to validate it, resolving YouTube channels to their `channel_id` feed), and queue pasted URLs into `LINKS.md` without fetching. Feed `<category>` terms become staged item tags.
 - A roundup card at the top of the feed: a render-only AI briefing seam — the
   plugin displays it when a backend thread provides one, and never lets AI
   surfaces mutate state on their own.
-- A kind-aware reader routed through panel `subPath` for hoard items and library articles alike, so browser back and forward work on the way in and out.
+- A kind-aware reader routed through panel `subPath` for RSS items and library articles alike, so browser back and forward work on the way in and out.
 - Mobile and coarse-pointer support with gesture isolation throughout.
 
 Feeds are fetched only after an explicit user action. Existing staged entries have no drain date; new ones drain after 30 days from staging if still unreviewed.
 
 ## UI layout
 
-`app.tsx` wires the JOMO page and navigation. `components/` holds shared cards, reader, triage, salvage, sweep, sources drawer, and RSS review. `hoard-item.ts` maps SQLite metadata to generic preview cards; `rss-item.ts` uses the same projection for staged review rows. Only the Librarian Desk's conversation heuristics and onboarding's material analysis are mock AI. No automatic feed fetching is enabled.
+`app.tsx` wires the JOMO page and navigation. `components/` holds the reader, triage, salvage, sweep, sources drawer, and RSS review. `item-projection.ts` maps SQLite metadata to the shared item shape used by the reader and review surfaces; `rss-item.ts` uses that projection for staged review rows. Only the Librarian Desk's conversation heuristics and onboarding's material analysis are mock AI. No automatic feed fetching is enabled.
 
 ## What this proves
 

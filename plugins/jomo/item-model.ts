@@ -2,8 +2,6 @@ import type { Icon } from "@/components/ui/icon";
 
 export type ItemKind = "article" | "video" | "post" | "repo" | "release" | "paper";
 
-export type Feed = "all" | "articles" | "videos" | "social" | "code" | "saved";
-
 export type SavedState = "new" | "later" | "saved" | "dropped";
 
 export type Item = {
@@ -43,14 +41,6 @@ export type Item = {
   version?: string;
   changes?: Array<{ hash: string; message: string }>;
 };
-
-export function matchesKind(item: Item, feed: Feed): boolean {
-  if (feed === "all" || feed === "saved") return true;
-  if (feed === "articles") return item.kind === "article" || item.kind === "paper";
-  if (feed === "videos") return item.kind === "video";
-  if (feed === "social") return item.kind === "post";
-  return item.kind === "repo" || item.kind === "release";
-}
 
 export const KIND_META: Record<ItemKind, { label: string; icon: React.ComponentProps<typeof Icon>["name"] }> = {
   article: { label: "Article", icon: "FileText" },

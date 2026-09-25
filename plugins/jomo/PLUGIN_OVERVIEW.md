@@ -1,4 +1,4 @@
-JOMO holds a reading queue as a hoard rather than an inbox. The home cards grid, reader, library, and the single RSS review hub (triage list, salvage, sweep) use SQLite-backed metadata. Content bodies live in Markdown files, fetched only after explicit Save or Links ingestion. Sources and queued links persist; feed fetching remains an explicit user action.
+JOMO holds a reading queue without turning it into an inbox. The home report, reader, library, and the single RSS review hub (triage list, salvage, sweep) use SQLite-backed metadata. Content bodies live in Markdown files, fetched only after explicit Save or Links ingestion. Sources and queued links persist; feed fetching remains an explicit user action.
 
 The librarian interview and notebook persist. The Librarian Desk uses heuristic, non-provider-backed conversation over loaded items, with confirmation before real link or source changes. The home report shows real recent entries and does not invent decisions or receipt counts.
 

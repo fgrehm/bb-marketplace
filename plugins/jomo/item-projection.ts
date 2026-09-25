@@ -1,8 +1,8 @@
 import type { Item } from "./item-model";
 
-export type HoardRow = { id: string; sourceId: string | null; source: string; sourceColor: string; kind: string; author: string | null; title: string; excerpt: string; url: string | null; publishedAt: number; tags: string; state: "new" | "later" | "saved"; contentState: string; expiresAt: number | null };
+export type ItemRow = { id: string; sourceId: string | null; source: string; sourceColor: string; kind: string; author: string | null; title: string; excerpt: string; url: string | null; publishedAt: number; tags: string; state: "new" | "later" | "saved"; contentState: string; expiresAt: number | null };
 
-export function toHoardItem(row: HoardRow): Item {
+export function toItem(row: ItemRow): Item {
   const published = new Date(row.publishedAt * 1000);
   // Preserve the stored kind for filters. Cards without kind-specific extras use the generic article preview.
   const kind = (["article", "video", "post", "repo", "release", "paper"] as const).find((value) => value === row.kind) ?? "article";

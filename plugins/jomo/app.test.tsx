@@ -16,7 +16,6 @@ const profile = {
 function rpcFixture() {
   return {
     onboarding_get: async () => ({ profile }),
-    hoard_list: async () => ({ items: [{ id: "itm_rss_test", sourceId: "src_test", source: "Example", sourceColor: "#64748b", kind: "article", author: null, title: "A saved-for-later story", excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000, tags: "[]", state: "new", contentState: "staged", expiresAt: null }], total: 1, hasMore: false }),
     rss_review_list: async () => ({
       items: [{ id: "itm_rss_test", sourceId: "src_test", source: "Example", kind: "article", title: "A saved-for-later story", author: null, excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000 }],
       total: 1,
@@ -36,38 +35,21 @@ function rpcFixture() {
 }
 
 describe("JOMO RSS review app", () => {
-  it("uses BB panel routes for screens and follows browser back/forward props", async () => {
-    const app = await loadPluginApp(() => import("./app"));
-    const Panel = app.navPanels[0]!.component;
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: rpcFixture() as any });
-    (await slot.findByRole("button", { name: "Browse the hoard" })).click();
-    expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "feed", options: { subPath: "cards" } });
-    slot.lifecycle.rerender(<Panel subPath="cards" />);
-    await slot.findByText("A saved-for-later story");
-    slot.lifecycle.rerender(<Panel subPath="" />);
-    expect(await slot.findByRole("button", { name: "Browse the hoard" })).toBeTruthy();
-    slot.lifecycle.rerender(<Panel subPath="rss" />);
-    expect(await slot.findByRole("heading", { name: "RSS review" })).toBeTruthy();
-    slot.lifecycle.rerender(<Panel subPath="cards" />);
-    expect(await slot.findByText("A saved-for-later story")).toBeTruthy();
-    slot.lifecycle.unmount();
-  });
-
-  it("opens an older reader deep link without loading the entire hoard", async () => {
+  it("opens a reader deep link without loading the whole review queue", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const fixture = rpcFixture();
-    const row = (await fixture.hoard_list()).items[0];
-    const slot = renderSlot(app.navPanels[0]!, { subPath: `item/${row.id}` }, { rpc: { ...fixture, hoard_list: async () => ({ items: [], total: 1, hasMore: true }), hoard_get: async () => ({ item: row }) } as any });
+    const row = { id: "itm_rss_test", sourceId: "src_test", source: "Example", sourceColor: "#64748b", kind: "article", author: null, title: "A saved-for-later story", excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000, tags: "[]", state: "new" as const, contentState: "staged", expiresAt: null };
+    const slot = renderSlot(app.navPanels[0]!, { subPath: `item/${row.id}` }, { rpc: { ...fixture, item_get: async () => ({ item: row }) } as any });
     expect(await slot.findByRole("heading", { name: row.title })).toBeTruthy();
-    expect(slot.inspection.rpcCalls).toContainEqual({ method: "hoard_get", input: { id: row.id } });
+    expect(slot.inspection.rpcCalls).toContainEqual({ method: "item_get", input: { id: row.id } });
     slot.lifecycle.unmount();
   });
 
   it("opens a library deep link beyond the first page", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const fixture = rpcFixture();
-    const row = { ...(await fixture.hoard_list()).items[0], id: "itm_older_library", state: "saved" };
-    const slot = renderSlot(app.navPanels[0]!, { subPath: `library/${row.id}` }, { rpc: { ...fixture, library_list: async () => ({ items: [], hasMore: false }), library_read: async () => ({ body: "Old saved body", missing: false }), hoard_get: async () => ({ item: row }) } as any });
+    const row = { id: "itm_older_library", sourceId: "src_test", source: "Example", sourceColor: "#64748b", kind: "article", author: null, title: "A saved-for-later story", excerpt: "Only a feed excerpt.", url: "https://example.org/story", publishedAt: 1790244000, tags: "[]", state: "saved" as const, contentState: "ready", expiresAt: null };
+    const slot = renderSlot(app.navPanels[0]!, { subPath: `library/${row.id}` }, { rpc: { ...fixture, library_list: async () => ({ items: [], hasMore: false }), library_read: async () => ({ body: "Old saved body", missing: false }), item_get: async () => ({ item: row }) } as any });
     expect(await slot.findByRole("heading", { name: row.title })).toBeTruthy();
     expect(await slot.findByText("Old saved body")).toBeTruthy();
     slot.lifecycle.unmount();
@@ -82,47 +64,16 @@ describe("JOMO RSS review app", () => {
     }
   });
 
-  it("navigates to reader and library article routes", async () => {
-    const app = await loadPluginApp(() => import("./app"));
-    const Panel = app.navPanels[0]!.component;
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { ...rpcFixture(), library_list: async () => ({ items: [{ id: "itm_library", source: "Example", kind: "article", title: "Archived story", excerpt: "A preview", url: null, publishedAt: 1790244000, contentState: "ready" }], hasMore: false }), library_read: async () => ({ body: "Saved body", missing: false }) } as any });
-    (await slot.findByRole("button", { name: "Browse the hoard" })).click();
-    await slot.findByRole("button", { name: "Card view" });
-    (await slot.findByRole("button", { name: /A saved-for-later story/ })).click();
-    await vi.waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "feed", options: { subPath: "item/itm_rss_test" } }));
-    slot.lifecycle.rerender(<Panel subPath="item/itm_rss_test" />);
-    expect(await slot.findByText("Only a feed excerpt.")).toBeTruthy();
-    slot.lifecycle.rerender(<Panel subPath="" />);
-    (await slot.findByRole("button", { name: "Library" })).click();
-    await vi.waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "feed", options: { subPath: "library" } }));
-    (await slot.findByRole("button", { name: /Archived story/ })).click();
-    await vi.waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "feed", options: { subPath: "library/itm_library" } }));
-    slot.lifecycle.unmount();
-  });
-  it("uses real hoard rows on the home and card views without polling feeds", async () => {
+  it("uses the real RSS review queue on the home report without polling feeds", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: rpcFixture() as any });
-    await vi.waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "hoard_list", input: { offset: 0 } }));
-    (await slot.findByRole("button", { name: "Browse the hoard" })).click();
+    await vi.waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "rss_review_list", input: { offset: 0 } }));
     expect(await slot.findByText("A saved-for-later story")).toBeTruthy();
-    expect(slot.queryByText("Mock material for exploring the shape of a large hoard.")).toBeNull();
+    expect(slot.queryByRole("button", { name: "Browse the hoard" })).toBeNull();
     expect(slot.inspection.rpcCalls.some((call) => call.method === "rss_sync_start")).toBe(false);
     slot.lifecycle.unmount();
   });
 
-  it("pages the real hoard instead of loading every entry at once", async () => {
-    const app = await loadPluginApp(() => import("./app"));
-    const fixture = rpcFixture();
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { ...fixture, hoard_list: async ({ offset }: { offset: number }) => ({
-      items: [{ id: `itm_page_${offset}`, sourceId: null, source: "Example", sourceColor: "#64748b", kind: "article", author: null, title: `Page ${offset}`, excerpt: "Preview", url: `https://example.org/${offset}`, publishedAt: 1790244000 - offset, tags: "[]", state: "new", contentState: "staged", expiresAt: null }],
-      total: 26, hasMore: offset === 0,
-    }) } as any });
-    (await slot.findByRole("button", { name: "Browse the hoard" })).click();
-    await slot.findByText("Page 0");
-    slot.getByRole("button", { name: "Show older entries" }).click();
-    await vi.waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "hoard_list", input: { offset: 1 } }));
-    slot.lifecycle.unmount();
-  });
 
   it("offers no bulk chips in triage and applies decisions one at a time", async () => {
     const app = await loadPluginApp(() => import("./app"));
@@ -235,7 +186,7 @@ describe("JOMO RSS review app", () => {
     slot.lifecycle.unmount();
   });
 
-  it("triages a staged row via SQLite without fetching feeds or touching the mock hoard", async () => {
+  it("triages a staged row via SQLite without fetching feeds", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: rpcFixture() as any });
     (await slot.findByRole("button", { name: "RSS review" })).click();
