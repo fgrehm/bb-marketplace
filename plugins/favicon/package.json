@@ -23,7 +23,7 @@
     "zod": "^4.6.2"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.56",
+    "@get-bb/plugin-sdk": "0.5.16",
     "@pierre/diffs": "^1.4.2",
     "@radix-ui/react-alert-dialog": "^1.1.23",
     "@radix-ui/react-context-menu": "^2.3.7",
