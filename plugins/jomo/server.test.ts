@@ -4,9 +4,13 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContentStore } from "./content-store";
-import plugin, { DEFAULT_CONTENT_ROOT } from "./server";
+import plugin, { DEFAULT_CONTENT_ROOT, FEED_USER_AGENT } from "./server";
 
-const validFeedFetch = () => vi.stubGlobal("fetch", vi.fn(async () => new Response('<?xml version="1.0"?><rss><channel><item><title>A story</title><link>https://example.org/a</link><guid>g</guid></item></channel></rss>', { headers: { "content-type": "application/rss+xml" } })));
+const validFeedFetch = () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('<?xml version="1.0"?><rss><channel><item><title>A story</title><link>https://example.org/a</link><guid>g</guid></item></channel></rss>', { headers: { "content-type": "application/rss+xml" } }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+};
 
 describe("JOMO storage cutover", () => {
   it("drains only newly staged entries after their staging-based 30 days", async () => {
@@ -79,7 +83,7 @@ describe("JOMO storage cutover", () => {
   });
 
   it("adds feeds paused after a validating probe and queues captured links", async () => {
-    validFeedFetch();
+    const fetchMock = validFeedFetch();
     const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
     const root = await mkdtemp(join(tmpdir(), "jomo-capture-"));
     const inboxLinksFile = join(root, "LINKS.md");
@@ -87,6 +91,8 @@ describe("JOMO storage cutover", () => {
     await plugin(bb);
     await harness.behavior.setSettings({ inboxLinksFile });
     const added = await harness.behavior.callRpc("rss_source_add", { name: "Example", url: "https://example.org/feed" }) as { id: string };
+    const feedRequest = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(feedRequest.headers).get("user-agent")).toBe(FEED_USER_AGENT);
     const sources = await harness.behavior.callRpc("rss_sources_list", {}) as { sources: Array<{ id: string; enabled: boolean }> };
     expect(sources.sources.find((source) => source.id === added.id)).toMatchObject({ enabled: false });
     expect(await harness.behavior.callRpc("queue_link", { url: "https://example.org/one" })).toEqual({ added: true });

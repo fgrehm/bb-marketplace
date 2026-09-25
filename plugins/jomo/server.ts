@@ -29,6 +29,7 @@ const profileSchema = z.object({
 export type LibrarianProfile = z.infer<typeof profileSchema>;
 
 export const DEFAULT_CONTENT_ROOT = "/data/obsidian/Agent/Library";
+export const FEED_USER_AGENT = "JOMO/0.1 (+https://github.com/fgrehm/bb-marketplace)";
 
 // YouTube channel/handle pages are not feed URLs; resolve the channel's
 // stable ID from the page and use the channel_id feed instead.
@@ -37,7 +38,7 @@ async function youtubeFeedUrl(url: URL): Promise<URL> {
   if (!/^\/(?:@|channel\/|c\/|user\/)/.test(url.pathname)) return url;
   const directId = /^\/channel\/(UC[\w-]{20,})/.exec(url.pathname)?.[1];
   if (directId) return new URL(`https://www.youtube.com/feeds/videos.xml?channel_id=${directId}`);
-  const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  const response = await fetch(url, { signal: AbortSignal.timeout(20_000), headers: { "user-agent": FEED_USER_AGENT } });
   if (!response.ok) throw new Error(`YouTube channel page returned HTTP ${response.status}`);
   const html = await response.text();
   const channelId = [
@@ -236,7 +237,7 @@ export default async function plugin(bb: BbPluginApi) {
       const result = await syncFeedSources(db, async (url, signal) => {
         const parsed = new URL(url);
         if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("Only HTTP(S) feed URLs are allowed");
-        const response = await fetch(parsed.href, { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]), headers: { accept: "application/atom+xml, application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.1" } });
+        const response = await fetch(parsed.href, { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]), headers: { accept: "application/atom+xml, application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.1", "user-agent": FEED_USER_AGENT } });
         if (!response.ok) throw new Error(`Feed responded with HTTP ${response.status}`);
         return await readFeedResponse(response);
       }, ({ processed, staged, duplicates, failures }) => {
@@ -366,7 +367,7 @@ export default async function plugin(bb: BbPluginApi) {
       try { canonical = await youtubeFeedUrl(parsed); } catch (cause) { throw cause instanceof Error ? cause : new Error("Could not resolve that YouTube channel"); }
       let xml: string;
       try {
-        const response = await fetch(canonical, { signal: AbortSignal.timeout(20_000), headers: { accept: "application/atom+xml, application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.1" } });
+        const response = await fetch(canonical, { signal: AbortSignal.timeout(20_000), headers: { accept: "application/atom+xml, application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.1", "user-agent": FEED_USER_AGENT } });
         if (!response.ok) throw new Error(`Feed responded with HTTP ${response.status}`);
         xml = await readFeedResponse(response);
         parseFeedXml(xml);
