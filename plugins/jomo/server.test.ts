@@ -169,16 +169,30 @@ describe("JOMO storage cutover", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("removes legacy item-note storage while preserving settings and profile data", async () => {
+  it("keeps plugin state in its own database and preserves settings", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
-    await bb.storage.kv.set("librarian-profile", { marker: "preserve" });
+    const profile = {
+      answers: { interests: ["agents"], research: ["archives"], missList: ["hype"], savedMeaning: "keep for research", autonomy: "manual" },
+      acceptedDrafts: ["repair notes"],
+      notebook: "# notebook\n\nKeep me.",
+      completedAt: 1234,
+    };
+    await bb.storage.kv.set("librarian-profile", profile);
     await plugin(bb);
     expect(DEFAULT_CONTENT_ROOT).toBe("/data/obsidian/Agent/Library");
     expect(bb.storage.database().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'item_notes'").get()).toBeUndefined();
     expect((bb.storage.database().prepare("PRAGMA table_info(sources)").all() as Array<{ name: string }>).some(({ name }) => name === "paused_note")).toBe(false);
     await harness.behavior.setSettings({ filenamePattern: "{{domain}}/{{date}}-{{slug}}.md" });
     await harness.behavior.setSettings({ contentRoot: "/tmp/jomo-content", filenamePattern: "{{slug}}-{{idSuffix}}.md", pruneDrainedFiles: false });
-    expect(await bb.storage.kv.get("librarian-profile")).toEqual({ marker: "preserve" });
+
+    const db = bb.storage.database();
+    const row = db.prepare("SELECT profile_json AS profileJson FROM librarian_profile WHERE id = 'profile'").get() as { profileJson: string };
+    expect(JSON.parse(row.profileJson)).toEqual(profile);
+    expect(await bb.storage.kv.get("librarian-profile")).toBeUndefined();
+    expect(await harness.behavior.callRpc("onboarding_get", {})).toEqual({ profile });
+    await harness.behavior.callRpc("notebook_save", { notebook: "Updated notebook" });
+    const updated = db.prepare("SELECT profile_json AS profileJson FROM librarian_profile WHERE id = 'profile'").get() as { profileJson: string };
+    expect(JSON.parse(updated.profileJson).notebook).toBe("Updated notebook");
     await harness.lifecycle.dispose();
   });
 

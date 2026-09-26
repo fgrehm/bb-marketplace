@@ -195,7 +195,28 @@ export default async function plugin(bb: BbPluginApi) {
     `CREATE TABLE url_aliases (alias TEXT PRIMARY KEY, url TEXT NOT NULL)`, // Queue links that redirected: original URL to the archived canonical URL.
     `DROP TABLE IF EXISTS item_notes`,
     `ALTER TABLE sources DROP COLUMN paused_note`,
+    `CREATE TABLE librarian_profile (id TEXT PRIMARY KEY CHECK (id = 'profile'), profile_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   ]);
+  const readLibrarianProfile = (): LibrarianProfile | null => {
+    const row = db.prepare("SELECT profile_json AS profileJson FROM librarian_profile WHERE id = 'profile'").get() as { profileJson: string } | undefined;
+    if (!row) return null;
+    try { return profileSchema.parse(JSON.parse(row.profileJson)); } catch { return null; }
+  };
+  const writeLibrarianProfile = (profile: LibrarianProfile) => {
+    db.prepare("INSERT INTO librarian_profile (id, profile_json, updated_at) VALUES ('profile', ?, ?) ON CONFLICT(id) DO UPDATE SET profile_json = excluded.profile_json, updated_at = excluded.updated_at")
+      .run(JSON.stringify(profile), Date.now());
+  };
+  // Older builds kept the profile in BB's shared plugin_kv store. Move it
+  // into JOMO's own SQLite file once, then remove the shared copy so future
+  // backups and cloud migrations are fully self-contained.
+  if (!readLibrarianProfile()) {
+    const legacyProfile = await bb.storage.kv.get<LibrarianProfile>("librarian-profile");
+    if (legacyProfile) {
+      writeLibrarianProfile(profileSchema.parse(legacyProfile));
+      await bb.storage.kv.delete("librarian-profile");
+      bb.log.info("JOMO moved the librarian profile into its plugin database");
+    }
+  }
   db.prepare("UPDATE queue_jobs SET status = 'interrupted', error = 'JOMO reloaded before this run completed' WHERE status = 'running'").run();
   db.prepare("UPDATE rss_sync_jobs SET status = 'interrupted', error = 'JOMO reloaded before this run completed' WHERE status = 'running'").run();
 
@@ -290,17 +311,16 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     async onboarding_get() {
-      const profile = await bb.storage.kv.get<LibrarianProfile>("librarian-profile");
-      return { profile: profile ?? null };
+      return { profile: readLibrarianProfile() };
     },
     async onboarding_save(profile) {
-      await bb.storage.kv.set("librarian-profile", profile);
+      writeLibrarianProfile(profile);
       return { saved: true as const };
     },
     async notebook_save({ notebook }) {
-      const profile = await bb.storage.kv.get<LibrarianProfile>("librarian-profile");
+      const profile = readLibrarianProfile();
       if (!profile) return { saved: false };
-      await bb.storage.kv.set("librarian-profile", { ...profile, notebook });
+      writeLibrarianProfile({ ...profile, notebook });
       return { saved: true };
     },
     async queue_link({ url }) {
