@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-pi-extras",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -19,8 +19,8 @@
     "skills": []
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test usage.test.ts pi-settings.test.ts",
-    "test:components": "vitest run update-actions.test.tsx",
+    "test": "node --experimental-strip-types --test usage.test.ts pi-settings.test.ts pi-models.test.ts",
+    "test:components": "vitest run update-actions.test.tsx settings-panel.test.tsx",
     "lint": "tsc --noEmit",
     "build": "bb plugin build"
   },

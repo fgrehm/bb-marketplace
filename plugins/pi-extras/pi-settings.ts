@@ -2,11 +2,15 @@ import { readFile, rename, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { ThinkingLevel } from "./model-scope.js";
+
+/** The levels pi accepts for `defaultThinkingLevel`. */
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ThinkingLevel[];
 
 export type PiSettings = {
   defaultProvider: string | null;
   defaultModel: string | null;
-  defaultThinkingLevel: "minimal" | "low" | "medium" | "high" | null;
+  defaultThinkingLevel: ThinkingLevel | null;
   enabledModels: string[];
 };
 
@@ -21,8 +25,7 @@ export async function readSettings(env = process.env): Promise<PiSettings> {
   return {
     defaultProvider: typeof raw.defaultProvider === "string" ? raw.defaultProvider : null,
     defaultModel: typeof raw.defaultModel === "string" ? raw.defaultModel : null,
-    defaultThinkingLevel: ["minimal", "low", "medium", "high"].includes(String(raw.defaultThinkingLevel)) ? raw.defaultThinkingLevel as PiSettings["defaultThinkingLevel"] : null,
-    enabledModels: Array.isArray(raw.enabledModels) ? raw.enabledModels.filter((value): value is string => typeof value === "string") : [],
+    defaultThinkingLevel: (THINKING_LEVELS as readonly string[]).includes(String(raw.defaultThinkingLevel)) ? raw.defaultThinkingLevel as PiSettings["defaultThinkingLevel"] : null,    enabledModels: Array.isArray(raw.enabledModels) ? raw.enabledModels.filter((value): value is string => typeof value === "string") : [],
   };
 }
 

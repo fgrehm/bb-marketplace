@@ -7,10 +7,25 @@ const usageWindowSchema = z.object({
   resetsAt: z.string().nullable(),
 }).strict();
 
+const piModelSchema = z.object({
+  provider: z.string(),
+  id: z.string(),
+  name: z.string().nullable(),
+  contextWindow: z.number().nullable(),
+  maxTokens: z.number().nullable(),
+  reasoning: z.boolean(),
+  images: z.boolean(),
+}).strict();
+
+const modelListSchema = z.object({
+  models: z.array(piModelSchema),
+  error: z.string().nullable(),
+}).strict();
+
 const piSettingsSchema = z.object({
   defaultProvider: z.string().nullable(),
   defaultModel: z.string().nullable(),
-  defaultThinkingLevel: z.enum(["minimal", "low", "medium", "high"]).nullable(),
+  defaultThinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable(),
   enabledModels: z.array(z.string()),
 }).strict();
 
@@ -32,6 +47,7 @@ export const piExtrasHostContract = defineRpcContract({
   readSettings: { input: z.object({}).strict(), output: piSettingsSchema },
   writeSettings: { input: piSettingsSchema, output: piSettingsSchema },
   update: { input: updateSchema, output: z.object({ ok: z.boolean(), output: z.string() }).strict() },
+  listModels: { input: z.object({}).strict(), output: modelListSchema },
 });
 
 export const piExtrasRpcContract = defineRpcContract({
@@ -45,4 +61,8 @@ export const piExtrasRpcContract = defineRpcContract({
   readSettings: { input: z.object({}).strict(), output: piSettingsSchema },
   writeSettings: { input: piSettingsSchema, output: piSettingsSchema },
   update: { input: updateSchema, output: z.object({ ok: z.boolean(), output: z.string() }).strict() },
+  listModels: {
+    input: z.object({ force: z.boolean().optional() }).strict(),
+    output: modelListSchema,
+  },
 });

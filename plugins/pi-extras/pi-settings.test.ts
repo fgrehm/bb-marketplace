@@ -15,6 +15,17 @@ test("reads and writes selected global settings without dropping unrelated field
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { theme: "dark", defaultProvider: "openai-codex", defaultModel: "gpt-5.5", defaultThinkingLevel: "high", enabledModels: ["openai-codex/*"] });
 });
 
+test("keeps thinking levels pi supports beyond the original four", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-settings-"));
+  const path = join(dir, "settings.json");
+  await writeFile(path, JSON.stringify({ defaultThinkingLevel: "xhigh" }));
+  const env = { ...process.env, PI_CODING_AGENT_DIR: dir };
+  const read = await readSettings(env);
+  assert.equal(read.defaultThinkingLevel, "xhigh");
+  await writeSettings(read, env);
+  assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { defaultThinkingLevel: "xhigh" });
+});
+
 test("temporarily unpins exact npm package sources", () => {
   assert.deepEqual(unpinNpmPackages([
     "npm:pi-ollama-cloud@0.12.0",
