@@ -11,8 +11,17 @@ describe("RSS staging", () => {
     expect(parseFeedXml(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:example.org,2026:a</id><title>Atom story</title><link href="https://example.org/atom" rel="alternate"/><updated>2026-09-24T11:00:00Z</updated><summary>Atom summary</summary><author><name>Writer</name></author></entry></feed>`)[0]).toMatchObject({ guid: "tag:example.org,2026:a", url: "https://example.org/atom", title: "Atom story", author: "Writer", excerpt: "Atom summary" });
   });
 
-  it("rejects successful HTTP responses that are not RSS or Atom documents", () => {
+  it("repairs raw HTML entities and bare ampersands when XML parsing fails", () => {
+    const malformed = `<rss><channel><item><title>Research &amp; Development</title><link>https://example.org/a</link><guid>entry-a</guid><description>Copyright &copy; 2026 & raw text</description></item></channel></rss>`;
+    expect(parseFeedXml(malformed)[0]).toMatchObject({
+      title: "Research & Development",
+      excerpt: "Copyright © 2026 & raw text",
+    });
+  });
+
+  it("does not retry unrelated or still-malformed XML as a feed", () => {
     expect(() => parseFeedXml("<html><body>Not a feed</body></html>")).toThrow("Unrecognized RSS or Atom document");
+    expect(parseFeedXml("<rss><channel><item><title>Unclosed</channel></rss>")).toEqual([]);
   });
 
   it("stages eligible entries in SQLite once and records seen GUIDs without content files", async () => {

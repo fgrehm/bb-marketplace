@@ -108,7 +108,7 @@ The plugin owns a full-bleed nav-panel page with:
 - A kind-aware reader routed through panel `subPath` for RSS items and library articles alike, so browser back and forward work on the way in and out.
 - Mobile and coarse-pointer support with gesture isolation throughout.
 
-Feeds are fetched only after an explicit user action. Existing staged entries have no drain date; new ones drain after 30 days from staging if still unreviewed.
+Feeds are fetched only after an explicit user action. The RSS parser uses fast-xml-parser with entity processing disabled. If strict XML parsing fails, it retries once after escaping bare ampersands while preserving XML's predefined and numeric entities, which tolerates common raw HTML entities such as `&copy;`. It does not attempt general-purpose HTML/XML repair. Existing staged entries have no drain date; new ones drain after 30 days from staging if still unreviewed.
 
 ## UI layout
 

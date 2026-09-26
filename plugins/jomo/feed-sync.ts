@@ -29,14 +29,15 @@ function decodeXml(value: string): string {
       const codepoint = numeric[0]?.toLowerCase() === "x" ? Number.parseInt(numeric.slice(1), 16) : Number.parseInt(numeric, 10);
       return Number.isFinite(codepoint) && codepoint <= 0x10ffff ? String.fromCodePoint(codepoint) : "";
     }
-    return ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " } as Record<string, string>)[named?.toLowerCase() ?? ""] ?? "";
+    const knownEntity = ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " } as Record<string, string>)[named?.toLowerCase() ?? ""];
+    return knownEntity ?? entity;
   });
 }
 
 function text(value: unknown): string {
-  if (typeof value === "string" || typeof value === "number") return decodeXml(String(value)).trim();
+  if (typeof value === "string" || typeof value === "number") return decodeHtmlEntities(decodeXml(String(value))).trim();
   const record = asRecord(value);
-  if (record && typeof record["#text"] === "string") return decodeXml(record["#text"] as string).trim();
+  if (record && typeof record["#text"] === "string") return decodeHtmlEntities(decodeXml(record["#text"] as string)).trim();
   return "";
 }
 
@@ -76,9 +77,30 @@ function entryTags(entry: XmlRecord): string[] {
   return [...new Set(tags)].slice(0, 8);
 }
 
+function parseFeedDocument(xml: string): unknown {
+  return parser.parse(xml) as unknown;
+}
+
+function repairBareAmpersands(xml: string): string {
+  // XML only permits ampersands that begin a predefined/numeric entity. Escape
+  // other ampersands, including raw HTML entities like &copy;, as text.
+  return xml.replace(/&(?!(?:#(?:x[\da-f]+|\d+)|amp|lt|gt|quot|apos);)/gi, "&amp;");
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(/&copy;/gi, "©");
+}
+
 export function parseFeedXml(xml: string, now = Math.floor(Date.now() / 1000)): FeedEntry[] {
   if (xml.length > 5_000_000) throw new Error("Feed response exceeds 5 MB");
-  const parsed = parser.parse(xml) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = parseFeedDocument(xml);
+  } catch (error) {
+    const repaired = repairBareAmpersands(xml);
+    if (repaired === xml) throw error;
+    parsed = parseFeedDocument(repaired);
+  }
   const root = asRecord(parsed);
   if (!root || !("rss" in root || "feed" in root || "rdf:RDF" in root)) throw new Error("Unrecognized RSS or Atom document");
   return feedItems(parsed).flatMap((value): FeedEntry[] => {
