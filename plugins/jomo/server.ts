@@ -146,6 +146,10 @@ export const rpcContract = defineRpcContract({
     input: z.object({ ids: z.array(z.string().min(1).max(200)).min(1).max(1000) }).strict(),
     output: z.object({ discarded: z.number() }).strict(),
   },
+  rss_discard_source: {
+    input: z.object({ sourceId: z.string().min(1).max(200) }).strict(),
+    output: z.object({ discarded: z.number().int().nonnegative(), keptQueued: z.number().int().nonnegative() }).strict(),
+  },
   library_list: {
     input: z.object({ offset: z.number().int().min(0).max(100_000), state: z.enum(["new", "saved"]).default("saved") }).strict(),
     output: z.object({ items: z.array(z.object({ id: z.string(), source: z.string(), kind: z.string(), title: z.string(), excerpt: z.string(), url: z.string().nullable(), publishedAt: z.number(), contentState: z.string() })), hasMore: z.boolean() }).strict(),
@@ -494,6 +498,15 @@ export default async function plugin(bb: BbPluginApi) {
       let discarded = 0;
       db.transaction(() => { for (const id of ids) discarded += discard.run(now, id).changes; })();
       return { discarded };
+    },
+    async rss_discard_source({ sourceId }) {
+      // A source-scoped sweep of the review queue. Same guard as
+      // rss_discard_ids: only staged, unfetched items may be dropped, and
+      // queued ('later') items stay because they still live in LINKS.md.
+      const result = db.prepare("UPDATE items SET state = 'dropped', state_changed_at = ?, state_changed_by = 'user' WHERE source_id = ? AND state = 'new' AND content_state IN ('staged','pending') AND url IS NOT NULL")
+        .run(Math.floor(Date.now() / 1000), sourceId);
+      const kept = (db.prepare("SELECT COUNT(*) AS count FROM items WHERE source_id = ? AND state = 'later'").get(sourceId) as { count: number }).count;
+      return { discarded: result.changes, keptQueued: kept };
     },
     async library_list({ offset, state }) {
       const rows = db.prepare("SELECT id, display_source AS source, kind, COALESCE(title, '') AS title, COALESCE(excerpt, '') AS excerpt, url, published_at AS publishedAt, content_state AS contentState FROM items WHERE state = ? ORDER BY published_at DESC, id LIMIT 51 OFFSET ?").all(state, offset) as Array<{ id: string; source: string; kind: string; title: string; excerpt: string; url: string | null; publishedAt: number; contentState: string }>;

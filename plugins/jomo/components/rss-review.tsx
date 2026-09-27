@@ -37,6 +37,8 @@ export function RssReview({ onClose, onManageSources, sweeping, onSweepChange, s
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
@@ -158,6 +160,21 @@ export function RssReview({ onClose, onManageSources, sweeping, onSweepChange, s
     finally { setBusyId(null); }
   };
 
+  const discardSource = async () => {
+    if (!selectedSourceId) return;
+    const source = sources.find((row) => row.id === selectedSourceId);
+    setConfirmDiscard(false);
+    setDiscarding(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const { discarded, keptQueued } = await rpc.call("rss_discard_source", { sourceId: selectedSourceId });
+      setNotice(`Discarded ${discarded} entries from ${source?.name ?? "this source"}.${keptQueued > 0 ? ` ${keptQueued} queued in LINKS.md kept.` : ""}`);
+      setReload((value) => value + 1);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not discard this source."); }
+    finally { setDiscarding(false); }
+  };
+
   const showMore = async () => {
     setLoading(true);
     setError(null);
@@ -188,6 +205,19 @@ export function RssReview({ onClose, onManageSources, sweeping, onSweepChange, s
         <Button className="mt-3 w-full" disabled={!selectedSourceId || total === 0 || job?.status === "running" || sweepLoading} onClick={() => void startSalvage(true)}>{sweepLoading ? "Preparing…" : selectedSourceId ? "Salvage this source" : "Choose a source to salvage"}</Button>
         <Button variant="outline" className="mt-2 w-full" disabled={total === 0 || job?.status === "running" || sweepLoading} onClick={() => void startSweep(true)}>{sweepLoading ? "Preparing sweep…" : selectedSourceId ? "Sweep this source" : "Sweep all sources (one at a time)"}</Button>
         <Button variant="ghost" className="mt-2" onClick={onManageSources}>Manage sources</Button>
+        {confirmDiscard ? (
+          <div className="mt-2 rounded-xl border border-red-500/40 bg-red-500/10 p-3">
+            <p className="text-xs text-red-200">Discard all {total} entries waiting from {selectedSourceId ? sources.find((row) => row.id === selectedSourceId)?.name ?? "this source" : ""}? They will not come back on the next refresh. Entries already queued in LINKS.md are kept.</p>
+            <div className="mt-2 flex gap-2">
+              <Button size="sm" disabled={discarding} onClick={() => void discardSource()}>{discarding ? "Discarding…" : `Discard ${total} entries`}</Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDiscard(false)}>Keep them</Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="ghost" className="mt-2" disabled={!selectedSourceId || total === 0 || job?.status === "running" || discarding} onClick={() => setConfirmDiscard(true)}>
+            {selectedSourceId ? "Discard this source" : "Choose a source to discard"}
+          </Button>
+        )}
         {job && <p role="status" className="mt-3 text-xs text-muted-foreground">{job.status === "running" ? `Fetching ${job.processed} of ${job.queued} feeds · ${job.staged} new · ${job.failures.length} recent failures` : job.status === "completed" ? `Last refresh finished · ${job.staged} staged · ${job.duplicates} already seen · ${job.failedCount} feeds failed` : job.status === "interrupted" ? "Last refresh was interrupted. You can start another when ready." : job.status === "failed" ? "Last refresh stopped with an error." : ""}{job.error && <span className="block text-red-400">{job.error}</span>}{job.failures.map((failure) => <span key={`${failure.source}:${failure.reason}`} className="mt-1 block text-red-400">{failure.source}: {failure.reason}</span>)}</p>}
       </div>
       <div className="mb-5" aria-label="Filter RSS review by source">

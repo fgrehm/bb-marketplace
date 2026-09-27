@@ -253,6 +253,30 @@ describe("JOMO storage cutover", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("discards every staged entry of one source and keeps queued ones", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
+    await plugin(bb);
+    const db = bb.storage.database();
+    db.prepare("INSERT INTO sources (id, name, url, kind, color, enabled, created_at) VALUES ('src_a', 'Alpha', 'https://alpha.example/feed', 'rss', '#000', 1, 1), ('src_b', 'Beta', 'https://beta.example/feed', 'rss', '#000', 1, 1)").run();
+    const insert = db.prepare("INSERT INTO items (id, source_id, display_source, kind, title, excerpt, url, published_at, state, content_state) VALUES (?, ?, ?, 'article', ?, 'Preview', ?, 1000, ?, 'staged')");
+    insert.run("itm_a1", "src_a", "Alpha", "A1", "https://alpha.example/1", "new");
+    insert.run("itm_a2", "src_a", "Alpha", "A2", "https://alpha.example/2", "new");
+    insert.run("itm_a_later", "src_a", "Alpha", "A queued one", "https://alpha.example/3", "later");
+    insert.run("itm_b1", "src_b", "Beta", "B1", "https://beta.example/1", "new");
+    const listed = await harness.behavior.callRpc("rss_review_list", { offset: 0 }) as { sources: Array<{ id: string; count: number }> };
+    expect(listed.sources).toMatchObject([{ id: "src_a", count: 2 }, { id: "src_b", count: 1 }]);
+    expect(await harness.behavior.callRpc("rss_discard_source", { sourceId: "src_a" })).toEqual({ discarded: 2, keptQueued: 1 });
+    expect((await harness.behavior.callRpc("rss_review_list", { offset: 0 }) as { sources: Array<{ id: string; count: number }> }).sources).toMatchObject([{ id: "src_b", count: 1 }]);
+    expect(db.prepare("SELECT id, state FROM items WHERE source_id = 'src_a' ORDER BY id").all()).toEqual([
+      { id: "itm_a1", state: "dropped" },
+      { id: "itm_a2", state: "dropped" },
+      { id: "itm_a_later", state: "later" },
+    ]);
+    expect(db.prepare("SELECT state FROM items WHERE id = 'itm_b1'").get()).toEqual({ state: "new" });
+    expect(await harness.behavior.callRpc("rss_discard_source", { sourceId: "src_a" })).toEqual({ discarded: 0, keptQueued: 1 });
+    await harness.lifecycle.dispose();
+  });
+
   it("uses one review action to save, queue, or discard staged RSS entries", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "jomo" });
     const root = await mkdtemp(join(tmpdir(), "jomo-rss-actions-"));
