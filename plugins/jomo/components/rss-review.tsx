@@ -222,10 +222,11 @@ export function RssReview({ onClose, onManageSources, sweeping, onSweepChange, s
       </div>
       <div className="mb-5" aria-label="Filter RSS review by source">
         <div className="mb-2 flex items-center justify-between gap-3"><p className="text-xs font-medium text-muted-foreground">Review source</p><span className="text-xs text-muted-foreground">{selectedSourceId ? `${total} in this source` : `${allTotal} across all sources`}</span></div>
-        <div className="flex gap-2 overflow-x-auto pb-1" role="group" aria-label="RSS sources">
-          <button type="button" aria-pressed={selectedSourceId === null} onClick={() => setSelectedSourceId(null)} className={selectedSourceId === null ? "shrink-0 rounded-full bg-foreground px-3.5 py-2 text-sm text-background" : "shrink-0 rounded-full border border-border px-3.5 py-2 text-sm text-muted-foreground hover:border-primary hover:text-foreground"}>All sources ({allTotal})</button>
-          {sources.map((source) => <button key={source.id} type="button" aria-pressed={selectedSourceId === source.id} onClick={() => setSelectedSourceId(source.id)} className={selectedSourceId === source.id ? "shrink-0 rounded-full bg-foreground px-3.5 py-2 text-sm text-background" : "shrink-0 rounded-full border border-border px-3.5 py-2 text-sm text-muted-foreground hover:border-primary hover:text-foreground"}>{source.name} ({source.count})</button>)}
+        <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto pb-1" role="group" aria-label="RSS sources">
+          <button type="button" aria-pressed={selectedSourceId === null} onClick={() => setSelectedSourceId(null)} className={selectedSourceId === null ? "rounded-full bg-foreground px-3.5 py-2 text-sm text-background" : "rounded-full border border-border px-3.5 py-2 text-sm text-muted-foreground hover:border-primary hover:text-foreground"}>All sources ({allTotal})</button>
+          {sources.map((source) => <button key={source.id} type="button" aria-pressed={selectedSourceId === source.id} onClick={() => setSelectedSourceId(source.id)} className={selectedSourceId === source.id ? "rounded-full bg-foreground px-3.5 py-2 text-sm text-background" : "rounded-full border border-border px-3.5 py-2 text-sm text-muted-foreground hover:border-primary hover:text-foreground"}>{source.name} ({source.count})</button>)}
         </div>
+        {sources.length > 12 && <p className="mt-1.5 text-[11px] text-muted-foreground">{sources.length} sources, biggest backlog first. Scroll the box for the rest.</p>}
       </div>
       {notice && <p role="status" className="mb-4 rounded-xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
       {error && <p role="alert" className="mb-4 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
