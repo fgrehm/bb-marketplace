@@ -14,7 +14,7 @@ import {
 } from "./model-scope";
 import { UpdateActions } from "./update-actions";
 import { BehaviorSettings } from "./behavior-settings";
-import { TitleServiceSettings } from "./title-service-settings";
+import { TextServiceSettings } from "./title-service-settings";
 
 const FIELD_CLASS = "w-full rounded-md border border-input bg-background px-2 py-1";
 /** Sentinel for a saved model that Pi's available list does not contain. */
@@ -503,8 +503,8 @@ export function PiSettingsPanel() {
     </section>
 
     <section className="space-y-4">
-      <h3 className="font-medium">Thread titles</h3>
-      <TitleServiceSettings models={models} />
+      <h3 className="font-medium">Thread titles and commit messages</h3>
+      <TextServiceSettings models={models} />
     </section>
 
     <section className="space-y-3">

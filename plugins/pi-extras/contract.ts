@@ -66,8 +66,8 @@ const usageSourceSchema = z.object({
   windows: z.array(usageWindowSchema),
 }).strict();
 
-const titleResultSchema = z
-  .object({ title: z.string().min(1), model: z.string().nullable() })
+const textResultSchema = z
+  .object({ text: z.string().min(1), model: z.string().nullable() })
   .strict();
 
 const titleServiceStatusSchema = z.discriminatedUnion("ready", [
@@ -75,7 +75,9 @@ const titleServiceStatusSchema = z.discriminatedUnion("ready", [
   z.object({ ready: z.literal(false), message: z.string().min(1) }).strict(),
 ]);
 
-const titleSettingsSchema = z.object({ titleModel: z.string() }).strict();
+const titleSettingsSchema = z
+  .object({ titleModel: z.string(), commitModel: z.string() })
+  .strict();
 
 export const piExtrasHostContract = defineRpcContract({
   readUsage: {
@@ -87,12 +89,12 @@ export const piExtrasHostContract = defineRpcContract({
   update: { input: updateSchema, output: z.object({ ok: z.boolean(), output: z.string() }).strict() },
   listModels: { input: z.object({}).strict(), output: modelListSchema },
   /**
-   * One bb titling prompt, answered by pi on the host that has pi installed.
-   * `model` is a `provider/id`, or null to use pi's own default.
+   * One bb text-completion prompt, answered by pi on the host that has pi
+   * installed. `model` is a `provider/id`, or null to use pi's own default.
    */
-  generateTitle: {
+  generateText: {
     input: z.object({ prompt: z.string().min(1), model: z.string().nullable() }).strict(),
-    output: titleResultSchema,
+    output: textResultSchema,
   },
   /** Whether pi can answer at all, for the AI services picker. */
   probeTitleService: {
@@ -116,7 +118,7 @@ export const piExtrasRpcContract = defineRpcContract({
     input: z.object({ force: z.boolean().optional() }).strict(),
     output: modelListSchema,
   },
-  /** The configured title model, empty when pi's own default is used. */
+  /** Per-task text models; an empty commit model falls back to the title model. */
   readTitleSettings: { input: z.object({}).strict(), output: titleSettingsSchema },
   writeTitleSettings: { input: titleSettingsSchema, output: titleSettingsSchema },
   /** The same cached readiness answer the AI services picker receives. */

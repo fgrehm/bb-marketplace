@@ -3,10 +3,25 @@ import { piExtrasHostContract, piExtrasRpcContract } from "./contract.js";
 import { unavailablePiUsage } from "./usage.js";
 import usagePagePlugin from "./usage-page/server.js";
 
+import { isCommitPrompt } from "./pi-title.js";
+
 const TITLE_STATUS_TTL_MS = 30_000;
 
 export default function plugin(bb: BbPluginApi): void {
   const host = bb.hosts.experimental_client({ contract: piExtrasHostContract });
+
+  /**
+   * Both text models live in plugin storage rather than `bb.settings.define`,
+   * which BB renders as its own plain text inputs and would duplicate the
+   * pickers below.
+   */
+  const readTextSettings = async (): Promise<{ titleModel: string; commitModel: string }> => {
+    const [titleModel, commitModel] = await Promise.all([
+      bb.storage.kv.get<string>("titleModel"),
+      bb.storage.kv.get<string>("commitModel"),
+    ]);
+    return { titleModel: titleModel ?? "", commitModel: commitModel ?? "" };
+  };
 
   let titleStatus: { fetchedAt: number; result: { ready: true } } | null = null;
 
@@ -28,16 +43,24 @@ export default function plugin(bb: BbPluginApi): void {
     id: "pi",
     displayName: "Pi",
     async complete(prompt, { signal }) {
-      const titleModel = await bb.storage.kv.get<string>("titleModel") ?? "";
+      // BB offers one `complete` for both tasks and passes no task id, so the
+      // prompt decides which model to use. A commit prompt is long, and a slow
+      // model misses BB's five-second budget, so the commit model is
+      // configurable and falls back to the title model.
+      const commit = isCommitPrompt(prompt);
+      const { titleModel, commitModel } = await readTextSettings();
+      const model = (commit ? commitModel || titleModel : titleModel).trim() || null;
       const hostId = (await bb.sdk.system.config()).primaryHostId;
       if (!hostId) throw new Error("No primary BB machine is configured.");
       const result = await host.call(
-        "generateTitle",
-        { prompt, model: titleModel.trim() || null },
+        "generateText",
+        { prompt, model },
         { hostId, signal },
       );
-      bb.log.info(`thread title generated with ${result.model ?? "an unnamed model"}`);
-      return result.title;
+      bb.log.info(
+        `${commit ? "commit message" : "thread title"} generated with ${result.model ?? "an unnamed model"}`,
+      );
+      return result.text;
     },
     status: probeTitleService,
   });
@@ -116,12 +139,14 @@ export default function plugin(bb: BbPluginApi): void {
       return probeTitleService();
     },
     async readTitleSettings() {
-      const titleModel = await bb.storage.kv.get<string>("titleModel");
-      return { titleModel: titleModel ?? "" };
+      return readTextSettings();
     },
     async writeTitleSettings(input) {
-      await bb.storage.kv.set("titleModel", input.titleModel);
-      return { titleModel: input.titleModel };
+      await Promise.all([
+        bb.storage.kv.set("titleModel", input.titleModel),
+        bb.storage.kv.set("commitModel", input.commitModel),
+      ]);
+      return { titleModel: input.titleModel, commitModel: input.commitModel };
     },
     async refreshUsage(input) {
       const force = input?.force === true;

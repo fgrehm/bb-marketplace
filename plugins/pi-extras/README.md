@@ -73,11 +73,11 @@ Two consequences shape the panel:
 
 The scope editor is driven by the same available-model list. It writes exact `provider/id` references, drops globs you have changed, keeps globs that still cover your selection, keeps patterns that match nothing (Pi warns and skips those, and a model may return), and omits `enabledModels` entirely when every available model is selected, which is how Pi stores "no scope".
 
-### Thread titles
+### Thread titles and commit messages
 
-To enable generated titles, select **Pi** for thread titles under **BB Settings → AI services**. BB's Automatic choice does not select third-party plugins. With no selected AI service, BB shows a prompt-text fallback in the sidebar.
+Select **Pi** independently for thread titles and commit messages under **BB Settings → AI services**. BB's Automatic choice does not select third-party plugins. If Pi is selected for commit messages, its generated subject is cleaned and limited to 72 columns; if generation fails or exceeds the time limit, BB uses its normal fallback.
 
-The **Thread titles** section of Pi settings lets you choose an available `provider/id` model, independently of BB's thread model and Pi's global defaults. Leaving it unset uses Pi's own default. The service runs on the primary BB machine, where Pi and its credentials must be available. BB creates the prompt and cleans the answer; this plugin passes it to Pi. If Pi fails or exceeds the time limit, BB uses its normal fallback.
+The **Thread titles** section of Pi settings lets you choose available `provider/id` models for titles and commits, independently of BB's thread model and Pi's global defaults. The commit model defaults to the title model, but can be overridden because commit prompts include a diff and may take longer. An unset title model uses Pi's own default. The service runs on the primary BB machine, where Pi and its credentials must be available. BB creates and cleans both prompts; this plugin passes them to Pi.
 
 ## Design decisions
 
@@ -101,9 +101,9 @@ pi --mode rpc --session ~/.bb/pi-bridge-sessions/pi_<uuid>.jsonl \
 
 One more thing the same argument list shows: BB always passes `--session-dir`, so Pi's own `sessionDir` setting cannot move where BB keeps its sessions.
 
-### Title generation
+### Helper model selection
 
-The title model is stored as a BB plugin setting rather than in Pi's `settings.json`, because changing Pi's defaults would also affect standalone Pi runs. An unset value uses Pi's default. Reconsider if Pi gains a dedicated helper-model setting.
+Title and commit models are stored in `bb.storage.kv` rather than Pi's `settings.json`, because changing Pi's defaults would also affect standalone Pi runs. A commit model left unset falls back to the title model; an unset title model uses Pi's default. The BB `complete()` API provides no task identifier, so the plugin distinguishes the commit prompt from the title prompt by the commit template's `Shortstat:` and `Files (name-status):` sections. Revisit this if BB adds task-specific AI service declarations.
 
 BB sends a rendered prompt containing instructions followed by `Task:` and the user's text. As one user message it produced a title about the instructions; separating the instructions into Pi's system prompt fixed that. The splitter uses the first `Task:` section marker, since the user's text can contain another. If BB changes this prompt format, the plugin sends the string unsplit. Reconsider if BB passes instructions and task separately.
 

@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Pi",
-    "description": "Shows Pi usage, manages global Pi settings and updates, and automatically names new threads when selected as an AI service.",
+    "description": "Shows Pi usage, manages global Pi settings and updates, and generates thread titles and commit messages when selected for each task.",
     "branding": {
       "icon": "ChartNoAxesCombined"
     },

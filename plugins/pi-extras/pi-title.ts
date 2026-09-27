@@ -2,15 +2,30 @@
 // contain "Task:", so only split at the first section marker.
 const TASK_MARKER = "\nTask:\n";
 
-export function splitTitlePrompt(prompt: string): { instructions: string; task: string } | null {
+/**
+ * BB's `complete()` is one function for both thread titles and commit messages
+ * and passes no task argument, so the prompt is the only signal. The commit
+ * template is distinctive: it is the only one that names a commit message and
+ * carries the diff sections. Anything unrecognised is treated as a title,
+ * which is the older and more common path.
+ */
+export function isCommitPrompt(prompt: string): boolean {
+  return (
+    prompt.includes("commit message") &&
+    prompt.includes("Shortstat:") &&
+    prompt.includes("Files (name-status):")
+  );
+}
+
+export function splitTextPrompt(prompt: string): { instructions: string; task: string } | null {
   const index = prompt.indexOf(TASK_MARKER);
   if (index < 0) return null;
   const task = prompt.slice(index + TASK_MARKER.length);
   return task.trim() ? { instructions: prompt.slice(0, index).trim(), task } : null;
 }
 
-export function titleServiceArgs({ prompt, model }: { prompt: string; model: string | null }): string[] {
-  const parts = splitTitlePrompt(prompt);
+export function textServiceArgs({ prompt, model }: { prompt: string; model: string | null }): string[] {
+  const parts = splitTextPrompt(prompt);
   const args = [
     "-p", "--mode", "json", "--no-tools", "--no-session", "--no-approve",
     "--no-context-files", "--no-skills", "--no-prompt-templates", "--thinking", "off",
@@ -26,7 +41,7 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 /** Pick the last usable assistant answer from Pi's JSONL agent_end events. */
-export function parseTitleEnvelope(stdout: string): { text: string; model: string | null } | null {
+export function parseTextEnvelope(stdout: string): { text: string; model: string | null } | null {
   let answer: { text: string; model: string | null } | null = null;
   for (const line of stdout.split("\n")) {
     if (!line.trim().startsWith("{")) continue;
