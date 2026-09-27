@@ -3,6 +3,18 @@ import { describe, expect, it, vi } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
 
+// Hoisted to module scope: vitest lifts `vi.mock` out of the surrounding
+// `describe` on its own, so declaring it here only states what already
+// happens. The rest of `./lib/sem` stays real, and each test sets the
+// behavior it needs on `runEntityDiff`.
+vi.mock("./lib/sem", async () => {
+  const actual = await vi.importActual("./lib/sem");
+  return {
+    ...(actual as object),
+    runEntityDiff: vi.fn(),
+  };
+});
+
 function parseToolResult(result: any) {
   return JSON.parse(
     typeof result === "string"
@@ -1823,14 +1835,6 @@ describe("Review Workspace server", () => {
 });
 
 describe("entity summary (experimental, sem)", () => {
-  vi.mock("./lib/sem", async () => {
-    const actual = await vi.importActual("./lib/sem");
-    return {
-      ...(actual as object),
-      runEntityDiff: vi.fn(),
-    };
-  });
-
   it("computes the whole revision with a single sem run and caches it", async () => {
     const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
       runEntityDiff: ReturnType<typeof vi.fn>;
