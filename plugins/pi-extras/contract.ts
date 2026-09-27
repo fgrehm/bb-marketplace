@@ -22,11 +22,38 @@ const modelListSchema = z.object({
   error: z.string().nullable(),
 }).strict();
 
+const nullableFlag = z.boolean().nullable();
+const nullableCount = z.number().int().nonnegative().nullable();
+
+/**
+ * Every field is nullable, and null means the key is absent from settings.json so
+ * Pi applies its own default. The panel shows Pi's documented default as a
+ * placeholder rather than writing it out.
+ *
+ * These are the global settings BB does not pass when it starts a thread, so
+ * Pi's values are what a BB thread runs with. BB passes model, reasoning level,
+ * instructions, and session directory itself, and it does its own message
+ * queueing, which is why the rest of Pi's global surface is left alone.
+ */
 const piSettingsSchema = z.object({
   defaultProvider: z.string().nullable(),
   defaultModel: z.string().nullable(),
   defaultThinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable(),
   enabledModels: z.array(z.string()),
+  compaction: z.object({
+    enabled: nullableFlag,
+    reserveTokens: nullableCount,
+    keepRecentTokens: nullableCount,
+  }).strict(),
+  httpIdleTimeoutMs: nullableCount,
+  shell: z.object({
+    shellPath: z.string().nullable(),
+    shellCommandPrefix: z.string().nullable(),
+  }).strict(),
+  telemetry: z.object({
+    enableInstallTelemetry: nullableFlag,
+    enableAnalytics: nullableFlag,
+  }).strict(),
 }).strict();
 
 const updateSchema = z.object({ target: z.enum(["models", "plugins", "pinned"]) }).strict();

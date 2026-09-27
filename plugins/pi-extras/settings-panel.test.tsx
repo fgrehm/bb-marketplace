@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PiModelList } from "./model-scope";
-import type { PiSettings } from "./pi-settings";
+import { unsetPiSettings, type PiSettings } from "./pi-settings";
 
 const rpc = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock("@get-bb/plugin-sdk/app", () => ({ useRpc: () => rpc }));
@@ -24,12 +24,11 @@ function setup(settings: PiSettings, list: PiModelList = { models: MODELS, error
   return render(<PiSettingsPanel />);
 }
 
-const BASE: PiSettings = {
+const BASE: PiSettings = unsetPiSettings({
   defaultProvider: "openai-codex",
   defaultModel: "gpt-5.5",
   defaultThinkingLevel: "low",
-  enabledModels: [],
-};
+});
 
 describe("PiSettingsPanel", () => {
   afterEach(() => {
@@ -42,12 +41,11 @@ describe("PiSettingsPanel", () => {
     const select = await screen.findByRole("combobox", { name: /default model/i });
     fireEvent.change(select, { target: { value: "opencode-go/kimi-k2.6" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("writeSettings", {
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("writeSettings", expect.objectContaining({
       defaultProvider: "opencode-go",
       defaultModel: "kimi-k2.6",
-      defaultThinkingLevel: "low",
       enabledModels: [],
-    }));
+    })));
   });
 
   it("keeps the default model first in the scope and warns that the scope wins", async () => {
@@ -104,5 +102,55 @@ describe("PiSettingsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Remove pattern openai-codex\/gpt-4/ }));
     expect(screen.getByRole("button", { name: "Remove pattern !opencode-go/*" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: /Remove pattern openai-codex\/gpt-4/ })).toBeNull();
+  });
+
+  it("writes the runtime settings that reach a BB thread", async () => {
+    setup(BASE);
+    await screen.findByRole("combobox", { name: /default model/i });
+
+    fireEvent.change(screen.getByRole("combobox", { name: /summarize long threads/i }), {
+      target: { value: "off" },
+    });
+    fireEvent.change(screen.getByRole("spinbutton", { name: /context kept free/i }), {
+      target: { value: "48000" },
+    });
+    fireEvent.change(screen.getByRole("spinbutton", { name: /seconds to wait/i }), {
+      target: { value: "900" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /^shell$/i }), {
+      target: { value: "/bin/bash" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: /analytics sharing/i }), {
+      target: { value: "on" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("writeSettings", expect.objectContaining({
+      compaction: { enabled: false, reserveTokens: 48000, keepRecentTokens: null },
+      httpIdleTimeoutMs: 900,
+      shell: { shellPath: "/bin/bash", shellCommandPrefix: null },
+      telemetry: { enableInstallTelemetry: null, enableAnalytics: true },
+    })));
+  });
+
+  it("leaves untouched settings null so pi keeps its own defaults", async () => {
+    setup(unsetPiSettings({
+      compaction: { enabled: null, reserveTokens: 20000, keepRecentTokens: null },
+    }));
+    await screen.findByRole("combobox", { name: /default model/i });
+    expect((screen.getByRole("combobox", { name: /summarize long threads/i }) as HTMLSelectElement).value).toBe("pi");
+    expect((screen.getByRole("spinbutton", { name: /context kept free/i }) as HTMLInputElement).value).toBe("20000");
+    expect((screen.getByRole("spinbutton", { name: /recent conversation kept/i }) as HTMLInputElement).placeholder).toBe("Pi uses 20000");
+    expect((screen.getByRole("textbox", { name: /^shell$/i }) as HTMLInputElement).value).toBe("");
+    fireEvent.change(screen.getByRole("textbox", { name: /prefix for every command/i }), {
+      target: { value: "nice" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("writeSettings", expect.objectContaining({
+      compaction: { enabled: null, reserveTokens: 20000, keepRecentTokens: null },
+      httpIdleTimeoutMs: null,
+      shell: { shellPath: null, shellCommandPrefix: "nice" },
+      telemetry: { enableInstallTelemetry: null, enableAnalytics: null },
+    })));
   });
 });

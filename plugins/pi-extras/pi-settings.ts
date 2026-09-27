@@ -12,7 +12,85 @@ export type PiSettings = {
   defaultModel: string | null;
   defaultThinkingLevel: ThinkingLevel | null;
   enabledModels: string[];
+  compaction: { enabled: boolean | null; reserveTokens: number | null; keepRecentTokens: number | null };
+  httpIdleTimeoutMs: number | null;
+  shell: { shellPath: string | null; shellCommandPrefix: string | null };
+  telemetry: { enableInstallTelemetry: boolean | null; enableAnalytics: boolean | null };
 };
+
+type JsonRecord = Record<string, unknown>;
+
+/** Every setting unset, which is what Pi reads when a key is absent. */
+export function unsetPiSettings(overrides: Partial<PiSettings> = {}): PiSettings {
+  return {
+    defaultProvider: null,
+    defaultModel: null,
+    defaultThinkingLevel: null,
+    enabledModels: [],
+    compaction: { enabled: null, reserveTokens: null, keepRecentTokens: null },
+    httpIdleTimeoutMs: null,
+    shell: { shellPath: null, shellCommandPrefix: null },
+    telemetry: { enableInstallTelemetry: null, enableAnalytics: null },
+    ...overrides,
+  };
+}
+
+/** Where each setting lives in settings.json. A null value deletes the key. */
+const PATHS = {
+  compactionEnabled: "compaction.enabled",
+  compactionReserveTokens: "compaction.reserveTokens",
+  compactionKeepRecentTokens: "compaction.keepRecentTokens",
+  httpIdleTimeoutMs: "httpIdleTimeoutMs",
+  shellPath: "shellPath",
+  shellCommandPrefix: "shellCommandPrefix",
+  enableInstallTelemetry: "enableInstallTelemetry",
+  enableAnalytics: "enableAnalytics",
+} as const;
+
+/** Nested groups the panel owns; only these are pruned when they end up empty. */
+const MANAGED_GROUPS = ["compaction"] as const;
+
+function leaf(raw: JsonRecord, path: string): unknown {
+  return path.split(".").reduce<unknown>(
+    (value, key) => (typeof value === "object" && value !== null ? (value as JsonRecord)[key] : undefined),
+    raw,
+  );
+}
+
+function setLeaf(target: JsonRecord, path: string, value: unknown): void {
+  const keys = path.split(".");
+  let node = target;
+  for (const key of keys.slice(0, -1)) {
+    const next = node[key];
+    if (next === undefined && value === undefined) return;
+    if (typeof next !== "object" || next === null || Array.isArray(next)) {
+      if (value === undefined) return;
+      node[key] = {};
+    }
+    node = node[key] as JsonRecord;
+  }
+  const last = keys[keys.length - 1]!;
+  if (value === undefined) delete node[last];
+  else node[last] = value;
+}
+
+/** Drops a managed group left empty by removals, so an unset group disappears. */
+function pruneEmptyGroups(target: JsonRecord, roots: readonly string[]): void {
+  for (const key of roots) {
+    const value = target[key];
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    if (Object.keys(value).length === 0) delete target[key];
+  }
+}
+
+function asFlag(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function asCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
 
 const execFileAsync = promisify(execFile);
 export function settingsPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -20,24 +98,54 @@ export function settingsPath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export async function readSettings(env = process.env): Promise<PiSettings> {
-  let raw: Record<string, unknown> = {};
-  try { raw = JSON.parse(await readFile(settingsPath(env), "utf8")) as Record<string, unknown>; } catch {}
+  let raw: JsonRecord = {};
+  try { raw = JSON.parse(await readFile(settingsPath(env), "utf8")) as JsonRecord; } catch {}
   return {
     defaultProvider: typeof raw.defaultProvider === "string" ? raw.defaultProvider : null,
     defaultModel: typeof raw.defaultModel === "string" ? raw.defaultModel : null,
-    defaultThinkingLevel: (THINKING_LEVELS as readonly string[]).includes(String(raw.defaultThinkingLevel)) ? raw.defaultThinkingLevel as PiSettings["defaultThinkingLevel"] : null,    enabledModels: Array.isArray(raw.enabledModels) ? raw.enabledModels.filter((value): value is string => typeof value === "string") : [],
+    defaultThinkingLevel: (THINKING_LEVELS as readonly string[]).includes(String(raw.defaultThinkingLevel)) ? raw.defaultThinkingLevel as PiSettings["defaultThinkingLevel"] : null,
+    enabledModels: Array.isArray(raw.enabledModels) ? raw.enabledModels.filter((value): value is string => typeof value === "string") : [],
+    compaction: {
+      enabled: asFlag(leaf(raw, PATHS.compactionEnabled)),
+      reserveTokens: asCount(leaf(raw, PATHS.compactionReserveTokens)),
+      keepRecentTokens: asCount(leaf(raw, PATHS.compactionKeepRecentTokens)),
+    },
+    httpIdleTimeoutMs: asCount(leaf(raw, PATHS.httpIdleTimeoutMs)),
+    shell: {
+      shellPath: typeof raw.shellPath === "string" ? raw.shellPath : null,
+      shellCommandPrefix: typeof raw.shellCommandPrefix === "string" ? raw.shellCommandPrefix : null,
+    },
+    telemetry: {
+      enableInstallTelemetry: asFlag(leaf(raw, PATHS.enableInstallTelemetry)),
+      enableAnalytics: asFlag(leaf(raw, PATHS.enableAnalytics)),
+    },
   };
 }
 
 export async function writeSettings(next: PiSettings, env = process.env): Promise<PiSettings> {
   const path = settingsPath(env);
-  let current: Record<string, unknown> = {};
-  try { current = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>; } catch {}
-  const updated = { ...current };
+  let current: JsonRecord = {};
+  try { current = JSON.parse(await readFile(path, "utf8")) as JsonRecord; } catch {}
+  const updated: JsonRecord = { ...current };
   for (const key of ["defaultProvider", "defaultModel", "defaultThinkingLevel", "enabledModels"] as const) {
     if (next[key] === null || (key === "enabledModels" && next[key].length === 0)) delete updated[key];
     else updated[key] = next[key];
   }
+
+  // A null value removes the key so pi applies its own default.
+  const write = (path: string, value: string | number | boolean | null) =>
+    setLeaf(updated, path, value ?? undefined);
+
+  write(PATHS.compactionEnabled, next.compaction.enabled);
+  write(PATHS.compactionReserveTokens, next.compaction.reserveTokens);
+  write(PATHS.compactionKeepRecentTokens, next.compaction.keepRecentTokens);
+  write(PATHS.httpIdleTimeoutMs, next.httpIdleTimeoutMs);
+  write(PATHS.shellPath, next.shell.shellPath);
+  write(PATHS.shellCommandPrefix, next.shell.shellCommandPrefix);
+  write(PATHS.enableInstallTelemetry, next.telemetry.enableInstallTelemetry);
+  write(PATHS.enableAnalytics, next.telemetry.enableAnalytics);
+  pruneEmptyGroups(updated, MANAGED_GROUPS);
+
   await mkdir(dirname(path), { recursive: true });
   const temp = `${path}.tmp-${process.pid}`;
   await writeFile(temp, `${JSON.stringify(updated, null, 2)}\n`, "utf8");

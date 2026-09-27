@@ -121,7 +121,7 @@ export default definePluginApp((app) => {
   app.slots.settingsSection({
     id: "pi-settings",
     title: "Pi Settings",
-    description: "Configure global Pi model defaults and updates.",
+    description: "Global Pi defaults, long-thread summarization, shell, and reporting.",
     component: PiSettingsPanel,
   });
   app.slots.navPanel({

@@ -13,6 +13,7 @@ import {
   type PiModelSummary,
 } from "./model-scope";
 import { UpdateActions } from "./update-actions";
+import { BehaviorSettings } from "./behavior-settings";
 
 const FIELD_CLASS = "w-full rounded-md border border-input bg-background px-2 py-1";
 /** Sentinel for a saved model that Pi's available list does not contain. */
@@ -493,6 +494,11 @@ export function PiSettingsPanel() {
             : writtenScope.join("\n")}
         </pre>
       </details>
+    </section>
+
+    <section className="space-y-4">
+      <h3 className="font-medium">Runtime settings</h3>
+      <BehaviorSettings draft={draft} onChange={setDraft} />
     </section>
 
     <section className="space-y-3">
