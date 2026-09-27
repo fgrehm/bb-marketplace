@@ -3,6 +3,7 @@ import { piExtrasHostContract } from "./contract.js";
 import { readPiUsage } from "./usage.js";
 import { readSettings, runPiUpdate, writeSettings } from "./pi-settings.js";
 import { listAvailableModels } from "./pi-models.js";
+import { generateTitle, probeTitleReadiness } from "./pi-title-runner.js";
 
 export default experimental_defineHostEntry({
   contract: piExtrasHostContract,
@@ -12,5 +13,7 @@ export default experimental_defineHostEntry({
     writeSettings: async (next) => writeSettings(next),
     update: async ({ target }) => runPiUpdate(target),
     listModels: async () => listAvailableModels(),
+    generateTitle: async ({ prompt, model }) => generateTitle({ prompt, model }),
+    probeTitleService: async () => probeTitleReadiness(),
   },
 });

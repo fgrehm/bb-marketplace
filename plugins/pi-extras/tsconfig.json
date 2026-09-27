@@ -11,5 +11,5 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": false
   },
-  "include": ["server.ts", "host.ts", "contract.ts", "usage.ts", "app.tsx", "usage.test.ts", "usage-page"]
+  "include": ["server.ts", "host.ts", "contract.ts", "usage.ts", "app.tsx", "usage.test.ts", "pi-title.ts", "pi-title-runner.ts", "pi-title.test.ts", "pi-title-runner.test.ts", "pi-process.ts", "pi-process.test.ts", "title-service-settings.tsx", "title-service-settings.test.tsx", "usage-page"]
 }

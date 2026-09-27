@@ -1,6 +1,6 @@
 # Pi Usage
 
-A local BB plugin that bundles Pi usage views into a single sidebar panel and adds global Pi configuration under BB Settings.
+A local BB plugin that bundles Pi usage views into a single sidebar panel, adds global Pi configuration under BB Settings, and registers Pi as a BB AI service that names new threads.
 
 - **Sessions** - estimated token usage and cost computed from local Pi
   sessions (`~/.pi/agent/sessions` and `~/.bb/pi-bridge-sessions`), adapted
@@ -8,6 +8,8 @@ A local BB plugin that bundles Pi usage views into a single sidebar panel and ad
   (MIT), vendored under `usage-page/` and scoped to Pi only.
 - **Subscriptions** - subscription usage for Pi-managed Codex, OpenCode Go,
   and Ollama Cloud credentials.
+- **Thread titles** - Pi answers BB's thread-titling prompt, so a new thread
+  gets a short name instead of the first 80 columns of its own prompt.
 
 The plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Settings. It is not an agent provider and does not appear in the provider or model pickers. See `THIRD_PARTY_NOTICES.md` at the repository root for full attribution.
 
@@ -71,6 +73,12 @@ Two consequences shape the panel:
 
 The scope editor is driven by the same available-model list. It writes exact `provider/id` references, drops globs you have changed, keeps globs that still cover your selection, keeps patterns that match nothing (Pi warns and skips those, and a model may return), and omits `enabledModels` entirely when every available model is selected, which is how Pi stores "no scope".
 
+### Thread titles
+
+To enable generated titles, select **Pi** for thread titles under **BB Settings → AI services**. BB's Automatic choice does not select third-party plugins. With no selected AI service, BB shows a prompt-text fallback in the sidebar.
+
+The **Thread titles** section of Pi settings lets you choose an available `provider/id` model, independently of BB's thread model and Pi's global defaults. Leaving it unset uses Pi's own default. The service runs on the primary BB machine, where Pi and its credentials must be available. BB creates the prompt and cleans the answer; this plugin passes it to Pi. If Pi fails or exceeds the time limit, BB uses its normal fallback.
+
 ## Design decisions
 
 Checked against pi 0.87.1 and bb 0.44.0 on 2026-09-26. Nothing here is settled: each entry says what would change the answer. It is written down so that reopening any of these questions starts from the evidence rather than re-deriving it, and so the next reader can tell a deliberate decision from an oversight.
@@ -92,6 +100,16 @@ pi --mode rpc --session ~/.bb/pi-bridge-sessions/pi_<uuid>.jsonl \
 `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, and `enabledModels` only affect standalone `pi` runs. They stay in the panel because that is a legitimate thing to want to configure from BB, not because they change how a BB thread behaves, and the panel says so where it matters. Reconsider if BB ever stops passing `--model` and `--thinking`.
 
 One more thing the same argument list shows: BB always passes `--session-dir`, so Pi's own `sessionDir` setting cannot move where BB keeps its sessions.
+
+### Title generation
+
+The title model is stored as a BB plugin setting rather than in Pi's `settings.json`, because changing Pi's defaults would also affect standalone Pi runs. An unset value uses Pi's default. Reconsider if Pi gains a dedicated helper-model setting.
+
+BB sends a rendered prompt containing instructions followed by `Task:` and the user's text. As one user message it produced a title about the instructions; separating the instructions into Pi's system prompt fixed that. The splitter uses the first `Task:` section marker, since the user's text can contain another. If BB changes this prompt format, the plugin sends the string unsplit. Reconsider if BB passes instructions and task separately.
+
+Pi runs in print/JSON mode with `--no-tools --no-session --no-approve --no-context-files --no-skills --no-prompt-templates --thinking off`. BB has a five-second title budget; the plugin gives Pi four seconds. The shared process runner closes stdin immediately (print mode otherwise waits for EOF), bounds output, and kills the process on timeout or cancellation. The same runner handles Pi's model-list RPC.
+
+Readiness asks Pi for available models with a short timeout, and caches only positive answers for thirty seconds. The settings panel and the AI service use the same check. A model may later become unavailable; BB's ordinary prompt-text fallback covers a failed completion.
 
 ### Exposed on purpose
 

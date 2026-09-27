@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Pi",
-    "description": "Shows Pi usage and configures global Pi model settings and updates.",
+    "description": "Shows Pi usage, manages global Pi settings and updates, and automatically names new threads when selected as an AI service.",
     "branding": {
       "icon": "ChartNoAxesCombined"
     },
@@ -19,8 +19,8 @@
     "skills": []
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test usage.test.ts pi-settings.test.ts pi-models.test.ts",
-    "test:components": "vitest run update-actions.test.tsx settings-panel.test.tsx",
+    "test": "node --experimental-strip-types --test usage.test.ts pi-settings.test.ts pi-models.test.ts pi-title.test.ts pi-title-runner.test.ts pi-process.test.ts",
+    "test:components": "vitest run update-actions.test.tsx settings-panel.test.tsx title-service-settings.test.tsx",
     "lint": "tsc --noEmit",
     "build": "bb plugin build"
   },
@@ -31,7 +31,7 @@
     "zod": "^4.6.2"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.56",
+    "@get-bb/plugin-sdk": "0.5.29",
     "@pierre/diffs": "^1.4.2",
     "@radix-ui/react-alert-dialog": "^1.1.23",
     "@radix-ui/react-context-menu": "^2.3.7",

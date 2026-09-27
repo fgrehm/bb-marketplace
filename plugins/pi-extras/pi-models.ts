@@ -1,5 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { PiModelList, PiModelSummary } from "./model-scope.js";
+import { runProcess } from "./pi-process.ts";
 
 function compareModels(left: PiModelSummary, right: PiModelSummary): number {
   const byProvider = left.provider.localeCompare(right.provider);
@@ -74,70 +74,30 @@ export function parseAvailableModels(stdout: string): PiModelSummary[] {
 }
 
 export async function listAvailableModels(env: NodeJS.ProcessEnv = process.env): Promise<PiModelList> {
-  return new Promise<PiModelList>((resolve) => {
-    let child: ChildProcessWithoutNullStreams;
-    try {
-      child = spawn("pi", ["--mode", "rpc", "--no-session"], { env, stdio: "pipe" });
-    } catch (error) {
-      resolve({ models: [], error: `Unable to run pi: ${error instanceof Error ? error.message : String(error)}` });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const finish = (list: PiModelList) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.stdin.end();
-      child.kill();
-      resolve(list);
-    };
-    const timer = setTimeout(
-      () => finish({ models: [], error: "Timed out reading the Pi model list." }),
-      RPC_TIMEOUT_MS,
-    );
-
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-      if (stdout.length <= MAX_STDOUT_BYTES) return;
-      child.kill();
-      finish({ models: [], error: "The Pi model list was too large to read." });
-    });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      stderr = `${stderr}${chunk}`.slice(-2000);
-    });
-
-    child.on("error", (error) => finish({ models: [], error: `Unable to run pi: ${error.message}` }));
-    child.on("close", (code) => {
-      let models: PiModelSummary[];
-      try {
-        models = parseAvailableModels(stdout);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        const detail = stderr.trim();
-        finish({ models: [], error: detail ? `${reason} ${detail}` : reason });
-        return;
-      }
-      if (models.length === 0) {
-        const detail = stderr.trim();
-        finish({
-          models: [],
-          error: code === 0
-            ? detail || "Pi reported no available models. Sign in with /login or refresh the model catalog."
-            : `pi exited with code ${code ?? "unknown"}. ${detail}`.trim(),
-        });
-        return;
-      }
-      finish({ models, error: null });
-    });
-
-    child.stdin.on("error", () => {
-      /* Pi may exit before reading the command; the close handler reports why. */
-    });
-    child.stdin.end(`${JSON.stringify({ id: RPC_REQUEST_ID, type: "get_available_models" })}\n`);
+  const result = await runProcess("pi", ["--mode", "rpc", "--no-session"], {
+    env,
+    input: `${JSON.stringify({ id: RPC_REQUEST_ID, type: "get_available_models" })}\n`,
+    timeoutMs: RPC_TIMEOUT_MS,
+    maxStdoutBytes: MAX_STDOUT_BYTES,
   });
+  if (result.timedOut) return { models: [], error: "Timed out reading the Pi model list." };
+  if (result.error) return { models: [], error: result.error };
+  let models: PiModelSummary[];
+  try {
+    models = parseAvailableModels(result.stdout);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const detail = result.stderr.trim();
+    return { models: [], error: detail ? `${reason} ${detail}` : reason };
+  }
+  if (models.length === 0) {
+    const detail = result.stderr.trim();
+    return {
+      models: [],
+      error: result.code === 0
+        ? detail || "Pi reported no available models. Sign in with /login or refresh the model catalog."
+        : `pi exited with code ${result.code ?? "unknown"}. ${detail}`.trim(),
+    };
+  }
+  return { models, error: null };
 }

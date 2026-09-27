@@ -3,8 +3,50 @@ import { piExtrasHostContract, piExtrasRpcContract } from "./contract.js";
 import { unavailablePiUsage } from "./usage.js";
 import usagePagePlugin from "./usage-page/server.js";
 
+const TITLE_STATUS_TTL_MS = 30_000;
+
 export default function plugin(bb: BbPluginApi): void {
   const host = bb.hosts.experimental_client({ contract: piExtrasHostContract });
+
+  const settings = bb.settings.define({
+    titleModel: { type: "string", label: "Model for generated thread titles", default: "" },
+  });
+
+  let titleStatus: { fetchedAt: number; result: { ready: true } } | null = null;
+
+  // Shared by BB's service picker and the Pi settings panel.
+  async function probeTitleService(): Promise<{ ready: true } | { ready: false; message: string }> {
+    try {
+      const hostId = (await bb.sdk.system.config()).primaryHostId;
+      if (!hostId) return { ready: false, message: "No primary BB machine is configured." };
+      if (titleStatus && Date.now() - titleStatus.fetchedAt < TITLE_STATUS_TTL_MS) return titleStatus.result;
+      const result = await host.call("probeTitleService", {}, { hostId });
+      if (result.ready) titleStatus = { fetchedAt: Date.now(), result };
+      return result;
+    } catch (error) {
+      return { ready: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  const titleService = bb.experimental_aiServices.register({
+    id: "pi",
+    displayName: "Pi",
+    async complete(prompt, { signal }) {
+      const { titleModel } = await settings.get();
+      const hostId = (await bb.sdk.system.config()).primaryHostId;
+      if (!hostId) throw new Error("No primary BB machine is configured.");
+      const result = await host.call(
+        "generateTitle",
+        { prompt, model: titleModel.trim() || null },
+        { hostId, signal },
+      );
+      bb.log.info(`thread title generated with ${result.model ?? "an unnamed model"}`);
+      return result.title;
+    },
+    status: probeTitleService,
+  });
+
+  bb.onDispose(() => titleService.dispose());
 
   let cachedUsage: {
     fetchedAt: number;
@@ -73,6 +115,17 @@ export default function plugin(bb: BbPluginApi): void {
       const result = await fetchModels();
       cachedModels = { fetchedAt: Date.now(), result };
       return result;
+    },
+    async titleServiceStatus() {
+      return probeTitleService();
+    },
+    async readTitleSettings() {
+      const { titleModel } = await settings.get();
+      return { titleModel };
+    },
+    async writeTitleSettings(input) {
+      const { titleModel } = await settings.experimental_set({ titleModel: input.titleModel });
+      return { titleModel };
     },
     async refreshUsage(input) {
       const force = input?.force === true;

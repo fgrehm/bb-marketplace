@@ -50,6 +50,10 @@ Pi-focused usage extras in a single sidebar panel with two tabs:
 - **Subscriptions** - live subscription usage for Pi-managed Codex, OpenCode
   Go, and Ollama Cloud credentials (read from Pi's `auth.json`, never logged
   or displayed), with a short TTL cache for snappy tab switches.
+- **Thread titles** - registers Pi as a BB AI service that answers BB's
+  thread-titling prompt, so a new thread gets a short name instead of the first
+  80 columns of its own prompt. Opt-in under Settings → AI services, with a
+  per-plugin model choice in the settings panel.
 
 ### [Favicon](plugins/favicon) - `favicon`
 
