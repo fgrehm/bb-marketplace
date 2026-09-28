@@ -1,7 +1,6 @@
 # bb-marketplace
 
-A collection of [BB](https://github.com/get-bb/bb) plugins I maintain, installable
-from bb's plugin marketplaces as a third-party catalog.
+A collection of [BB](https://github.com/get-bb/bb) plugins I maintain, installable from bb's plugin marketplaces as a third-party catalog.
 
 ## Install
 
@@ -41,43 +40,25 @@ The joy of missing out: a proof-of-concept feed hoard and reading room with fake
 
 Pi-focused usage extras in a single sidebar panel with two tabs:
 
-- **Sessions** - estimated token usage and cost computed from local Pi session
-  transcripts, broken down by the backend each session used (Codex, OpenCode
-  Go, Ollama Cloud), with per-provider marks. Backed by a durable parse cache
-  and a `bb usage show` CLI. Adapted from
-  [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page),
-  scoped to Pi.
-- **Subscriptions** - live subscription usage for Pi-managed Codex, OpenCode
-  Go, and Ollama Cloud credentials (read from Pi's `auth.json`, never logged
-  or displayed), with a short TTL cache for snappy tab switches.
-- **Thread titles and commit messages** - registers Pi as a BB AI service for
-  both tasks. Select Pi independently for each under Settings → AI services,
-  with separate model choices in the settings panel.
+- **Sessions** - estimated token usage and cost computed from local Pi session transcripts, broken down by the backend each session used (Codex, OpenCode Go, Ollama Cloud), with per-provider marks. Backed by a durable parse cache and a `bb usage show` CLI. Adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page), scoped to Pi.
+- **Subscriptions** - live subscription usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud credentials (read from Pi's `auth.json`, never logged or displayed), with a short TTL cache for snappy tab switches.
+- **Thread titles and commit messages** - registers Pi as a BB AI service for both tasks. Select Pi independently for each under Settings → AI services, with separate model choices in the settings panel.
 
 ### [Favicon](plugins/favicon) - `favicon`
 
-Replaces the browser tab favicon with uploaded light/dark SVG artwork. Reacts
-to bb's theme changes; artwork is managed from the plugin's settings section.
+Replaces the browser tab favicon with uploaded light/dark SVG artwork. Reacts to bb's theme changes; artwork is managed from the plugin's settings section.
 
 ### [Review Workspace](plugins/review-workspace) - `review-workspace`
 
-Diff-first asynchronous review workspaces inside a thread: snapshots the
-environment's uncommitted changes as immutable revisions, lets a reviewer
-select exact line ranges in the diff and anchor comments, carry comments
-forward to refreshed revisions, and send a batch of feedback to the agent in
-the parent thread.
+Diff-first asynchronous review workspaces inside a thread: snapshots the environment's uncommitted changes as immutable revisions, lets a reviewer select exact line ranges in the diff and anchor comments, carry comments forward to refreshed revisions, and send a batch of feedback to the agent in the parent thread.
 
 ### [Bulk Archive](plugins/bulk-archive) - `bulk-archive`
 
-A mobile-first settings panel for selecting and archiving multiple inactive
-threads at once - filter by project, title, and inactivity period; archiving a
-parent also archives its children.
+A mobile-first settings panel for selecting and archiving multiple inactive threads at once - filter by project, title, and inactivity period; archiving a parent also archives its children.
 
 ## Repo layout
 
-Each plugin is self-contained under `plugins/<id>/` with its own
-`package.json` and lockfile (pnpm). [`marketplace.json`](marketplace.json) at
-the root is the catalog bb reads. Future plugin releases will be resolved from git tags like `favicon/0.1.0` (subdirectory and tag prefix per plugin).
+Each plugin is self-contained under `plugins/<id>/` with its own `package.json` and lockfile (pnpm). [`marketplace.json`](marketplace.json) at the root is the catalog bb reads. Future plugin releases will be resolved from git tags like `favicon/0.1.0` (subdirectory and tag prefix per plugin).
 
 ## Development
 

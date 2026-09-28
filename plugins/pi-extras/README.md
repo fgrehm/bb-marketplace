@@ -2,14 +2,9 @@
 
 A local BB plugin that bundles Pi usage views into a single sidebar panel, adds global Pi configuration under BB Settings, and registers Pi as a BB AI service that names new threads.
 
-- **Sessions** - estimated token usage and cost computed from local Pi
-  sessions (`~/.pi/agent/sessions` and `~/.bb/pi-bridge-sessions`), adapted
-  from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page)
-  (MIT), vendored under `usage-page/` and scoped to Pi only.
-- **Subscriptions** - subscription usage for Pi-managed Codex, OpenCode Go,
-  and Ollama Cloud credentials.
-- **Thread titles** - Pi answers BB's thread-titling prompt, so a new thread
-  gets a short name instead of the first 80 columns of its own prompt.
+- **Sessions** - estimated token usage and cost computed from local Pi sessions (`~/.pi/agent/sessions` and `~/.bb/pi-bridge-sessions`), adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page) (MIT), vendored under `usage-page/` and scoped to Pi only.
+- **Subscriptions** - subscription usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud credentials.
+- **Thread titles** - Pi answers BB's thread-titling prompt, so a new thread gets a short name instead of the first 80 columns of its own prompt.
 
 The plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Settings. It is not an agent provider and does not appear in the provider or model pickers. See `THIRD_PARTY_NOTICES.md` at the repository root for full attribution.
 
@@ -29,14 +24,9 @@ The plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Settings. It 
 
 ## Subscriptions tab
 
-The host worker reads Pi's `auth.json` from `$PI_CODING_AGENT_DIR/auth.json`,
-or `~/.pi/agent/auth.json` when that variable is unset. It reads credentials
-only and never logs, displays, refreshes, or modifies them.
+The host worker reads Pi's `auth.json` from `$PI_CODING_AGENT_DIR/auth.json`, or `~/.pi/agent/auth.json` when that variable is unset. It reads credentials only and never logs, displays, refreshes, or modifies them.
 
-Missing credentials are shown as "not configured", so the plugin remains
-usable when only some providers are set up. An unreadable or malformed auth
-file is reported as an error. Codex authentication failures are shown as
-expired and should be refreshed through Pi.
+Missing credentials are shown as "not configured", so the plugin remains usable when only some providers are set up. An unreadable or malformed auth file is reported as an error. Codex authentication failures are shown as expired and should be refreshed through Pi.
 
 The Codex and Ollama usage endpoints are undocumented and may change.
 
@@ -107,7 +97,11 @@ Title and commit models are stored in `bb.storage.kv` rather than Pi's `settings
 
 BB sends a rendered prompt containing instructions followed by `Task:` and the user's text. As one user message it produced a title about the instructions; separating the instructions into Pi's system prompt fixed that. The splitter uses the first `Task:` section marker, since the user's text can contain another. If BB changes this prompt format, the plugin sends the string unsplit. Reconsider if BB passes instructions and task separately.
 
-Pi runs in print/JSON mode with `--no-tools --no-session --no-approve --no-context-files --no-skills --no-prompt-templates --thinking off`. BB has a five-second title budget; the plugin gives Pi four seconds. The shared process runner closes stdin immediately (print mode otherwise waits for EOF), bounds output, and kills the process on timeout or cancellation. The same runner handles Pi's model-list RPC.
+Pi runs in print mode with `--no-tools --no-session --no-approve --no-context-files --no-skills --no-prompt-templates --thinking off`. **Text mode, not JSON.** JSON mode replays the whole conversation on stdout, and a commit prompt already carries the diff, so the echo runs to roughly three and a half times the prompt. Measured on a 21 KB diff: 77 KB of JSON events against 52 bytes of text, which overran the output cap and made BB fall back to `bb: automated commit` for every large commit. The same commit message answered in 2.0s in text mode. The cost is that Pi stops reporting which model answered, so the log line names the requested model. Reconsider if Pi grows a flag for JSON output without the echo, or a way to report the model it used.
+
+Because text mode returns the model's raw line, this plugin no longer parses or trims the reply; it only strips the trailing newline and rejects an empty answer. BB owns the cleanup for both tasks, stripping quotes and extra lines for a title and clamping a commit subject to 72 columns. If a generated title or commit subject ever looks wrong, BB's sanitizer is the thing to look at first.
+
+BB has a five-second budget for both text tasks; the plugin gives Pi four. The shared process runner closes stdin immediately (print mode otherwise waits for EOF), caps output as a runaway guard, and kills the process on timeout or cancellation. The same runner handles Pi's model-list RPC.
 
 Readiness asks Pi for available models with a short timeout, and caches only positive answers for thirty seconds. The settings panel and the AI service use the same check. A model may later become unavailable; BB's ordinary prompt-text fallback covers a failed completion.
 
@@ -162,5 +156,4 @@ pnpm run lint
 bb plugin install . --yes
 ```
 
-Tests use fake file reads and fake HTTP responses. They make no network calls
-and never read your Pi credentials.
+Tests use fake file reads and fake HTTP responses. They make no network calls and never read your Pi credentials.
