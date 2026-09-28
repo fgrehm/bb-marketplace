@@ -19,7 +19,7 @@
     "skills": []
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test usage.test.ts pi-settings.test.ts pi-models.test.ts pi-title.test.ts pi-title-runner.test.ts pi-process.test.ts",
+    "test": "node --experimental-strip-types --test usage.test.ts pi-settings.test.ts pi-models.test.ts pi-title.test.ts pi-title-runner.test.ts pi-session.test.ts pi-process.test.ts",
     "test:components": "vitest run update-actions.test.tsx settings-panel.test.tsx title-service-settings.test.tsx",
     "lint": "tsc --noEmit",
     "build": "bb plugin build"

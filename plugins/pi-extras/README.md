@@ -2,7 +2,7 @@
 
 A local BB plugin that bundles Pi usage views into a single sidebar panel, adds global Pi configuration under BB Settings, and registers Pi as a BB AI service that names new threads.
 
-- **Sessions** - estimated token usage and cost computed from local Pi sessions (`~/.pi/agent/sessions` and `~/.bb/pi-bridge-sessions`), adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page) (MIT), vendored under `usage-page/` and scoped to Pi only.
+- **Sessions** - estimated token usage and cost computed from local Pi sessions (`~/.pi/agent/sessions`, `~/.bb/pi-bridge-sessions`, and Pi-extras helper traces in `~/.bb/pi-extras-sessions`), adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page) (MIT), vendored under `usage-page/` and scoped to Pi only.
 - **Subscriptions** - subscription usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud credentials.
 - **Thread titles** - Pi answers BB's thread-titling prompt, so a new thread gets a short name instead of the first 80 columns of its own prompt.
 
@@ -101,7 +101,7 @@ Pi runs in print mode with `--no-tools --no-session --no-approve --no-context-fi
 
 Because text mode returns the model's raw line, this plugin no longer parses or trims the reply; it only strips the trailing newline and rejects an empty answer. BB owns the cleanup for both tasks, stripping quotes and extra lines for a title and clamping a commit subject to 72 columns. If a generated title or commit subject ever looks wrong, BB's sanitizer is the thing to look at first.
 
-BB has a five-second budget for both text tasks; the plugin gives Pi four. The shared process runner closes stdin immediately (print mode otherwise waits for EOF), caps output as a runaway guard, and kills the process on timeout or cancellation. The same runner handles Pi's model-list RPC.
+BB has a five-second budget for both text tasks; the plugin gives Pi four. Each title or commit helper call writes a named trace (`pi-extras-title-...` or `pi-extras-commit-...`) to `~/.bb/pi-extras-sessions`, separate from BB-managed bridge sessions. The usage scanner includes this directory alongside Pi's other session directories. The shared process runner closes stdin immediately (print mode otherwise waits for EOF), caps output as a runaway guard, and kills the process on timeout or cancellation. The same runner handles Pi's model-list RPC.
 
 Readiness asks Pi for available models with a short timeout, and caches only positive answers for thirty seconds. The settings panel and the AI service use the same check. A model may later become unavailable; BB's ordinary prompt-text fallback covers a failed completion.
 

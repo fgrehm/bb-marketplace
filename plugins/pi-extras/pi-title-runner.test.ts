@@ -12,17 +12,19 @@ const fake = (result: ProcessResult): ProcessRunner => async () => result;
 test("returns the trimmed text pi printed", async () => {
   let args: string[] = [];
   const run: ProcessRunner = async (_command, supplied) => { args = supplied; return outcome(); };
-  assert.deepEqual(await generateText({ prompt, model: "openai-codex/gpt-6-luna", run }), {
-    text: "Add a title prompt",
-  });
+  assert.deepEqual(await generateText({
+    prompt, model: "openai-codex/gpt-6-luna", run, sessionDir: "/tmp",
+  }), { text: "Add a title prompt" });
   assert.equal(args[args.indexOf("--model") + 1], "openai-codex/gpt-6-luna");
+  assert.match(args[args.indexOf("--session") + 1], /pi-extras-title-.*\.jsonl$/);
+  assert.equal(args[args.indexOf("--session-dir") + 1], "/tmp");
   assert.equal(args[args.indexOf("--system-prompt") + 1], "You create concise titles.");
   assert.equal(args.at(-1), "Task:\nAdd a title prompt");
 });
 
 test("keeps a multi-line answer for bb to clean", async () => {
   const noisy = outcome({ stdout: '"Quoted title"\n\nAn explanation.\n' });
-  const result = await generateText({ prompt, model: null, run: fake(noisy) });
+  const result = await generateText({ prompt, model: null, run: fake(noisy), sessionDir: "/tmp" });
   // pi-extras must not parse or rewrite the reply; bb strips quotes and extra
   // lines for a title and clamps a commit subject to 72 columns.
   assert.equal(result.text, '"Quoted title"\n\nAn explanation.');
@@ -35,7 +37,7 @@ test("fails closed on timeout, process failure, and an empty answer", async () =
     outcome({ error: "spawn pi ENOENT" }),
     outcome({ stdout: "   \n" }),
   ]) {
-    await assert.rejects(() => generateText({ prompt, model: null, run: fake(result) }));
+    await assert.rejects(() => generateText({ prompt, model: null, run: fake(result), sessionDir: "/tmp" }));
   }
 });
 

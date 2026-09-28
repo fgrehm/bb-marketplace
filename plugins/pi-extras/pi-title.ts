@@ -24,7 +24,12 @@ export function splitTextPrompt(prompt: string): { instructions: string; task: s
   return task.trim() ? { instructions: prompt.slice(0, index).trim(), task } : null;
 }
 
-export function textServiceArgs({ prompt, model }: { prompt: string; model: string | null }): string[] {
+export function textServiceArgs({ prompt, model, sessionPath, sessionDir }: {
+  prompt: string;
+  model: string | null;
+  sessionPath: string;
+  sessionDir: string;
+}): string[] {
   const parts = splitTextPrompt(prompt);
   // Text mode, not JSON: BB renders a commit prompt with the whole diff in it,
   // and JSON mode echoes the entire conversation back on stdout, which is about
@@ -32,7 +37,8 @@ export function textServiceArgs({ prompt, model }: { prompt: string; model: stri
   // 52 bytes of text. BB cleans the reply for both tasks, so the raw line is
   // what we want.
   const args = [
-    "-p", "--mode", "text", "--no-tools", "--no-session", "--no-approve",
+    "-p", "--mode", "text", "--no-tools", "--session", sessionPath,
+    "--session-dir", sessionDir, "--no-approve",
     "--no-context-files", "--no-skills", "--no-prompt-templates", "--thinking", "off",
   ];
   if (model) args.push("--model", model);

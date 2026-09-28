@@ -33,18 +33,27 @@ Patch excerpt:
 });
 
 test("uses text mode so pi does not echo the conversation back", () => {
-  const args = textServiceArgs({ prompt, model: null });
+  const args = textServiceArgs({
+    prompt, model: null,
+    sessionPath: "/tmp/pi-extras-title-test.jsonl",
+    sessionDir: "/tmp/pi-extras-sessions",
+  });
   // JSON mode replays the whole prompt on stdout, which for a commit prompt
   // carrying a diff is several times its own size.
   assert.ok(args.includes("text"), "expected text mode");
   assert.ok(!args.includes("json"), "must not use json mode");
-  for (const flag of ["-p", "--no-tools", "--no-session", "--no-approve",
+  for (const flag of ["-p", "--no-tools", "--session", "--session-dir", "--no-approve",
     "--no-context-files", "--no-skills", "--no-prompt-templates", "--thinking", "off"]) {
     assert.ok(args.includes(flag), `missing ${flag}`);
   }
+  assert.equal(args[args.indexOf("--session") + 1], "/tmp/pi-extras-title-test.jsonl");
+  assert.equal(args[args.indexOf("--session-dir") + 1], "/tmp/pi-extras-sessions");
   assert.equal(args[args.indexOf("--system-prompt") + 1], "You create concise titles.");
   assert.equal(args.at(-1), "Task:\nTask: migrate the billing job");
   assert.ok(!args.includes("--model"));
-  assert.deepEqual(textServiceArgs({ prompt: "Unknown format", model: "provider/model" }).slice(-3),
-    ["--model", "provider/model", "Unknown format"]);
+  assert.deepEqual(textServiceArgs({
+    prompt: "Unknown format", model: "provider/model",
+    sessionPath: "/tmp/pi-extras-title-test.jsonl",
+    sessionDir: "/tmp/pi-extras-sessions",
+  }).slice(-3), ["--model", "provider/model", "Unknown format"]);
 });

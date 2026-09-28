@@ -244,6 +244,7 @@ function windowStartMs(sinceDay: string): number {
 async function resolvePiDirs(): Promise<string[]> {
   const dirs = [
     NodePath.join(NodeOS.homedir(), ".bb", "pi-bridge-sessions"),
+    NodePath.join(NodeOS.homedir(), ".bb", "pi-extras-sessions"),
     NodePath.join(NodeOS.homedir(), ".pi", "agent", "sessions"),
   ];
   const existing: string[] = [];

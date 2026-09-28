@@ -1,5 +1,6 @@
 import { runProcess, type ProcessRunner } from "./pi-process.ts";
-import { textServiceArgs } from "./pi-title.ts";
+import { createTextSessionPath, piBridgeSessionDir, type TextTask } from "./pi-session.ts";
+import { isCommitPrompt, textServiceArgs } from "./pi-title.ts";
 
 /** BB allows five seconds for both text tasks; leave a margin for a busy host. */
 const TEXT_TIMEOUT_MS = 4_000;
@@ -14,14 +15,17 @@ const MAX_TEXT_OUTPUT_BYTES = 256 * 1024;
 interface RunnerOptions {
   run?: ProcessRunner;
   env?: NodeJS.ProcessEnv;
+  sessionDir?: string;
 }
 
-export async function generateText({ prompt, model, signal, run = runProcess, env = process.env }: RunnerOptions & {
+export async function generateText({ prompt, model, signal, run = runProcess, env = process.env, sessionDir = piBridgeSessionDir() }: RunnerOptions & {
   prompt: string;
   model: string | null;
   signal?: AbortSignal;
 }): Promise<{ text: string }> {
-  const result = await run("pi", textServiceArgs({ prompt, model }), {
+  const task: TextTask = isCommitPrompt(prompt) ? "commit" : "title";
+  const sessionPath = await createTextSessionPath(task, sessionDir);
+  const result = await run("pi", textServiceArgs({ prompt, model, sessionPath, sessionDir }), {
     env, signal, timeoutMs: TEXT_TIMEOUT_MS, maxStdoutBytes: MAX_TEXT_OUTPUT_BYTES,
   });
   if (result.timedOut) throw new Error("Pi text generation timed out.");
