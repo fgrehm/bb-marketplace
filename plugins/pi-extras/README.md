@@ -1,26 +1,47 @@
-# Pi Usage
+# Pi Extras
 
-A local BB plugin that bundles Pi usage views into a single sidebar panel, adds global Pi configuration under BB Settings, and registers Pi as a BB AI service that names new threads.
+A BB plugin for Pi usage, global Pi settings, and Pi-powered thread titles and commit messages.
 
-- **Sessions** - estimated token usage and cost computed from local Pi sessions (`~/.pi/agent/sessions`, `~/.bb/pi-bridge-sessions`, and Pi-extras helper traces in `~/.bb/pi-extras-sessions`), adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page) (MIT), vendored under `usage-page/` and scoped to Pi only.
-- **Subscriptions** - subscription usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud credentials.
-- **Thread titles** - Pi answers BB's thread-titling prompt, so a new thread gets a short name instead of the first 80 columns of its own prompt.
+- **Sessions:** estimated token usage and cost from local Pi transcripts (`~/.pi/agent/sessions`, `~/.bb/pi-bridge-sessions`, and helper traces in `~/.bb/pi-extras-sessions`), broken down by backend, model, project, and day. Adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page) (MIT), vendored under `usage-page/` and scoped to Pi.
+- **Subscriptions:** live usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud credentials, with a short-lived cache.
+- **Pi settings:** choose standalone Pi defaults and model scope, adjust runtime settings relevant to BB threads, refresh model catalogs, and update Pi extensions.
+- **AI services:** to activate Pi-powered thread titles or commit messages, select Pi for each task in BB Settings > AI services. These BB-level selections are separate from the per-task model choices in Pi Extras settings; BB's Automatic setting does not select third-party services.
 
-The plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Settings. It is not an agent provider and does not appear in the provider or model pickers. See `THIRD_PARTY_NOTICES.md` at the repository root for full attribution.
+The Pi Extras plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Settings. It is not an agent provider and does not appear in the provider or model pickers. See [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) for attribution.
 
-## Screenshots
+<details>
+<summary>Screenshots</summary>
 
 ### Sessions
 
-![Pi Usage sessions](docs/sessions.webp)
+<img src="docs/sessions.webp" alt="Pi Usage sessions" width="640">
 
 ### Subscriptions
 
-![Pi Usage subscriptions](docs/subscriptions.webp)
+<img src="docs/subscriptions.webp" alt="Pi Usage subscriptions" width="640">
 
-### Settings
+### Pi settings
 
-![Pi settings](docs/settings.webp)
+<img src="docs/settings.webp" alt="Pi Extras settings overview" width="640">
+
+### Model scope
+
+<img src="docs/model-scope.webp" alt="Pi model scope settings" width="640">
+
+### Runtime settings
+
+<img src="docs/runtime-settings.webp" alt="Pi runtime settings" width="640">
+
+### Thread titles and commit messages
+
+<img src="docs/text-services.webp" alt="Pi model settings for thread titles and commit messages" width="640">
+
+> To wire up title or commit generation, select Pi for that task in BB Settings > AI services. These are BB-level settings, separate from the model choices above.
+
+</details>
+
+<details>
+<summary>Subscription details</summary>
 
 ## Subscriptions tab
 
@@ -29,6 +50,11 @@ The host worker reads Pi's `auth.json` from `$PI_CODING_AGENT_DIR/auth.json`, or
 Missing credentials are shown as "not configured", so the plugin remains usable when only some providers are set up. An unreadable or malformed auth file is reported as an error. Codex authentication failures are shown as expired and should be refreshed through Pi.
 
 The Codex and Ollama usage endpoints are undocumented and may change.
+
+</details>
+
+<details>
+<summary>Settings details</summary>
 
 ## Settings
 
@@ -68,6 +94,11 @@ The scope editor is driven by the same available-model list. It writes exact `pr
 Select **Pi** independently for thread titles and commit messages under **BB Settings → AI services**. BB's Automatic choice does not select third-party plugins. If Pi is selected for commit messages, its generated subject is cleaned and limited to 72 columns; if generation fails or exceeds the time limit, BB uses its normal fallback.
 
 The **Thread titles** section of Pi settings lets you choose available `provider/id` models for titles and commits, independently of BB's thread model and Pi's global defaults. The commit model defaults to the title model, but can be overridden because commit prompts include a diff and may take longer. An unset title model uses Pi's own default. The service runs on the primary BB machine, where Pi and its credentials must be available. BB creates and cleans both prompts; this plugin passes them to Pi.
+
+</details>
+
+<details>
+<summary>Design decisions and implementation notes</summary>
 
 ## Design decisions
 
@@ -146,6 +177,8 @@ If that changes, the useful shape is not a select. It is a read-only list of whi
 - **The model list is read from Pi, not configured here.** The panel never writes `models.json` or the catalog, and never touches `auth.json` beyond the credential-free fields the Subscriptions tab reads.
 - **Extensions and packages are not managed here.** They are read and updated through Pi's own commands by the existing maintenance actions. Extension-provided providers only appear in the model list because those extensions are loaded, which is why the list is read with extensions enabled.
 - **TUI-only settings are out of scope by design**: theme, terminal, markdown rendering, fullscreen, editor, autocomplete, tree filters, `doubleEscapeAction`, `externalEditor`. They never affect a BB thread, and listing them would bury the settings that do.
+
+</details>
 
 ## Development
 

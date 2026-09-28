@@ -12,7 +12,7 @@
   },
   "bb": {
     "name": "Favicon",
-    "description": "Use a project-provided image as BB's browser favicon.",
+    "description": "Replaces the browser tab favicon with uploaded light/dark SVG artwork.",
     "branding": {
       "icon": "Image"
     },

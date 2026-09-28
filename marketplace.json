@@ -6,22 +6,6 @@
   "description": "Plugins I maintain for bb.",
   "plugins": [
     {
-      "id": "jomo",
-      "displayName": "JOMO",
-      "description": "The joy of missing out: a hoard, not an inbox. A calm feed and reading room for collecting ideas alongside your BB work.",
-      "icon": "Leaf",
-      "tags": ["feed", "reading", "web-clipping", "mobile"],
-      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
-      "source": {
-        "git": {
-          "url": "https://github.com/fgrehm/bb-marketplace.git",
-          "subdir": "plugins/jomo",
-          "range": "^0.1.0",
-          "tagPrefix": "jomo/"
-        }
-      }
-    },
-    {
       "id": "review-workspace",
       "displayName": "Review Workspace",
       "description": "Diff-first asynchronous review workspaces inside BB threads.",
@@ -38,24 +22,8 @@
       }
     },
     {
-      "id": "bulk-archive",
-      "displayName": "Bulk Archive",
-      "description": "Select and archive multiple inactive BB threads from a mobile-first panel.",
-      "icon": "Archive",
-      "tags": ["threads", "archive", "mobile"],
-      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
-      "source": {
-        "git": {
-          "url": "https://github.com/fgrehm/bb-marketplace.git",
-          "subdir": "plugins/bulk-archive",
-          "range": "^0.1.0",
-          "tagPrefix": "bulk-archive/"
-        }
-      }
-    },
-    {
       "id": "pi-extras",
-      "displayName": "Pi",
+      "displayName": "Pi Extras",
       "description": "Shows Pi usage, manages global Pi settings and updates, and generates thread titles and commit messages when selected for each task.",
       "icon": "ChartNoAxesCombined",
       "tags": ["usage", "provider", "credentials"],

@@ -13,7 +13,6 @@ bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugi
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/pi-extras
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/favicon
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/review-workspace
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/bulk-archive
 ```
 
 These are full-trust, pre-release plugins. Review the source before installing. BB records the Git source and plugin subdirectory so updates and removal continue to work normally.
@@ -34,9 +33,9 @@ bb marketplace add https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/
 
 ### [jomo](plugins/jomo) - `jomo`
 
-The joy of missing out: a proof-of-concept feed hoard and reading room with fake data. You skim, you keep for now or for future research, and the roundup card proves that missing out was safe. It tests a calmer, alternative UX while keeping a visible path back to normal BB navigation, which is important for mobile.
+Personal work in progress, not listed in the marketplace catalog. JOMO may move to its own project.
 
-### [Pi Usage](plugins/pi-extras) - `pi-extras`
+### [Pi Extras](plugins/pi-extras) - `pi-extras`
 
 Pi-focused usage extras in a single sidebar panel with two tabs:
 
@@ -51,10 +50,6 @@ Replaces the browser tab favicon with uploaded light/dark SVG artwork. Reacts to
 ### [Review Workspace](plugins/review-workspace) - `review-workspace`
 
 Diff-first asynchronous review workspaces inside a thread: snapshots the environment's uncommitted changes as immutable revisions, lets a reviewer select exact line ranges in the diff and anchor comments, carry comments forward to refreshed revisions, and send a batch of feedback to the agent in the parent thread.
-
-### [Bulk Archive](plugins/bulk-archive) - `bulk-archive`
-
-A mobile-first settings panel for selecting and archiving multiple inactive threads at once - filter by project, title, and inactivity period; archiving a parent also archives its children.
 
 ## Repo layout
 

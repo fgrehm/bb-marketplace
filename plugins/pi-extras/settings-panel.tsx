@@ -374,9 +374,17 @@ export function PiSettingsPanel() {
     </section>
 
     <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-medium">Model scope</h3>
-        <div className="flex gap-2">
+      <h3 className="font-medium">Maintenance</h3>
+      <UpdateActions updating={updating} onUpdate={(target) => void update(target)} />
+      {updateOutput ? <pre className="max-h-64 overflow-auto rounded-md border border-border bg-muted p-3 text-xs whitespace-pre-wrap">{updateOutput}</pre> : null}
+    </section>
+
+    <h3 className="font-medium text-muted-foreground">Advanced</h3>
+
+    <details className="rounded-md border border-border p-3">
+      <summary className="cursor-pointer font-medium">Model scope</summary>
+      <section className="mt-4 space-y-3">
+        <div className="flex justify-end gap-2">
           <button
             type="button"
             className="rounded-md border border-input px-2 py-1 text-xs disabled:opacity-50"
@@ -394,7 +402,6 @@ export function PiSettingsPanel() {
             Clear
           </button>
         </div>
-      </div>
       <p className="text-xs text-muted-foreground">
         Pi has no model exclusion setting. The scope is an allowlist: it decides which models Pi
         offers and which one it starts on. Leave it empty, or select everything, for every available
@@ -495,23 +502,22 @@ export function PiSettingsPanel() {
             : writtenScope.join("\n")}
         </pre>
       </details>
-    </section>
+      </section>
+    </details>
 
-    <section className="space-y-4">
-      <h3 className="font-medium">Runtime settings</h3>
-      <BehaviorSettings draft={draft} onChange={setDraft} />
-    </section>
+    <details className="rounded-md border border-border p-3">
+      <summary className="cursor-pointer font-medium">Runtime settings</summary>
+      <section className="mt-4 space-y-4">
+        <BehaviorSettings draft={draft} onChange={setDraft} />
+      </section>
+    </details>
 
-    <section className="space-y-4">
-      <h3 className="font-medium">Thread titles and commit messages</h3>
-      <TextServiceSettings models={models} />
-    </section>
-
-    <section className="space-y-3">
-      <h3 className="font-medium">Maintenance</h3>
-      <UpdateActions updating={updating} onUpdate={(target) => void update(target)} />
-      {updateOutput ? <pre className="max-h-64 overflow-auto rounded-md border border-border bg-muted p-3 text-xs whitespace-pre-wrap">{updateOutput}</pre> : null}
-    </section>
+    <details className="rounded-md border border-border p-3">
+      <summary className="cursor-pointer font-medium">Thread titles and commit messages</summary>
+      <section className="mt-4 space-y-4">
+        <TextServiceSettings models={models} />
+      </section>
+    </details>
 
     <div className="flex items-center gap-3">
       <button

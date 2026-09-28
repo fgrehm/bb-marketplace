@@ -8,7 +8,7 @@
     "bbPluginSdk": ">=0.4.34"
   },
   "bb": {
-    "name": "Pi",
+    "name": "Pi Extras",
     "description": "Shows Pi usage, manages global Pi settings and updates, and generates thread titles and commit messages when selected for each task.",
     "branding": {
       "icon": "ChartNoAxesCombined"

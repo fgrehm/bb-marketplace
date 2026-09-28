@@ -3,10 +3,59 @@ import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import "./app.css";
 
+const FAVICON_COLOR_STORAGE_KEY = "bb.faviconColor";
+const TINT_OPACITY = 0.55;
+const TINT_COLORS = {
+  red: "#e5484d", orange: "#f76b15", yellow: "#ffba18", green: "#30a46c",
+  teal: "#12a594", blue: "#0090ff", purple: "#8e4ec6", pink: "#d6409f",
+} as const;
+type TintName = keyof typeof TINT_COLORS;
+
+function readTintPreference(): TintName | null {
+  try {
+    const value = localStorage.getItem(FAVICON_COLOR_STORAGE_KEY);
+    return value && value in TINT_COLORS ? value as TintName : null;
+  } catch { return null; }
+}
+
+function applyTint(context: CanvasRenderingContext2D, width: number, height: number, tint: TintName): void {
+  context.save();
+  context.globalCompositeOperation = "source-atop";
+  context.globalAlpha = TINT_OPACITY;
+  context.fillStyle = TINT_COLORS[tint];
+  context.fillRect(0, 0, width, height);
+  context.restore();
+}
+
+function renderTintedPreview(data: string, tint: TintName): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth || 32;
+      canvas.height = image.naturalHeight || 32;
+      const context = canvas.getContext("2d");
+      if (!context) return reject(new Error("Canvas is unavailable."));
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      applyTint(context, canvas.width, canvas.height, tint);
+      try { resolve(canvas.toDataURL("image/png")); }
+      catch (error) { reject(error); }
+    };
+    image.onerror = () => reject(new Error("Unable to render the tinted preview."));
+    image.src = `data:image/svg+xml;base64,${data}`;
+  });
+}
+
+type PendingChange =
+  | { type: "upload"; fileName: string; data: string }
+  | { type: "remove" };
+
 function UploadCard({ variant, description }: { variant: "light" | "dark"; description: string }) {
   const rpc = useRpc<typeof rpcContract>();
-  const [fileName, setFileName] = useState<string>("");
   const [data, setData] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingChange | null>(null);
+  const [tint, setTint] = useState<TintName | null>(() => readTintPreference());
+  const [tintedPreview, setTintedPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -19,15 +68,48 @@ function UploadCard({ variant, description }: { variant: "light" | "dark"; descr
 
   useEffect(() => { void load(); }, [load]);
 
-  async function remove() {
+  useEffect(() => {
+    const refreshTint = () => setTint(readTintPreference());
+    window.addEventListener("focus", refreshTint);
+    window.addEventListener("storage", refreshTint);
+    return () => {
+      window.removeEventListener("focus", refreshTint);
+      window.removeEventListener("storage", refreshTint);
+    };
+  }, []);
+
+  const previewData = pending?.type === "upload" ? pending.data : data;
+
+  useEffect(() => {
+    if (!previewData || !tint) {
+      setTintedPreview(null);
+      return;
+    }
+    let active = true;
+    void renderTintedPreview(previewData, tint).then((preview) => {
+      if (active) setTintedPreview(preview);
+    }).catch(() => {
+      if (active) setTintedPreview(null);
+    });
+    return () => { active = false; };
+  }, [previewData, tint]);
+
+  async function saveChanges() {
+    if (!pending) return;
     setBusy(true);
+    setError("");
     try {
-      await rpc.call("remove", { variant });
-      setData(null);
-      setFileName("");
+      if (pending.type === "upload") {
+        await rpc.call("upload", { variant, data: pending.data });
+        setData(pending.data);
+      } else {
+        await rpc.call("remove", { variant });
+        setData(null);
+      }
+      setPending(null);
       window.dispatchEvent(new CustomEvent("bb-favicon-updated"));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Remove failed.");
+      setError(cause instanceof Error ? cause.message : "Unable to save changes.");
     } finally { setBusy(false); }
   }
 
@@ -42,10 +124,7 @@ function UploadCard({ variant, description }: { variant: "light" | "dark"; descr
       const bytes = new Uint8Array(await file.arrayBuffer());
       let binary = "";
       for (const byte of bytes) binary += String.fromCharCode(byte);
-      await rpc.call("upload", { variant, data: btoa(binary) });
-      setFileName(file.name);
-      void load();
-      window.dispatchEvent(new CustomEvent("bb-favicon-updated"));
+      setPending({ type: "upload", fileName: file.name, data: btoa(binary) });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed.");
     } finally { setBusy(false); }
@@ -54,28 +133,44 @@ function UploadCard({ variant, description }: { variant: "light" | "dark"; descr
   return <div className={`favicon-card ${variant}`}>
     <div className="favicon-card-heading"><span className="favicon-swatch" /> <strong>{variant === "light" ? "Light mode" : "Dark mode"}</strong></div>
     <p>{description}</p>
-    {data && (
-      <div className="favicon-preview" aria-label={`Current ${variant} favicon`}>
-        <img src={`data:image/svg+xml;base64,${data}`} alt="" width={48} height={48} />
-        <span>48px preview</span>
+    {previewData && (
+      <div className="favicon-previews" aria-label={`${pending?.type === "upload" ? "Pending" : "Current"} ${variant} favicon previews`}>
+        <div className="favicon-preview">
+          <img src={`data:image/svg+xml;base64,${previewData}`} alt="" width={48} height={48} />
+          <span>{pending?.type === "upload" ? "Pending upload" : "Currently applied"}</span>
+        </div>
+        {tint && (
+          <div className="favicon-preview">
+            {tintedPreview ? <img src={tintedPreview} alt="" width={48} height={48} /> : <span>Loading preview...</span>}
+            <span>{tint} BB tint</span>
+          </div>
+        )}
       </div>
     )}
+    {previewData && !tint && <p className="favicon-note">Choose a favicon color in BB Settings to preview its tint.</p>}
+    {pending?.type === "remove" && <p className="favicon-note">Removal is pending. The current favicon stays active until you save.</p>}
     <label className="file-button">
-      {busy ? "Uploading..." : fileName ? "Replace file" : "Choose an SVG"}
-      <input type="file" accept=".svg,image/svg+xml" disabled={busy} onChange={(event) => upload(event.currentTarget.files?.[0])} />
+      {busy ? "Preparing..." : pending?.type === "upload" ? "Choose another SVG" : data ? "Replace file" : "Choose an SVG"}
+      <input type="file" accept=".svg,image/svg+xml" disabled={busy} onChange={(event) => { void upload(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
     </label>
-    {fileName && <span className="filename">{fileName}</span>}
-    {data && !fileName && <span className="filename">Uploaded</span>}
-    {data && <button type="button" className="remove-button" onClick={() => void remove()} disabled={busy}>Remove</button>}
+    {pending?.type === "upload" && <span className="filename">{pending.fileName} (not saved)</span>}
+    {!pending && data && <span className="filename">Uploaded and active</span>}
+    {data && !pending && <button type="button" className="remove-button" onClick={() => setPending({ type: "remove" })} disabled={busy}>Remove</button>}
+    {pending && <div className="pending-actions">
+      <button type="button" className="save-button" onClick={() => void saveChanges()} disabled={busy}>
+        {busy ? "Saving..." : "Save and apply"}
+      </button>
+      <button type="button" className="cancel-button" onClick={() => { setPending(null); setError(""); }} disabled={busy}>Cancel</button>
+    </div>}
     {error && <span className="upload-error">{error}</span>}
   </div>;
 }
 
 function UploadFavicon() {
   return <section className="favicon-upload">
-    <div className="favicon-intro"><div className="favicon-mark">✦</div><div><h3>Browser favicon</h3><p>Upload separate SVG artwork for light and dark mode. bb's favicon color tint is applied on top.</p></div></div>
+    <div className="favicon-intro"><div className="favicon-mark">✦</div><div><h3>Browser favicon</h3><p>Choose separate SVG artwork for light and dark mode. Uploads stay pending until you save; saving applies the change immediately.</p></div></div>
     <div className="favicon-cards"><UploadCard variant="light" description="Used when BB is in light mode." /><UploadCard variant="dark" description="Used when BB is in dark mode." /></div>
-    <p className="favicon-note">Changes apply after reloading the Favicon plugin.</p>
+    <p className="favicon-note">Uploads and removals do not affect the active favicon until you choose Save and apply.</p>
   </section>;
 }
 
@@ -84,12 +179,7 @@ export default definePluginApp((app) => {
   app.contentScripts.register({
     id: "set-favicon",
     mount({ pluginId, signal }) {
-      const FAVICON_COLOR_STORAGE_KEY = "bb.faviconColor";
       // Mirrors apps/app/src/lib/favicon-color-preference.ts in the bb client.
-      const TINT_COLORS: Record<string, string> = {
-        red: "#e5484d", orange: "#f76b15", yellow: "#ffba18", green: "#30a46c",
-        teal: "#12a594", blue: "#0090ff", purple: "#8e4ec6", pink: "#d6409f",
-      };
       const BADGE_FILL: [number, number, number] = [224, 0, 0]; // #e00000
 
       // We take over BB's own favicon links (#favicon-32 / #favicon-16) instead
@@ -116,13 +206,6 @@ export default definePluginApp((app) => {
           image.onerror = () => reject(new Error(`Failed to load image: ${src}`));
           image.src = src;
         });
-      }
-
-      function readTintPreference(): string | null {
-        try {
-          const value = localStorage.getItem(FAVICON_COLOR_STORAGE_KEY);
-          return value && value in TINT_COLORS ? value : null;
-        } catch { return null; }
       }
 
       // BB composites the unread badge at a fixed dot position and fill
@@ -161,12 +244,7 @@ export default definePluginApp((app) => {
           const context = canvas.getContext("2d");
           if (!context) return;
           context.drawImage(image, 0, 0, canvas.width, canvas.height);
-          if (tint) {
-            context.globalCompositeOperation = "source-in";
-            context.fillStyle = TINT_COLORS[tint];
-            context.fillRect(0, 0, canvas.width, canvas.height);
-            context.globalCompositeOperation = "source-over";
-          }
+          if (tint) applyTint(context, canvas.width, canvas.height, tint);
           if (badge) {
             const scale = canvas.width / 32;
             context.beginPath();
@@ -178,7 +256,10 @@ export default definePluginApp((app) => {
           lastWritten = href;
           for (const link of targets()) link.setAttribute("href", href);
         } catch {
-          // Artwork not configured or failed to load; leave BB's favicon visible.
+          // Restore BB's favicon when artwork is removed or cannot be loaded.
+          if (token !== applyToken || !bbHref) return;
+          lastWritten = bbHref;
+          for (const link of targets()) link.setAttribute("href", bbHref);
         }
       }
 

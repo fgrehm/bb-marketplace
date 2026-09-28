@@ -8,14 +8,6 @@ repos:
         files: \.(json)$
         groups: [quality]
 
-      - id: bulk-archive-typecheck
-        name: bulk-archive typecheck
-        entry: bash -c 'cd plugins/bulk-archive && pnpm run typecheck'
-        language: system
-        files: ^plugins/bulk-archive/
-        groups: [bulk-archive, typecheck]
-        pass_filenames: false
-
       - id: favicon-typecheck
         name: favicon typecheck
         entry: bash -c 'cd plugins/favicon && pnpm run typecheck'

@@ -28,8 +28,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - plugin: bulk-archive
-            command: pnpm run typecheck
           - plugin: favicon
             command: pnpm run typecheck
           - plugin: jomo
