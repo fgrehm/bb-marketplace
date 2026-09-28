@@ -66,9 +66,7 @@ const usageSourceSchema = z.object({
   windows: z.array(usageWindowSchema),
 }).strict();
 
-const textResultSchema = z
-  .object({ text: z.string().min(1), model: z.string().nullable() })
-  .strict();
+const textResultSchema = z.object({ text: z.string().min(1) }).strict();
 
 const titleServiceStatusSchema = z.discriminatedUnion("ready", [
   z.object({ ready: z.literal(true) }).strict(),

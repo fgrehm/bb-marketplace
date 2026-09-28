@@ -57,8 +57,9 @@ export default function plugin(bb: BbPluginApi): void {
         { prompt, model },
         { hostId, signal },
       );
+      // Text mode does not report which model answered, so log the request.
       bb.log.info(
-        `${commit ? "commit message" : "thread title"} generated with ${result.model ?? "an unnamed model"}`,
+        `${commit ? "commit message" : "thread title"} generated with ${model ?? "pi's default model"}`,
       );
       return result.text;
     },
