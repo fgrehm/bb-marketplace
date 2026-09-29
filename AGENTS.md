@@ -2,7 +2,7 @@
 
 ## Repository
 
-This repository contains independently installable BB plugins under `plugins/<id>/`. The root `marketplace.json` is the catalog; each plugin's `package.json` is its manifest and source of truth for its plugin ID, version, BB entry points, and engine requirements.
+This repository contains independently installable BB plugins under `plugins/<id>/`. The root `marketplace.json` is the v2 catalog and the source of truth for marketplace overviews; each plugin's `package.json` is its manifest and source of truth for its plugin ID, version, BB entry points, and engine requirements.
 
 The repository is MIT licensed. Preserve `THIRD_PARTY_NOTICES.md` and vendored license files when adapting code or artwork.
 
@@ -60,9 +60,27 @@ bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugi
 
 BB plugins are full-trust code. Review a plugin's source before installing it.
 
-## Marketplace changes
+## Marketplace entries
 
-When adding or removing a plugin, update both `marketplace.json` and the root README. Marketplace releases will use plugin-specific tags such as `<id>/0.1.0`; no versioned releases have been cut yet.
+When adding or removing a plugin, update both `marketplace.json` and the root README. The v2 catalog is strict: keep each `id`, display name, short description, icon, author, and Git source accurate and aligned with the plugin manifest. Keep short descriptions concise (about 140 characters or fewer) and use up to ten lowercase, hyphenated tags.
+
+The inline Markdown `overview` is store copy, not a README substitute. Lead with the user outcome, then summarize key features, requirements, privacy, and meaningful limitations. Keep it under 4000 characters; use supported Markdown only, with no raw HTML, tables, or embedded images. Screenshots belong in the separate optional `screenshots` field, not the overview. The Community marketplace guidance recommends up to six PNG, JPEG, or WebP screenshots, each at least 1200 pixels wide and no larger than 2 MiB. See [overview guidance](https://github.com/get-bb/marketplace#long-form-description) and [screenshot guidance](https://github.com/get-bb/marketplace#screenshots-and-icons).
+
+This catalog uses Git SemVer ranges with plugin-specific tags. For each entry, `source.git.url` points to this repository, `subdir` is `plugins/<id>`, and `tagPrefix` is `<id>/`. Keep the range compatible with intended releases; for example, `^0.1.0` admits `0.1.x` tags, not `0.2.0`.
+
+## Releasing a catalogued plugin
+
+Plugins are versioned independently in this monorepo and are not published to npm. For the first release use `0.1.0`; later releases update only the selected plugin's `package.json` version and `CHANGELOG.md`. Date changelog entries as `YYYY-MM-DD`. Keep the marketplace short description and overview aligned with actual behavior, and widen the catalog range only when the release policy should admit a new version line.
+
+Before tagging, commit and push the reviewed release changes to `main`, run the plugin's typecheck, tests, formatter, and `bb plugin build`, then run `prek run --all-files` and `git diff --check`. Create an annotated signed tag for the exact release commit, verify it locally, and push the tag only after explicit approval:
+
+```sh
+git tag -s favicon/v0.1.0 -m "favicon v0.1.0"
+git verify-tag favicon/v0.1.0
+git push origin favicon/v0.1.0
+```
+
+Use the corresponding plugin ID and version in the tag and message. The signing key must be registered with GitHub so the signature is verifiable there; see [GitHub's tag-signing guide](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-tags). The release workflow reruns the full CI matrix, requires GitHub to verify the annotated tag signature, extracts that version's section from `plugins/<id>/CHANGELOG.md` as the GitHub Release notes, and creates a release without assets. BB installs and updates from the Git tag selected by the marketplace range; it does not consume the GitHub Release page.
 
 ## New-plugin checklist
 

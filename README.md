@@ -9,7 +9,6 @@ A collection of [BB](https://github.com/get-bb/bb) plugins I maintain, installab
 Install a plugin from the latest `main` branch:
 
 ```sh
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/jomo
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/pi-extras
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/favicon
 bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/review-workspace
@@ -29,11 +28,9 @@ Once versioned releases exist, the marketplace can be added with:
 bb marketplace add https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/marketplace.json
 ```
 
+The catalog uses marketplace schema v2, so BB versions that only support v1 catalogs cannot read it.
+
 ## Plugins
-
-### [jomo](plugins/jomo) - `jomo`
-
-Personal work in progress, not listed in the marketplace catalog. JOMO may move to its own project.
 
 ### [Pi Extras](plugins/pi-extras) - `pi-extras`
 
@@ -53,7 +50,7 @@ Diff-first asynchronous review workspaces inside a thread: snapshots the environ
 
 ## Repo layout
 
-Each plugin is self-contained under `plugins/<id>/` with its own `package.json` and lockfile (pnpm). [`marketplace.json`](marketplace.json) at the root is the catalog bb reads. Future plugin releases will be resolved from git tags like `favicon/0.1.0` (subdirectory and tag prefix per plugin).
+Each plugin is self-contained under `plugins/<id>/` with its own `package.json` and lockfile (pnpm). [`marketplace.json`](marketplace.json) at the root is the v2 catalog BB reads; its `overview` fields contain Markdown long-form descriptions. Plugin releases are resolved from git tags like `favicon/v0.1.0` (plugin-specific prefix per catalog entry).
 
 ## Development
 
@@ -73,7 +70,7 @@ prek install
 prek run --all-files
 ```
 
-Pre-commit hooks validate JSON, run plugin typechecks, and check Review Workspace formatting. The heavier plugin test suites run before pushes. GitHub Actions runs the full plugin matrix on pushes and pull requests. Hooks are grouped by plugin and concern, for example `prek run --group jomo` or `prek run --group format`.
+Pre-commit hooks validate JSON, run plugin typechecks, and check Review Workspace formatting. The heavier plugin test suites run before pushes. GitHub Actions runs the full plugin matrix on pushes and pull requests. Hooks are grouped by plugin and concern, for example `prek run --group pi-extras` or `prek run --group format`.
 
 Requirements: node ≥ 22, pnpm, and a bb ≥ 0.42 install.
 

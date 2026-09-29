@@ -1,6 +1,6 @@
 {
-  "$schema": "https://getbb.app/schemas/marketplace.schema.json",
-  "schemaVersion": 1,
+  "$schema": "https://getbb.app/schemas/marketplace-v2.schema.json",
+  "schemaVersion": 2,
   "name": "fgrehm-plugins",
   "displayName": "fgrehm's Plugins",
   "description": "Plugins I maintain for bb.",
@@ -9,9 +9,19 @@
       "id": "review-workspace",
       "displayName": "Review Workspace",
       "description": "Diff-first asynchronous review workspaces inside BB threads.",
+      "overview": "Review Workspace opens a diff-first review panel in a BB thread. Create immutable snapshots of uncommitted changes, a selected commit, or committed changes against a base branch. Select exact old or new diff lines, add file-level feedback or an overall review note, mark files as viewed, and send selected feedback to the agent with relevant diff context. Unresolved comment threads and the review note carry forward when you refresh to a new snapshot; earlier revisions remain available.\n\nThe optional experimental Entities view groups changes by functions, classes, and methods, then shows affected dependents and tests.\n\n## Requirements and limits\n\nThe review uses the Git changes available in the thread environment. The Entities view relies on local sem tooling; if it is unavailable, regular diff review still works. Review feedback is sent to the agent in the thread.",
       "icon": "GitPullRequest",
-      "tags": ["review", "diff", "async", "workspace"],
-      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "tags": [
+        "review",
+        "diff",
+        "async",
+        "workspace"
+      ],
+      "author": {
+        "name": "Fabio Rehm",
+        "github": "fgrehm",
+        "url": "https://github.com/fgrehm"
+      },
       "source": {
         "git": {
           "url": "https://github.com/fgrehm/bb-marketplace.git",
@@ -25,9 +35,18 @@
       "id": "pi-extras",
       "displayName": "Pi Extras",
       "description": "Shows Pi usage, manages global Pi settings and updates, and generates thread titles and commit messages when selected for each task.",
+      "overview": "Pi Extras brings Pi usage and settings into BB. Its Sessions view estimates token use and cost from local Pi session transcripts, broken down by backend, model, project, and day. Subscriptions shows current usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud accounts.\n\nThe settings panel edits Pi defaults, model scope, selected runtime settings, model catalogs, and extensions. For Pi to generate BB thread titles or commit messages, select Pi separately for each task under BB Settings > AI services. This does not change the model running the thread.\n\n## Requirements and privacy\n\nPi must be installed on BB's primary machine. Subscription usage requires the relevant credentials in Pi's auth.json. The plugin reads credentials to request usage but never displays, logs, refreshes, or modifies them. Subscription endpoints are undocumented and may change.",
       "icon": "ChartNoAxesCombined",
-      "tags": ["usage", "provider", "credentials"],
-      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "tags": [
+        "usage",
+        "provider",
+        "credentials"
+      ],
+      "author": {
+        "name": "Fabio Rehm",
+        "github": "fgrehm",
+        "url": "https://github.com/fgrehm"
+      },
       "source": {
         "git": {
           "url": "https://github.com/fgrehm/bb-marketplace.git",
@@ -41,9 +60,18 @@
       "id": "favicon",
       "displayName": "Favicon",
       "description": "Replaces the browser tab favicon with uploaded light/dark SVG artwork.",
+      "overview": "Favicon replaces the BB browser tab icon with separate SVG artwork for light and dark themes. The settings panel previews the artwork with BB's fixed 55% color tint, preserving shading and detail while keeping the unread badge visible. Uploads and removals stay pending until you choose Save and apply, so you can review both previews before changing the active icon. Each theme can be updated independently.\n\n## Requirements and limits\n\nArtwork must be uploaded as SVG; remote URLs and filesystem paths are not supported. The favicon applies to the BB window, not individual projects. The plugin restores the previous favicon when disabled or reloaded. No external service or account is required.",
       "icon": "Image",
-      "tags": ["favicon", "ui", "branding"],
-      "author": { "name": "Fabio Rehm", "github": "fgrehm", "url": "https://github.com/fgrehm" },
+      "tags": [
+        "favicon",
+        "ui",
+        "branding"
+      ],
+      "author": {
+        "name": "Fabio Rehm",
+        "github": "fgrehm",
+        "url": "https://github.com/fgrehm"
+      },
       "source": {
         "git": {
           "url": "https://github.com/fgrehm/bb-marketplace.git",

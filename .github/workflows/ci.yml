@@ -15,6 +15,29 @@ jobs:
       - uses: actions/checkout@v5
       - name: Validate JSON
         run: python3 -m json.tool marketplace.json >/dev/null
+      - name: Validate v2 catalog entries
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          catalog = json.loads(Path("marketplace.json").read_text())
+          if catalog.get("schemaVersion") != 2 or catalog.get("$schema") != "https://getbb.app/schemas/marketplace-v2.schema.json":
+              raise SystemExit("marketplace.json must use the BB marketplace v2 schema")
+
+          seen = set()
+          for entry in catalog.get("plugins", []):
+              plugin_id = entry["id"]
+              if plugin_id in seen:
+                  raise SystemExit(f"duplicate marketplace plugin id: {plugin_id}")
+              seen.add(plugin_id)
+              overview = entry.get("overview")
+              if not isinstance(overview, str) or not overview.strip() or len(overview) > 4000:
+                  raise SystemExit(f"{plugin_id}: overview must be non-empty and at most 4000 characters")
+              manifest = json.loads(Path(f"plugins/{plugin_id}/package.json").read_text())
+              if entry["displayName"] != manifest["bb"]["name"] or entry["description"] != manifest["bb"]["description"]:
+                  raise SystemExit(f"{plugin_id}: catalog identity and description must match package.json")
+          PY
       - name: Validate plugin manifests
         run: |
           for manifest in plugins/*/package.json; do
@@ -51,3 +74,117 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Run checks
         run: ${{ matrix.command }}
+
+  release:
+    name: Release ${{ github.ref_name }}
+    if: >-
+      startsWith(github.ref, 'refs/tags/favicon/v') ||
+      startsWith(github.ref, 'refs/tags/pi-extras/v') ||
+      startsWith(github.ref, 'refs/tags/review-workspace/v')
+    needs: [validate-marketplace, plugins]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          plugin="${tag%%/*}"
+          version="${tag#*/v}"
+
+          case "$plugin" in
+            favicon|pi-extras|review-workspace) ;;
+            *) echo "Plugin is not in the release catalog: $plugin" >&2; exit 1 ;;
+          esac
+          if [[ "$tag" != "$plugin/v$version" || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a stable plugin tag like $plugin/v0.1.0, got: $tag" >&2
+            exit 1
+          fi
+
+          manifest_version="$(node -p "require('./plugins/${plugin}/package.json').version")"
+          if [[ "$version" != "$manifest_version" ]]; then
+            echo "Tag version $version does not match plugins/$plugin/package.json version $manifest_version" >&2
+            exit 1
+          fi
+
+          node - "$plugin" <<'NODE'
+          const fs = require("node:fs");
+          const plugin = process.argv[2];
+          const marketplace = JSON.parse(fs.readFileSync("marketplace.json", "utf8"));
+          const entry = marketplace.plugins.find((candidate) => candidate.id === plugin);
+          if (!entry || entry.source.git.subdir !== `plugins/${plugin}` || entry.source.git.tagPrefix !== `${plugin}/`) {
+            throw new Error(`Marketplace entry for ${plugin} is missing or has the wrong subdirectory/tag prefix.`);
+          }
+          NODE
+
+          echo "plugin=$plugin" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Verify signed annotated tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ref="repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME"
+          ref_json="$(gh api "$ref")"
+          object_type="$(jq -r '.object.type' <<< "$ref_json")"
+          if [[ "$object_type" != "tag" ]]; then
+            echo "Release ref must be an annotated tag: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+          tag_sha="$(jq -r '.object.sha' <<< "$ref_json")"
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha")"
+          tag_name="$(jq -r '.tag' <<< "$tag_json")"
+          verified="$(jq -r '.verification.verified' <<< "$tag_json")"
+          reason="$(jq -r '.verification.reason' <<< "$tag_json")"
+          if [[ "$tag_name" != "$GITHUB_REF_NAME" || "$verified" != "true" ]]; then
+            echo "GitHub did not verify signed release tag $GITHUB_REF_NAME (reason: $reason)" >&2
+            exit 1
+          fi
+      - name: Extract changelog notes
+        id: changelog
+        env:
+          PLUGIN: ${{ steps.release.outputs.plugin }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const path = `plugins/${process.env.PLUGIN}/CHANGELOG.md`;
+          const lines = readFileSync(path, "utf8").split(/\r?\n/);
+          const sectionHeading = /^## \[(\d+\.\d+\.\d+)\] - \d{4}-\d{2}-\d{2}$/;
+          const start = lines.findIndex((line) => sectionHeading.exec(line)?.[1] === process.env.VERSION);
+          if (start === -1) {
+            throw new Error(`${path} has no dated changelog section for ${process.env.VERSION}`);
+          }
+
+          let end = lines.length;
+          for (let index = start + 1; index < lines.length; index += 1) {
+            if (/^## \[/.test(lines[index])) {
+              end = index;
+              break;
+            }
+          }
+          const notes = lines.slice(start + 1, end).join("\n").trim();
+          if (!notes) throw new Error(`${path} has an empty changelog section for ${process.env.VERSION}`);
+
+          const notesFile = join(process.env.RUNNER_TEMP, `${process.env.PLUGIN}-${process.env.VERSION}-release-notes.md`);
+          writeFileSync(notesFile, `${notes}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `notes_file=${notesFile}\n`);
+          NODE
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLUGIN: ${{ steps.release.outputs.plugin }}
+          VERSION: ${{ steps.release.outputs.version }}
+          NOTES_FILE: ${{ steps.changelog.outputs.notes_file }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "$PLUGIN v$VERSION" \
+            --notes-file "$NOTES_FILE"
