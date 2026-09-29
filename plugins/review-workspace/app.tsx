@@ -1,5 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { definePluginApp, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import {
+  definePluginApp,
+  experimental_usePluginId,
+  useBbNavigate,
+  useRpc,
+} from "@get-bb/plugin-sdk/app";
 import * as Dialog from "@radix-ui/react-dialog";
 import { FileDiff } from "@pierre/diffs/react";
 import {
@@ -420,7 +425,7 @@ function CommentCard({
   const editing = editDrafts.has(annotation.id);
   if (collapsed) {
     return (
-      <article className="rounded-md border p-2 text-xs opacity-65">
+      <article className="rounded-lg border bg-background p-3 text-xs opacity-65">
         <div className="flex items-start gap-2">
           <button
             type="button"
@@ -446,7 +451,7 @@ function CommentCard({
   }
   return (
     <article
-      className={`group rounded-md border p-2 text-xs ${annotation.sentAt || annotation.resolvedAt ? "opacity-65" : ""}`}
+      className={`group rounded-lg border bg-background p-3 text-xs shadow-sm ${annotation.sentAt || annotation.resolvedAt ? "opacity-65" : ""}`}
     >
       <div className="flex gap-2">
         <div className="min-w-0 flex-1">
@@ -892,7 +897,7 @@ function FileCommentsBar({
     repliesByRoot.set(annotation.parentId, list);
   }
   return (
-    <div className="mb-2 rounded-md border bg-card p-2">
+    <div className="mb-3 rounded-lg border bg-card px-3 py-2 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           File comments
@@ -1079,9 +1084,9 @@ function ReviewSummary({
   const hasNotes = Boolean(review.summary?.trim());
   return (
     <div className="flex min-h-0 flex-col">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-3 border-b pb-3">
         <div>
-          <Dialog.Title className="text-sm font-semibold">
+          <Dialog.Title className="text-base font-semibold">
             Review feedback
           </Dialog.Title>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -1234,6 +1239,7 @@ function FileFilterControls({
 
 function ReviewPanel({ threadId }: { threadId: string }) {
   const rpc = useRpc<typeof rpcContract>();
+  const pluginId = experimental_usePluginId();
   // Full-screen mode: the panel spans the whole viewport (the BB tab it
   // normally lives in is only a slice of the page).
   const [fullscreen, setFullscreen] = useState(false);
@@ -1874,7 +1880,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     <main
       className={`flex min-h-0 flex-col overflow-hidden bg-background text-foreground ${fullscreen ? "fixed inset-0 z-50" : "h-full"}`}
     >
-      <header className="flex flex-wrap shrink-0 items-center gap-2 border-b bg-card px-3 py-2 lg:px-4">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-3 py-3 lg:gap-3 lg:px-4">
         <Button
           size="sm"
           variant="ghost"
@@ -1883,13 +1889,24 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         >
           ← <span className="hidden sm:inline">Back</span>
         </Button>
-        <div className="min-w-0 flex-1">
-          <h1 className="hidden truncate text-sm font-semibold sm:block">
-            Review changes
-          </h1>
-          <p className="hidden truncate text-xs text-muted-foreground sm:block">
-            Diff-first review · {review?.snapshot.slice(0, 10) ?? "not opened"}
-          </p>
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <span
+            className="hidden size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary sm:inline-flex"
+            aria-hidden="true"
+          >
+            <Icon name="GitPullRequest" className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-semibold">Review changes</h1>
+            <p className="hidden truncate text-[11px] text-muted-foreground sm:block">
+              {review ? describeTarget(review.target) : "No snapshot yet"}
+              {review ? (
+                <span className="ml-2 font-mono">
+                  {review.snapshot.slice(0, 10)}
+                </span>
+              ) : null}
+            </p>
+          </div>
         </div>
         {review && revisions[0] && review.id !== revisions[0].id ? (
           <Button
@@ -1932,78 +1949,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
             </button>
           </div>
         </details>
-        <select
-          aria-label="Review target"
-          value={targetKind}
-          onChange={(event) =>
-            setTargetKind(event.target.value as typeof targetKind)
-          }
-          className="h-8 max-w-48 rounded-md border bg-background px-1 text-xs"
-        >
-          <option value="uncommitted">Uncommitted changes</option>
-          <option value="commit">Specific commit</option>
-          <option value="branch">Branch vs base</option>
-        </select>
-        {targetKind === "commit" ? (
-          recentCommits === null ? (
-            <span className="text-[11px] text-muted-foreground">
-              Loading commits...
-            </span>
-          ) : recentCommits.status === "ok" && recentCommits.commits.length ? (
-            <select
-              aria-label="Recent commits"
-              value={
-                recentCommits.commits.some(
-                  (commit) => commit.sha === targetValue,
-                )
-                  ? targetValue
-                  : ""
-              }
-              onChange={(event) => setTargetValue(event.target.value)}
-              className="h-8 min-w-0 max-w-64 flex-1 rounded-md border bg-background px-1 text-xs"
-            >
-              <option value="">Pick a commit...</option>
-              {recentCommits.commits.map((commit) => (
-                <option
-                  key={commit.sha}
-                  value={commit.sha}
-                  title={`${commit.author} · ${commit.date}`}
-                >
-                  {`${commit.short} · ${commit.subject.slice(0, 60)} (${commit.date})`}
-                </option>
-              ))}
-            </select>
-          ) : null
-        ) : null}
-        {targetKind !== "uncommitted" ? (
-          <input
-            value={targetValue}
-            onChange={(event) => setTargetValue(event.target.value)}
-            placeholder={
-              targetKind === "commit" ? "paste commit sha" : "base branch"
-            }
-            aria-label={targetKind === "commit" ? "Commit sha" : "Base branch"}
-            className="h-8 w-44 rounded-md border bg-background px-2 font-mono text-xs"
-          />
-        ) : null}
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void refresh({ target: buildRefreshTarget() })}
-          disabled={
-            busy || (targetKind !== "uncommitted" && !targetValue.trim())
-          }
-        >
-          {busy
-            ? "Working..."
-            : targetKind === "commit"
-              ? "Review commit"
-              : targetKind === "branch"
-                ? "Review branch"
-                : review
-                  ? "Refresh"
-                  : "Open review"}
-        </Button>
         <Button
           size="sm"
           variant="ghost"
@@ -2014,6 +1959,82 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         >
           <Icon name={fullscreen ? "Minimize2" : "Maximize2"} />
         </Button>
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-1.5 max-sm:w-full">
+          <select
+            aria-label="Review target"
+            value={targetKind}
+            onChange={(event) =>
+              setTargetKind(event.target.value as typeof targetKind)
+            }
+            className="h-8 max-w-48 rounded-md border bg-background px-1 text-xs"
+          >
+            <option value="uncommitted">Uncommitted changes</option>
+            <option value="commit">Specific commit</option>
+            <option value="branch">Branch vs base</option>
+          </select>
+          {targetKind === "commit" ? (
+            recentCommits === null ? (
+              <span className="text-[11px] text-muted-foreground">
+                Loading commits...
+              </span>
+            ) : recentCommits.status === "ok" &&
+              recentCommits.commits.length ? (
+              <select
+                aria-label="Recent commits"
+                value={
+                  recentCommits.commits.some(
+                    (commit) => commit.sha === targetValue,
+                  )
+                    ? targetValue
+                    : ""
+                }
+                onChange={(event) => setTargetValue(event.target.value)}
+                className="h-8 min-w-0 max-w-64 flex-1 basis-44 rounded-md border bg-background px-1 text-xs"
+              >
+                <option value="">Pick a commit...</option>
+                {recentCommits.commits.map((commit) => (
+                  <option
+                    key={commit.sha}
+                    value={commit.sha}
+                    title={`${commit.author} · ${commit.date}`}
+                  >
+                    {`${commit.short} · ${commit.subject.slice(0, 60)} (${commit.date})`}
+                  </option>
+                ))}
+              </select>
+            ) : null
+          ) : null}
+          {targetKind !== "uncommitted" ? (
+            <input
+              value={targetValue}
+              onChange={(event) => setTargetValue(event.target.value)}
+              placeholder={
+                targetKind === "commit" ? "paste commit sha" : "base branch"
+              }
+              aria-label={
+                targetKind === "commit" ? "Commit sha" : "Base branch"
+              }
+              className="h-8 w-44 rounded-md border bg-background px-2 font-mono text-xs"
+            />
+          ) : null}
+          <Button
+            size="sm"
+            onClick={() => void refresh({ target: buildRefreshTarget() })}
+            disabled={
+              busy || (targetKind !== "uncommitted" && !targetValue.trim())
+            }
+          >
+            {busy
+              ? "Working..."
+              : targetKind === "commit"
+                ? "Review commit"
+                : targetKind === "branch"
+                  ? "Review branch"
+                  : review
+                    ? "Refresh"
+                    : "Open review"}
+          </Button>
+        </div>
       </header>
       {review && revisions[0] && review.id !== revisions[0].id ? (
         <p
@@ -2038,7 +2059,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       ) : (
         <>
           <Dialog.Root open={feedbackOpen} onOpenChange={setFeedbackOpen}>
-            <div className="shrink-0 space-y-2 border-b bg-muted/20 p-2 lg:hidden">
+            <div className="shrink-0 space-y-2 border-b bg-muted/40 p-2 lg:hidden">
               <div className="flex gap-2">
                 <select
                   aria-label="Review revision"
@@ -2085,7 +2106,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               />
             </div>
             <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)]">
-              <aside className="hidden min-h-0 overflow-auto border-r bg-card lg:block">
+              <aside className="hidden min-h-0 overflow-auto border-r bg-muted/30 lg:block">
                 <div className="border-b p-3">
                   <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Revision
@@ -2113,9 +2134,17 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                       viewed
                     </span>
                   </div>
-                  <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    role="progressbar"
+                    aria-label="Files viewed"
+                    aria-valuemin={0}
+                    aria-valuemax={review.files.length || 1}
+                    aria-valuenow={review.viewedPaths.length}
+                    aria-valuetext={`${review.viewedPaths.length} of ${review.files.length} files viewed`}
+                    className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
+                  >
                     <i
-                      className="block h-full rounded-full bg-emerald-500"
+                      className="block h-full rounded-full bg-primary"
                       style={{
                         width: `${review.files.length ? (review.viewedPaths.length / review.files.length) * 100 : 0}%`,
                       }}
@@ -2135,16 +2164,19 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     <button
                       key={candidate.path}
                       onClick={() => chooseFile(candidate.path)}
-                      className={`mb-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs ${candidate.path === filePath ? "bg-muted font-medium shadow-[inset_2px_0_theme(colors.primary)]" : "hover:bg-muted/60"}`}
+                      aria-current={
+                        candidate.path === filePath ? "true" : undefined
+                      }
+                      className={`mb-1 flex w-full items-center gap-2 rounded-lg border border-l-2 px-2 py-2.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${candidate.path === filePath ? "border-primary/30 border-l-primary bg-primary/10 font-semibold text-foreground hover:bg-primary/15" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"}`}
                     >
                       <span
                         className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${(() => {
                           const kind = normalizeChangeKind(candidate.status);
                           return kind === "added"
-                            ? "bg-green-500/15 text-green-600"
+                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
                             : kind === "deleted"
-                              ? "bg-red-500/15 text-red-600"
-                              : "bg-yellow-500/15 text-yellow-600";
+                              ? "bg-red-500/15 text-red-700 dark:text-red-400"
+                              : "bg-amber-500/15 text-amber-700 dark:text-amber-400";
                         })()}`}
                       >
                         {candidate.status[0]?.toUpperCase()}
@@ -2153,11 +2185,11 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                         <span className="block truncate" title={candidate.path}>
                           {compactPath(candidate.path, 32)}
                         </span>
-                        <span className="mt-0.5 flex gap-2 text-[11px] font-normal">
-                          <span className="text-green-600">
+                        <span className="mt-0.5 flex gap-2 text-[11px] font-normal tabular-nums">
+                          <span className="text-emerald-700 dark:text-emerald-400">
                             +{candidate.additions}
                           </span>
-                          <span className="text-red-600">
+                          <span className="text-red-700 dark:text-red-400">
                             -{candidate.deletions}
                           </span>
                         </span>
@@ -2187,99 +2219,113 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               </aside>
               <section
                 ref={scrollSectionRef}
-                className="min-h-0 overflow-auto pb-20 lg:pb-3"
+                aria-label="File diff"
+                className="min-h-0 overflow-auto bg-muted/60 pb-20 lg:pb-3"
               >
-                <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur lg:px-4">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      chooseFile(
-                        adjacentFilePath(visibleFiles, filePath, -1) ??
-                          filePath ??
-                          "",
-                      )
-                    }
-                    disabled={!visibleFiles.length}
-                    aria-label="Previous changed file"
-                  >
-                    ‹
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      chooseFile(
-                        adjacentFilePath(visibleFiles, filePath, 1) ??
-                          filePath ??
-                          "",
-                      )
-                    }
-                    disabled={!visibleFiles.length}
-                    aria-label="Next changed file"
-                  >
-                    ›
-                  </Button>
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold">
-                    {file?.path ?? "No changed files"}
-                  </span>
-                  <span className="hidden text-[11px] text-muted-foreground sm:inline">
-                    {currentIndex} / {review.files.length}
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className={`${COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS} text-muted-foreground`}
-                    onClick={() => setWrapLines((current) => !current)}
-                    aria-pressed={wrapLines}
-                    aria-label={
-                      wrapLines ? "Disable diff line wrap" : "Wrap diff lines"
-                    }
-                  >
-                    <Icon name="TextWrap" />
-                  </Button>
-                  <Dialog.Trigger asChild>
+                <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b bg-card px-3 py-2 shadow-sm lg:px-4">
+                  <div className="flex min-w-0 flex-1 basis-40 items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        chooseFile(
+                          adjacentFilePath(visibleFiles, filePath, -1) ??
+                            filePath ??
+                            "",
+                        )
+                      }
+                      disabled={!visibleFiles.length}
+                      aria-label="Previous changed file"
+                    >
+                      ‹
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        chooseFile(
+                          adjacentFilePath(visibleFiles, filePath, 1) ??
+                            filePath ??
+                            "",
+                        )
+                      }
+                      disabled={!visibleFiles.length}
+                      aria-label="Next changed file"
+                    >
+                      ›
+                    </Button>
+                    <span
+                      className="min-w-0 flex-1 truncate px-1 font-mono text-xs font-semibold"
+                      title={file?.path}
+                    >
+                      {file?.path ?? "No changed files"}
+                    </span>
+                    <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                      {currentIndex} / {review.files.length}
+                    </span>
+                  </div>
+                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className={`${COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS} text-muted-foreground`}
+                      onClick={() => setWrapLines((current) => !current)}
+                      aria-pressed={wrapLines}
+                      aria-label={
+                        wrapLines ? "Disable diff line wrap" : "Wrap diff lines"
+                      }
+                    >
+                      <Icon name="TextWrap" />
+                    </Button>
+                    <Dialog.Trigger asChild>
+                      <Button
+                        className="hidden lg:inline-flex"
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Review feedback, ${pendingCount} pending/unsent comments`}
+                        onClick={(event) => {
+                          feedbackOpenerRef.current = event.currentTarget;
+                        }}
+                      >
+                        <Icon name="MessageSquare" className="size-3.5" />
+                        Review feedback
+                        {pendingCount > 0 ? (
+                          <span
+                            aria-hidden="true"
+                            className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground tabular-nums"
+                          >
+                            {pendingCount}
+                          </span>
+                        ) : null}
+                      </Button>
+                    </Dialog.Trigger>
                     <Button
                       className="hidden lg:inline-flex"
                       size="sm"
-                      variant="outline"
-                      aria-label={`Review feedback, ${pendingCount} pending/unsent comments`}
-                      onClick={(event) => {
-                        feedbackOpenerRef.current = event.currentTarget;
-                      }}
+                      variant={isViewed ? "secondary" : "outline"}
+                      onClick={() =>
+                        void (isViewed
+                          ? markViewed(false)
+                          : markViewedAndNext(false))
+                      }
+                      disabled={!file}
                     >
-                      Review feedback{" "}
-                      <span className="text-[11px] tabular-nums">
-                        {pendingCount} pending/unsent
-                      </span>
+                      {isViewed ? "Viewed ✓" : "Mark viewed"}
                     </Button>
-                  </Dialog.Trigger>
-                  <Button
-                    className="hidden lg:inline-flex"
-                    size="sm"
-                    variant={isViewed ? "secondary" : "outline"}
-                    onClick={() =>
-                      void (isViewed
-                        ? markViewed(false)
-                        : markViewedAndNext(false))
-                    }
-                    disabled={!file}
-                  >
-                    {isViewed ? "Viewed ✓" : "Mark viewed"}
-                  </Button>
-                  <Button
-                    className="lg:hidden"
-                    size="sm"
-                    variant={isViewed ? "secondary" : "default"}
-                    onClick={() =>
-                      void (isViewed
-                        ? markViewed(false)
-                        : markViewedAndNext(true))
-                    }
-                    disabled={!file}
-                  >
-                    {isViewed ? "Viewed ✓" : "Viewed & next"}
-                  </Button>
+                    <Button
+                      className="lg:hidden"
+                      size="sm"
+                      variant={isViewed ? "secondary" : "default"}
+                      onClick={() =>
+                        void (isViewed
+                          ? markViewed(false)
+                          : markViewedAndNext(true))
+                      }
+                      disabled={!file}
+                    >
+                      {isViewed ? "Viewed ✓" : "Viewed & next"}
+                    </Button>
+                  </div>
                 </div>
                 <div className="p-2 lg:p-4">
                   {!file ? (
@@ -2334,7 +2380,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                         onEditDraft={updateEditDraft}
                         editDrafts={editDrafts}
                       />
-                      <div className="overflow-hidden rounded-md border bg-card">
+                      <div className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
                         <PierreReviewDiff
                           fileDiff={parsed}
                           lineAnnotations={currentAnnotations}
@@ -2369,18 +2415,26 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               </section>
             </div>
             <Dialog.Portal>
-              <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
+              <Dialog.Overlay
+                data-bb-plugin={pluginId}
+                data-bb-plugin-root=""
+                data-bb-portaled-overlay=""
+                className="fixed inset-0 z-40 bg-black/40"
+              />
               <Dialog.Content
+                data-bb-plugin={pluginId}
+                data-bb-plugin-root=""
+                data-bb-portaled-overlay=""
                 onEscapeKeyDown={() => setFeedbackOpen(false)}
                 onCloseAutoFocus={(event) => {
                   event.preventDefault();
                   feedbackOpenerRef.current?.focus();
                 }}
-                className="fixed inset-0 z-50 flex max-h-dvh w-full flex-col overflow-auto border bg-background p-4 shadow-2xl focus:outline-none lg:inset-y-0 lg:left-auto lg:right-0 lg:max-w-lg"
+                className="fixed inset-0 z-50 flex max-h-dvh w-full flex-col overflow-auto border bg-card p-4 shadow-2xl focus:outline-none lg:inset-y-0 lg:left-auto lg:right-0 lg:max-w-lg"
               >
                 <Dialog.Description className="sr-only">
-                  {pendingCount} pending/unsent comments. Review, select, and
-                  send feedback to the agent.
+                  {pendingCount} pending/unsent comments. Review and send
+                  feedback to the agent.
                 </Dialog.Description>
                 <ReviewSummary
                   review={review}

@@ -104,6 +104,59 @@ describe("Review Workspace app", () => {
     slot.lifecycle.unmount();
   });
 
+  it("identifies the active file and exposes viewed progress as navigation changes", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = {
+      ...reviewFixture(),
+      files: [
+        ...reviewFixture().files,
+        {
+          ...reviewFixture().files[0]!,
+          path: "docs/guide.md",
+          patch: patch.replaceAll("src/example.ts", "docs/guide.md"),
+        },
+      ],
+    };
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          markFileViewed: async () => ({ viewedCount: 1 }),
+        } as any,
+      },
+    );
+
+    const nav = await slot.findByRole("navigation", { name: "Changed files" });
+    const source = within(nav).getByRole("button", { name: /src\/example.ts/ });
+    const docs = within(nav).getByRole("button", { name: /docs\/guide.md/ });
+    const progress = slot.getByRole("progressbar", { name: "Files viewed" });
+    expect(source.getAttribute("aria-current")).toBe("true");
+    expect(docs.hasAttribute("aria-current")).toBe(false);
+    expect(progress.getAttribute("aria-valuenow")).toBe("0");
+    expect(progress.getAttribute("aria-valuemax")).toBe("2");
+
+    fireEvent.click(docs);
+    await vi.waitFor(() => {
+      expect(docs.getAttribute("aria-current")).toBe("true");
+      expect(source.hasAttribute("aria-current")).toBe(false);
+    });
+    fireEvent.click(slot.getByRole("button", { name: "Mark viewed" }));
+    await vi.waitFor(() => {
+      expect(progress.getAttribute("aria-valuenow")).toBe("1");
+      expect(progress.getAttribute("aria-valuetext")).toBe(
+        "1 of 2 files viewed",
+      );
+      expect(source.getAttribute("aria-current")).toBe("true");
+    });
+    expect(within(docs).getByLabelText("Viewed")).toBeTruthy();
+    expect(slot.getByRole("region", { name: "File diff" })).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+
   it("keeps collapsed context expandable through Pierre's supported loader", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const review = reviewFixture();
@@ -195,6 +248,10 @@ describe("Review Workspace app", () => {
     trigger.click();
     const dialog = await slot.findByRole("dialog");
     expect(dialog).toBeTruthy();
+    // Portals leave the panel's DOM subtree, so they must retain its CSS scope.
+    expect(dialog.getAttribute("data-bb-plugin")).toBe("test-plugin");
+    expect(dialog.hasAttribute("data-bb-plugin-root")).toBe(true);
+    expect(dialog.hasAttribute("data-bb-portaled-overlay")).toBe(true);
     expect(slot.getByRole("heading", { name: "Review feedback" })).toBeTruthy();
 
     fireEvent.click(
