@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Resume existing reviews from the sidebar's Recent reviews page, with one latest snapshot per thread, pending human comments first, snapshot metadata, and viewed-file progress. Reloading the list does not refresh diffs or send feedback.
 - Review uncommitted changes, a selected commit, or a committed branch comparison through immutable revisions, with previous revisions retained.
 - Add feedback on diff lines or whole files, write a review note, and mark files as viewed. Refresh carries unresolved threads and the note forward.
 - Compose file and line comments and reply to inline AI comments, including AI replies routed to their existing root thread, with focused editors and `Ctrl+Enter` submit. Failed saves keep the draft and show an inline error.

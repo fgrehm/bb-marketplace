@@ -22,6 +22,14 @@ Each refresh creates an immutable review revision. Comments stay anchored to the
 
 The workspace sends anchored comments and the optional review note through the existing `sendBatch` contract. Review-level verdicts are not supported.
 
+## Resume a review
+
+Open **Review Workspace** in the sidebar for **Recent reviews**, a read-only list of the latest saved snapshot per thread across your projects. Each row shows the thread and project, snapshot target and time, unsent unresolved human-comment count (including replies), and viewed-file progress. Reviews with pending comments come first, newest snapshot first within each group. Review notes are not included in the pending-comment count.
+
+Choose a row to open that thread's existing review. **Reload list** updates the list and counts; neither action refreshes Git diffs, creates snapshots, or sends feedback. The list loads when you open the page and on manual reload, without background polling. Failed reloads leave the previous rows visible with a retry action.
+
+Discovery is limited to the 100 most recently snapshotted threads and shows up to 50 reviews. Hidden, archived, deleted, and missing threads are omitted. Older revisions remain available from each thread's revision picker, not as duplicate rows here. If the list is empty, open a thread's **Review** button, then choose **Open review** to save its first snapshot.
+
 ## Development
 
 ```sh

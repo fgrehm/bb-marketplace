@@ -46,7 +46,7 @@ Replaces the browser tab favicon with uploaded light/dark SVG artwork. Reacts to
 
 ### [Review Workspace](plugins/review-workspace) - `review-workspace`
 
-Diff-first asynchronous review workspaces inside a thread: snapshots the environment's uncommitted changes as immutable revisions, lets a reviewer select exact line ranges in the diff and anchor comments, carry comments forward to refreshed revisions, and send a batch of feedback to the agent in the parent thread.
+Diff-first asynchronous review workspaces inside a thread: snapshots the environment's uncommitted changes as immutable revisions, lets a reviewer select exact line ranges in the diff and anchor comments, carry comments forward to refreshed revisions, and send a batch of feedback to the agent in the parent thread. The sidebar's Recent reviews page resumes each thread's latest saved review, with pending-comment counts and viewed-file progress.
 
 ## Repo layout
 

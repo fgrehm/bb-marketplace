@@ -100,7 +100,27 @@ const reviewSummaryShape = reviewShape
     viewedCount: z.number().int(),
   });
 
+const recentReviewShape = z
+  .object({
+    id: z.string(),
+    threadId: z.string(),
+    threadTitle: z.string(),
+    projectId: z.string(),
+    projectName: z.string(),
+    createdAt: z.number(),
+    target: reviewTargetShape,
+    fileCount: z.number().int().nonnegative(),
+    viewedCount: z.number().int().nonnegative(),
+    pendingCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type RecentReview = z.infer<typeof recentReviewShape>;
+
 export const rpcContract = defineRpcContract({
+  recentReviews: {
+    input: z.object({}).strict(),
+    output: z.object({ reviews: z.array(recentReviewShape).max(50) }),
+  },
   review: {
     input: z
       .object({
@@ -401,6 +421,8 @@ export default async function plugin(bb: BbPluginApi) {
     `UPDATE review_annotations SET file_level = COALESCE((SELECT root.file_level FROM review_annotations AS root WHERE root.id = review_annotations.parent_id), file_level) WHERE parent_id IS NOT NULL`,
     // Retire the experimental sem cache without changing applied migrations.
     `DROP TABLE IF EXISTS review_entities`,
+    `CREATE INDEX review_revisions_thread_created_at ON review_revisions (thread_id, created_at DESC)`,
+    `CREATE INDEX review_annotations_review_id ON review_annotations (review_id)`,
   ]);
   db.pragma("foreign_keys = ON");
 
@@ -825,6 +847,99 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   bb.rpc.register(rpcContract, {
+    async recentReviews() {
+      // Bound discovery by saved snapshots, not by BB's default thread-list
+      // limit. Read metadata only, never patches, Git state or agent output.
+      const rows = db
+        .prepare(
+          `
+        WITH ranked AS (
+          SELECT id, thread_id, created_at, target, rowid AS insertion_order,
+            ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY created_at DESC, rowid DESC) AS position
+          FROM review_revisions
+        ), recent AS (
+          SELECT * FROM ranked WHERE position = 1
+          ORDER BY created_at DESC, insertion_order DESC LIMIT 100
+        )
+        SELECT id, thread_id, created_at, target,
+          (SELECT COUNT(*) FROM review_files f WHERE f.review_id = recent.id) AS file_count,
+          (SELECT COUNT(*) FROM review_viewed_files v JOIN review_files f ON f.review_id = v.review_id AND f.path = v.path WHERE v.review_id = recent.id) AS viewed_count,
+          (SELECT COUNT(*) FROM review_annotations a WHERE a.review_id = recent.id AND a.author = 'human' AND a.sent_at IS NULL AND a.resolved_at IS NULL) AS pending_count
+        FROM recent ORDER BY created_at DESC, insertion_order DESC
+      `,
+        )
+        .all() as Array<{
+        id: string;
+        thread_id: string;
+        created_at: number;
+        target: string;
+        file_count: number;
+        viewed_count: number;
+        pending_count: number;
+      }>;
+      const visible: Array<{
+        row: (typeof rows)[number];
+        thread: Awaited<ReturnType<typeof bb.sdk.threads.get>>;
+      }> = [];
+      // Small batches keep a large local history from flooding the SDK.
+      for (let offset = 0; offset < rows.length; offset += 5) {
+        const entries = await Promise.all(
+          rows.slice(offset, offset + 5).map(async (row) => {
+            let thread;
+            try {
+              thread = await bb.sdk.threads.get({ threadId: row.thread_id });
+            } catch (cause) {
+              // Deleted threads can leave snapshots behind. Other failures must
+              // surface as errors, not turn a populated workspace into "empty".
+              if (
+                cause &&
+                typeof cause === "object" &&
+                "status" in cause &&
+                cause.status === 404 &&
+                "code" in cause &&
+                cause.code === "thread_not_found"
+              )
+                return null;
+              throw cause;
+            }
+            if (
+              thread.visibility !== "visible" ||
+              thread.archivedAt !== null ||
+              thread.deletedAt !== null
+            )
+              return null;
+            return { row, thread };
+          }),
+        );
+        for (const entry of entries) if (entry) visible.push(entry);
+      }
+      if (!visible.length) return { reviews: [] };
+      const projects = await bb.sdk.projects.list({ includePersonal: true });
+      const names = new Map(
+        projects.map((project) => [project.id, project.name]),
+      );
+      const reviews: RecentReview[] = visible.map(({ row, thread }) => ({
+        id: row.id,
+        threadId: row.thread_id,
+        threadTitle:
+          thread.title?.trim() ||
+          thread.titleFallback?.trim() ||
+          "Untitled thread",
+        projectId: thread.projectId,
+        projectName: names.get(thread.projectId) ?? "Unknown project",
+        createdAt: row.created_at,
+        target: decodeTarget(row.target),
+        fileCount: row.file_count,
+        viewedCount: row.viewed_count,
+        pendingCount: row.pending_count,
+      }));
+      reviews.sort(
+        (a, b) =>
+          Number(b.pendingCount > 0) - Number(a.pendingCount > 0) ||
+          b.createdAt - a.createdAt,
+      );
+      return { reviews: reviews.slice(0, 50) };
+    },
     review({ threadId, reviewId }) {
       const review = reviewId ? read(reviewId) : latest(threadId);
       return { review: review?.threadId === threadId ? review : null };

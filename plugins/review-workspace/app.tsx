@@ -22,7 +22,7 @@ import {
   type FileDiffMetadata,
   type SelectedLineRange,
 } from "@pierre/diffs";
-import type { rpcContract } from "./server";
+import type { rpcContract, RecentReview } from "./server";
 import { Button } from "@/components/ui/button";
 import {
   COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
@@ -2643,14 +2643,220 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   );
 }
 
+function RecentReviews() {
+  const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
+  const pluginId = experimental_usePluginId();
+  const [reviews, setReviews] = useState<RecentReview[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    rpc
+      .call("recentReviews", {})
+      .then((result) => {
+        if (!cancelled) setReviews(result.reviews);
+      })
+      .catch((cause) => {
+        if (!cancelled)
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Unable to load recent reviews.",
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rpc, reloadKey]);
+
+  return (
+    <main className="h-full overflow-auto bg-background text-foreground">
+      <div className="mx-auto max-w-4xl space-y-6 p-4 sm:p-8">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 space-y-1">
+            <h1 className="text-xl font-semibold tracking-tight">
+              Recent reviews
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Latest saved snapshots, pending feedback first.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => setReloadKey((key) => key + 1)}
+          >
+            <Icon
+              name="ArrowReloadHorizontal"
+              className={`size-3.5 ${loading ? "animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+            {loading ? "Loading..." : error ? "Try again" : "Reload list"}
+          </Button>
+        </header>
+        {error ? (
+          <div
+            role="alert"
+            className="rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-sm"
+          >
+            <p className="font-medium text-destructive">
+              Could not load recent reviews
+            </p>
+            <p className="mt-1 break-words text-muted-foreground">{error}</p>
+          </div>
+        ) : null}
+        {reviews === null && loading ? (
+          <p
+            role="status"
+            className="py-10 text-center text-sm text-muted-foreground"
+          >
+            Loading reviews...
+          </p>
+        ) : reviews?.length === 0 && !error ? (
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
+            <Icon
+              name="GitPullRequest"
+              className="size-7 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <h2 className="text-base font-medium">No recent reviews yet</h2>
+            <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
+              Open a thread and choose{" "}
+              <span className="font-medium text-foreground">Review</span>, then{" "}
+              <span className="font-medium text-foreground">Open review</span>{" "}
+              to save a snapshot. Your recent reviews will appear here so you
+              can pick up where you left off.
+            </p>
+          </div>
+        ) : reviews?.length ? (
+          <nav aria-label="Recent review workspaces" aria-busy={loading}>
+            <ul className="divide-y rounded-xl border bg-card">
+              {reviews.map((review) => (
+                <li key={review.id}>
+                  <a
+                    href={`/plugins/${encodeURIComponent(pluginId)}/review/review/${encodeURIComponent(review.threadId)}`}
+                    aria-label={`Open review for ${review.threadTitle}`}
+                    className="group flex flex-col gap-4 rounded-lg p-4 transition-colors hover:bg-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:flex-row sm:items-center sm:p-5"
+                    onClick={(event) => {
+                      if (
+                        event.button !== 0 ||
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey
+                      )
+                        return;
+                      event.preventDefault();
+                      navigate.toPluginPanel("review", {
+                        subPath: `review/${review.threadId}`,
+                      });
+                    }}
+                  >
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div>
+                        <p className="break-words text-sm font-semibold [overflow-wrap:anywhere]">
+                          {review.threadTitle}
+                        </p>
+                        <p className="mt-0.5 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                          {review.projectName}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span className="break-all rounded bg-muted px-1.5 py-0.5 font-mono">
+                          {review.target.type === "uncommitted"
+                            ? "Uncommitted"
+                            : describeTarget(review.target)}
+                        </span>
+                        <span>
+                          Snapshot{" "}
+                          <time
+                            dateTime={new Date(review.createdAt).toISOString()}
+                          >
+                            {new Date(review.createdAt).toLocaleString(
+                              undefined,
+                              { dateStyle: "medium", timeStyle: "short" },
+                            )}
+                          </time>
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 sm:flex-col sm:items-end sm:gap-2">
+                      {review.pendingCount > 0 ? (
+                        <StateChip tone="primary">
+                          {review.pendingCount} pending{" "}
+                          {review.pendingCount === 1 ? "comment" : "comments"}
+                        </StateChip>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          No pending comments
+                        </span>
+                      )}
+                      {review.fileCount > 0 ? (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>
+                            {review.viewedCount} of {review.fileCount} files
+                            viewed
+                          </span>
+                          <div
+                            role="progressbar"
+                            aria-label={`Files viewed for ${review.threadTitle}`}
+                            aria-valuemin={0}
+                            aria-valuemax={review.fileCount}
+                            aria-valuenow={review.viewedCount}
+                            aria-valuetext={`${review.viewedCount} of ${review.fileCount} files viewed`}
+                            className="h-1 w-12 overflow-hidden rounded-full bg-muted"
+                          >
+                            <div
+                              className="h-full bg-primary/60"
+                              style={{
+                                width: `${(review.viewedCount / review.fileCount) * 100}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          No changed files
+                        </span>
+                      )}
+                    </div>
+                    <Icon
+                      name="ChevronRight"
+                      className="hidden size-4 shrink-0 text-muted-foreground sm:block"
+                      aria-hidden="true"
+                    />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        ) : null}
+        {reviews?.length ? (
+          <p className="text-xs text-muted-foreground">
+            Counts reflect saved snapshots. Reloading this list does not refresh
+            diffs.
+          </p>
+        ) : null}
+      </div>
+    </main>
+  );
+}
+
 function ReviewPage({ subPath }: { subPath: string }) {
   const threadId = subPath.replace(/^review\//, "");
   return threadId ? (
-    <ReviewPanel threadId={threadId} />
+    <ReviewPanel key={threadId} threadId={threadId} />
   ) : (
-    <main className="p-6 text-sm text-muted-foreground">
-      Open Review Workspace from a thread&apos;s Review button.
-    </main>
+    <RecentReviews />
   );
 }
 
