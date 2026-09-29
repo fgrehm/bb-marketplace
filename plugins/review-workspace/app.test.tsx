@@ -2,7 +2,7 @@
 Element.prototype.scrollIntoView =
   Element.prototype.scrollIntoView ?? (() => {});
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent } from "@testing-library/react";
+import { fireEvent, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 vi.mock("@/components/ui/icon", () => ({
@@ -17,15 +17,24 @@ vi.mock("@pierre/diffs/react", () => ({
         data-expand-unchanged={String(props.options.expandUnchanged)}
         data-hunk-separators={props.options.hunkSeparators}
       />
-      <div>
-        {(props.lineAnnotations ?? []).map((la: any) => (
-          <div key={String(la.lineNumber)} data-line={la.lineNumber}>
+      <div
+        onPointerUp={() =>
+          props.options.onLineSelectionEnd?.({
+            start: 1,
+            end: 1,
+            side: "additions",
+          })
+        }
+      >
+        {(props.lineAnnotations ?? []).map((la: any, index: number) => (
+          <div key={`${la.lineNumber}-${index}`} data-line={la.lineNumber}>
             {la.metadata && "id" in la.metadata ? (
               <div data-annotation-id={la.metadata.id} />
             ) : null}
             {la.metadata && "entityMarker" in la.metadata ? (
               <div data-entity-anchor={la.metadata.entityId} />
             ) : null}
+            {props.renderAnnotation?.(la)}
           </div>
         ))}
       </div>
@@ -141,6 +150,509 @@ describe("Review Workspace app", () => {
         input: { reviewId: review.id, filePath: "src/example.ts" },
       });
     });
+    slot.lifecycle.unmount();
+  });
+
+  it("opens accessible feedback, preserves drafts, and sends selected comments", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const root = {
+      id: "22222222-2222-4222-8222-222222222221",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "review this line",
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "human",
+      parentId: null,
+      fileLevel: false,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    const review = { ...reviewFixture(), annotations: [root] } as any;
+    const calls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          sendBatch: async (input: any) => {
+            calls.push(input);
+            return { sentAt: 10 };
+          },
+        } as any,
+      },
+    );
+
+    expect(slot.queryByRole("dialog")).toBeNull();
+    const trigger = (
+      await slot.findAllByRole("button", {
+        name: "Review feedback, 1 pending/unsent comments",
+      })
+    )[0]!;
+    trigger.click();
+    const dialog = await slot.findByRole("dialog");
+    expect(dialog).toBeTruthy();
+    expect(slot.getByRole("heading", { name: "Review feedback" })).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reply" }));
+    const reply = await within(dialog).findByLabelText(
+      "Reply to src/example.ts:1 (new)",
+    );
+    fireEvent.change(reply, { target: { value: "draft reply" } });
+    const note = slot.getByLabelText("Review note");
+    fireEvent.change(note, { target: { value: "draft summary" } });
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    await vi.waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+    trigger.click();
+    await slot.findByRole("dialog");
+    expect(
+      (slot.getByLabelText("Review note") as HTMLTextAreaElement).value,
+    ).toBe("draft summary");
+    expect(
+      (
+        slot.getByLabelText(
+          "Reply to src/example.ts:1 (new)",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("draft reply");
+
+    const checkbox = slot.getByLabelText("Select src/example.ts:1 (new)");
+    fireEvent.click(checkbox);
+    slot.getByRole("button", { name: "Send 1 comment to agent" }).click();
+    await vi.waitFor(() => {
+      expect(calls).toEqual([
+        { reviewId: review.id, annotationIds: [root.id] },
+      ]);
+    });
+    slot.lifecycle.unmount();
+  });
+
+  it("replies inline to an agent root and sends the human reply", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const root = {
+      id: "66666666-6666-4666-8666-666666666661",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "agent finding",
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "agent",
+      parentId: null,
+      fileLevel: false,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    const humanReply = {
+      ...root,
+      id: "66666666-6666-4666-8666-666666666662",
+      body: "human response",
+      author: "human",
+      parentId: root.id,
+    };
+    const review = { ...reviewFixture(), annotations: [root] } as any;
+    const addCalls: any[] = [];
+    const sendCalls: any[] = [];
+    let addAttempt = 0;
+    let rejectFirstAttempt: ((cause: Error) => void) | undefined;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          addAnnotation: (input: any) => {
+            addCalls.push(input);
+            addAttempt += 1;
+            if (addAttempt === 1)
+              return new Promise((_resolve, reject) => {
+                rejectFirstAttempt = reject;
+              });
+            return Promise.resolve({ annotation: humanReply });
+          },
+          sendBatch: async (input: any) => {
+            sendCalls.push(input);
+            return { sentAt: 20 };
+          },
+        } as any,
+      },
+    );
+
+    const replyButton = await slot.findByRole("button", {
+      name: "Reply to AI comment at src/example.ts:1 (new)",
+    });
+    fireEvent.click(replyButton);
+    let textarea = await slot.findByLabelText(
+      "Reply to src/example.ts:1 (new)",
+    );
+    fireEvent.change(textarea, { target: { value: "discard this draft" } });
+    fireEvent.click(slot.getByRole("button", { name: "Cancel" }));
+    expect(slot.queryByLabelText("Reply to src/example.ts:1 (new)")).toBeNull();
+
+    fireEvent.click(
+      slot.getByRole("button", {
+        name: "Reply to AI comment at src/example.ts:1 (new)",
+      }),
+    );
+    textarea = await slot.findByLabelText("Reply to src/example.ts:1 (new)");
+    fireEvent.change(textarea, { target: { value: "human response" } });
+    const submitReply = slot.getByRole("button", { name: "Reply" });
+    fireEvent.pointerDown(submitReply);
+    fireEvent.pointerUp(submitReply);
+    expect(slot.queryByText(/Comment on src\/example\.ts:1/)).toBeNull();
+    fireEvent.click(submitReply);
+    fireEvent.click(submitReply);
+    await vi.waitFor(() => expect(addCalls).toHaveLength(1));
+    expect((submitReply as HTMLButtonElement).disabled).toBe(true);
+    rejectFirstAttempt?.(new Error("temporary reply failure"));
+    await slot.findByText("temporary reply failure");
+    expect((textarea as HTMLTextAreaElement).value).toBe("human response");
+    fireEvent.click(slot.getByRole("button", { name: "Reply" }));
+
+    await vi.waitFor(() => {
+      expect(addCalls).toHaveLength(2);
+      expect(addCalls[1]).toMatchObject({
+        reviewId: review.id,
+        filePath: "src/example.ts",
+        side: "new",
+        startLine: 1,
+        endLine: 1,
+        body: "human response",
+        parentId: root.id,
+      });
+    });
+    fireEvent.click(
+      (
+        await slot.findAllByRole("button", {
+          name: "Review feedback, 1 pending/unsent comments",
+        })
+      )[1]!,
+    );
+    const dialog = await slot.findByRole("dialog");
+    expect(
+      (
+        within(dialog).getByLabelText(
+          "Select src/example.ts:1 (new)",
+        ) as HTMLInputElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (
+        within(dialog).getByLabelText(
+          "Select reply to src/example.ts:1 (new)",
+        ) as HTMLInputElement
+      ).disabled,
+    ).toBe(false);
+    fireEvent.click(
+      within(dialog).getByLabelText("Select reply to src/example.ts:1 (new)"),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Send 1 comment to agent" }),
+    );
+    await vi.waitFor(() => {
+      expect(sendCalls).toEqual([
+        { reviewId: review.id, annotationIds: [humanReply.id] },
+      ]);
+    });
+    slot.lifecycle.unmount();
+  });
+
+  it("replies to an AI reply by targeting its existing root", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const root = {
+      id: "77777777-7777-4777-8777-777777777771",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "human root",
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "human",
+      parentId: null,
+      fileLevel: false,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    const agentReply = {
+      ...root,
+      id: "77777777-7777-4777-8777-777777777772",
+      body: "agent reply",
+      author: "agent",
+      parentId: root.id,
+    };
+    const humanReply = {
+      ...root,
+      id: "77777777-7777-4777-8777-777777777773",
+      body: "human follow-up",
+      parentId: root.id,
+    };
+    const review = {
+      ...reviewFixture(),
+      annotations: [root, agentReply],
+    } as any;
+    let submitted: any;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          addAnnotation: async (input: any) => {
+            submitted = input;
+            return { annotation: humanReply };
+          },
+        } as any,
+      },
+    );
+
+    fireEvent.click(
+      await slot.findByRole("button", {
+        name: "Reply to AI comment at src/example.ts:1 (new)",
+      }),
+    );
+    const textarea = await slot.findByLabelText(
+      "Reply to src/example.ts:1 (new)",
+    );
+    fireEvent.change(textarea, { target: { value: "human follow-up" } });
+    fireEvent.click(slot.getByRole("button", { name: "Reply" }));
+    await vi.waitFor(() => expect(submitted).toBeTruthy());
+    expect(submitted).toMatchObject({
+      parentId: root.id,
+      body: "human follow-up",
+    });
+    expect(submitted.parentId).not.toBe(agentReply.id);
+    await slot.findByText("human follow-up");
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps file-level replies on the existing whole-file comment path", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const root = {
+      id: "88888888-8888-4888-8888-888888888881",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 0,
+      endLine: 0,
+      body: "whole-file agent note",
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "agent",
+      parentId: null,
+      fileLevel: true,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    const humanReply = {
+      ...root,
+      id: "88888888-8888-4888-8888-888888888882",
+      body: "whole-file response",
+      author: "human",
+      parentId: root.id,
+    };
+    const review = { ...reviewFixture(), annotations: [root] } as any;
+    let submitted: any;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          addAnnotation: async (input: any) => {
+            submitted = input;
+            return { annotation: humanReply };
+          },
+        } as any,
+      },
+    );
+
+    fireEvent.click(await slot.findByRole("button", { name: "Reply" }));
+    const textarea = await slot.findByLabelText(
+      "Reply to src/example.ts (whole file)",
+    );
+    fireEvent.change(textarea, { target: { value: "whole-file response" } });
+    fireEvent.click(slot.getByRole("button", { name: "Reply" }));
+    await vi.waitFor(() => expect(submitted).toBeTruthy());
+    expect(submitted).toMatchObject({
+      filePath: "src/example.ts",
+      startLine: 0,
+      endLine: 0,
+      parentId: root.id,
+    });
+    slot.lifecycle.unmount();
+  });
+
+  it("shows the empty state after viewing the last unviewed file", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = {
+      ...reviewFixture(),
+      files: [
+        ...reviewFixture().files,
+        {
+          ...reviewFixture().files[0],
+          path: "docs/guide.md",
+          patch: patch.replaceAll("src/example.ts", "docs/guide.md"),
+        },
+      ],
+      viewedPaths: ["docs/guide.md"],
+    } as any;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          markFileViewed: async () => ({ viewedCount: 2 }),
+        } as any,
+      },
+    );
+
+    fireEvent.click(await slot.findByRole("button", { name: "Unviewed" }));
+    const fileSelect = await slot.findByLabelText("Changed file", {
+      exact: true,
+    });
+    expect((fileSelect as HTMLSelectElement).value).toBe("src/example.ts");
+    slot.getByRole("button", { name: "Viewed & next" }).click();
+    await vi.waitFor(() => {
+      expect((fileSelect as HTMLSelectElement).value).toBe("");
+      expect((fileSelect as HTMLSelectElement).disabled).toBe(true);
+    });
+    expect(slot.getByText("No changed files.")).toBeTruthy();
+    expect(slot.queryByRole("dialog")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("filters mobile files and preserves an empty selection when no files match", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = {
+      ...reviewFixture(),
+      files: [
+        ...reviewFixture().files,
+        {
+          ...reviewFixture().files[0],
+          path: "docs/guide.md",
+          patch: patch.replaceAll("src/example.ts", "docs/guide.md"),
+        },
+      ],
+      annotations: [
+        {
+          id: "22222222-2222-4222-8222-222222222221",
+          filePath: "src/example.ts",
+          side: "new",
+          startLine: 1,
+          endLine: 1,
+          body: "inline root",
+          createdAt: 1,
+          sentAt: null,
+          resolvedAt: null,
+          author: "human",
+          parentId: null,
+          fileLevel: false,
+        },
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          filePath: "src/example.ts",
+          side: "new",
+          startLine: 1,
+          endLine: 1,
+          body: "reply",
+          createdAt: 2,
+          sentAt: null,
+          resolvedAt: null,
+          author: "human",
+          parentId: "22222222-2222-4222-8222-222222222221",
+          fileLevel: false,
+        },
+        {
+          id: "22222222-2222-4222-8222-222222222223",
+          filePath: "docs/guide.md",
+          side: "new",
+          startLine: 0,
+          endLine: 0,
+          body: "file root",
+          createdAt: 3,
+          sentAt: null,
+          resolvedAt: null,
+          author: "human",
+          parentId: null,
+          fileLevel: true,
+        },
+      ],
+    } as any;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+        } as any,
+      },
+    );
+
+    const fileSelect = await slot.findByLabelText("Changed file", {
+      exact: true,
+    });
+    fireEvent.change(slot.getByLabelText("Changed file filter"), {
+      target: { value: "with-open-comments" },
+    });
+    await vi.waitFor(() => {
+      expect(
+        Array.from((fileSelect as HTMLSelectElement).options).map(
+          (option) => option.value,
+        ),
+      ).toEqual(["src/example.ts", "docs/guide.md"]);
+    });
+    expect(slot.getAllByLabelText("1 open comment threads")).toHaveLength(2);
+
+    fireEvent.change(slot.getByLabelText("Search files on mobile"), {
+      target: { value: "not-present" },
+    });
+    await vi.waitFor(() => {
+      expect((fileSelect as HTMLSelectElement).value).toBe("");
+      expect((fileSelect as HTMLSelectElement).disabled).toBe(true);
+    });
+    expect(slot.getByText("No changed files.")).toBeTruthy();
+
+    fireEvent.change(slot.getByLabelText("Search files on mobile"), {
+      target: { value: "src" },
+    });
+    await vi.waitFor(() => {
+      expect(
+        Array.from((fileSelect as HTMLSelectElement).options).map(
+          (option) => option.value,
+        ),
+      ).toEqual(["src/example.ts"]);
+    });
+    slot.getByRole("button", { name: "Viewed & next" }).click();
+    await vi.waitFor(() => {
+      expect((fileSelect as HTMLSelectElement).value).toBe("src/example.ts");
+    });
+    expect(
+      Array.from((fileSelect as HTMLSelectElement).options).map(
+        (option) => option.value,
+      ),
+    ).not.toContain("docs/guide.md");
     slot.lifecycle.unmount();
   });
 
@@ -264,15 +776,26 @@ describe("comment list behavior", () => {
     );
 
     // Resolved comment renders collapsed: no checkbox until expanded.
-    await slot.findByRole("button", { name: "Show src/example.ts:1 (new)" });
+    const feedbackTrigger = (
+      await slot.findAllByRole("button", {
+        name: "Review feedback, 0 pending/unsent comments",
+      })
+    )[0]!;
+    fireEvent.click(feedbackTrigger);
+    const dialog = await slot.findByRole("dialog");
+    await within(dialog).findByRole("button", {
+      name: "Show src/example.ts:1 (new)",
+    });
     expect(
-      slot.queryByRole("checkbox", {
+      within(dialog).queryByRole("checkbox", {
         name: "Select src/example.ts:1 (new)",
       }),
     ).toBeNull();
-    slot.getByRole("button", { name: "Show src/example.ts:1 (new)" }).click();
+    within(dialog)
+      .getByRole("button", { name: "Show src/example.ts:1 (new)" })
+      .click();
     const resolvedBox = (await vi.waitFor(() => {
-      const box = slot.container.querySelector(
+      const box = dialog.querySelector(
         'input[aria-label="Select src/example.ts:1 (new)"]',
       ) as HTMLInputElement | null;
       expect(box).not.toBeNull();
@@ -281,15 +804,15 @@ describe("comment list behavior", () => {
     expect(resolvedBox.disabled).toBe(true);
 
     // Agent comment shows the agent chip and cannot be selected for a batch.
-    expect(slot.getByText("AI comment")).toBeTruthy();
-    const agentBox = slot.container.querySelector(
+    expect(within(dialog).getByText("AI comment")).toBeTruthy();
+    const agentBox = dialog.querySelector(
       'input[aria-label="Select src/example.ts:2 (new)"]',
     ) as HTMLInputElement;
     expect(agentBox.disabled).toBe(true);
 
     // Only the agent comment is unresolved, but agent comments are never
     // pending, so nothing is counted or selectable to send.
-    expect(slot.queryByText(/1 pending comment/)).toBeNull();
+    expect(within(dialog).queryByText(/1 pending comment/)).toBeNull();
     slot.lifecycle.unmount();
   });
 });
@@ -311,8 +834,18 @@ const entityChange = {
 
 describe("comment locate flow", () => {
   function locateFixture() {
+    const review = reviewFixture();
     return {
-      ...reviewFixture(),
+      ...review,
+      files: [
+        ...review.files,
+        {
+          ...review.files[0],
+          path: "src/other.ts",
+          patch: patch.replaceAll("src/example.ts", "src/other.ts"),
+        },
+      ],
+      viewedPaths: ["src/example.ts"],
       annotations: [
         {
           id: "55555555-5555-4555-8555-555555555551",
@@ -334,7 +867,7 @@ describe("comment locate flow", () => {
     } as any;
   }
 
-  it("renders a Show in diff button on sidebar comments that scrolls to the card", async () => {
+  it("locates filtered comments from the feedback drawer and restores the diff", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -343,18 +876,84 @@ describe("comment locate flow", () => {
         context: { projectId: "project-ui", threadId: "thread-ui" },
         rpc: {
           review: async () => ({ review: locateFixture() }),
-          revisions: async () => ({ revisions: [] }),
+          revisions: async () => ({
+            revisions: [
+              {
+                id: "latest-review",
+                threadId: "thread-ui",
+                snapshot: "latest-snapshot",
+                createdAt: 2,
+                target: { type: "uncommitted" },
+                fileCount: 2,
+                annotationCount: 1,
+                unresolvedCount: 1,
+                viewedCount: 0,
+              },
+              {
+                id: locateFixture().id,
+                threadId: "thread-ui",
+                snapshot: locateFixture().snapshot,
+                createdAt: 1,
+                target: { type: "uncommitted" },
+                fileCount: 2,
+                annotationCount: 1,
+                unresolvedCount: 1,
+                viewedCount: 0,
+              },
+            ],
+          }),
+          entitySummary: async () => ({
+            status: "unavailable",
+            reason: "test fixture",
+          }),
         } as any,
       },
     );
     Element.prototype.scrollIntoView = vi.fn();
-    const locateButton = await slot.findByRole("button", {
+    await slot.findByRole("status", { name: "Stale review revision" });
+    expect(slot.queryByRole("dialog")).toBeNull();
+    fireEvent.change(slot.getByLabelText("Changed file filter"), {
+      target: { value: "unviewed" },
+    });
+    fireEvent.change(slot.getByLabelText("Search files on mobile"), {
+      target: { value: "other" },
+    });
+    const fileSelect = slot.getByLabelText("Changed file", { exact: true });
+    await vi.waitFor(() => {
+      expect((fileSelect as HTMLSelectElement).value).toBe("src/other.ts");
+    });
+    fireEvent.click(
+      slot.getByRole("button", { name: "Entities view (experimental)" }),
+    );
+    fireEvent.click(
+      (
+        await slot.findAllByRole("button", {
+          name: "Review feedback, 1 pending/unsent comments",
+        })
+      )[1]!,
+    );
+    const dialog = await slot.findByRole("dialog");
+    const locateButton = await within(dialog).findByRole("button", {
       name: "Show src/example.ts:1 (new) in diff",
     });
-    locateButton.click();
+    fireEvent.click(locateButton);
     await vi.waitFor(() => {
+      expect(slot.queryByRole("dialog")).toBeNull();
+      expect((fileSelect as HTMLSelectElement).value).toBe("src/example.ts");
       expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
     });
+    expect(
+      (slot.getByLabelText("Search files on mobile") as HTMLInputElement).value,
+    ).toBe("");
+    expect(
+      (slot.getByLabelText("Changed file filter") as HTMLSelectElement).value,
+    ).toBe("all");
+    expect(
+      slot.getByRole("button", { name: "Diff", pressed: true }),
+    ).toBeTruthy();
+    expect(
+      slot.getByRole("status", { name: "Stale review revision" }),
+    ).toBeTruthy();
     slot.lifecycle.unmount();
   });
 
@@ -373,6 +972,14 @@ describe("comment locate flow", () => {
     );
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
+    fireEvent.click(
+      (
+        await slot.findAllByRole("button", {
+          name: "Review feedback, 1 pending/unsent comments",
+        })
+      )[0]!,
+    );
+    await slot.findByRole("dialog");
     const locateButton = await slot.findByRole("button", {
       name: "Show src/example.ts:1 (new) in diff",
     });

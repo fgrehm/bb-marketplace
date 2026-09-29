@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { definePluginApp, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import * as Dialog from "@radix-ui/react-dialog";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   getSingularPatch,
@@ -20,6 +21,8 @@ import {
   adjacentFilePath,
   filterChangedFiles,
   nextUnviewedFilePath,
+  unresolvedRootThreadCounts,
+  type FileFilterMode,
 } from "./lib/review-navigation";
 import {
   changeTypeLabels,
@@ -132,6 +135,27 @@ function annotationLabel(annotation: Annotation): string {
   return `${annotation.filePath}:${annotation.startLine}${annotation.endLine === annotation.startLine ? "" : `-${annotation.endLine}`} (${annotation.side})`;
 }
 
+function inlineReplyRoot(
+  annotation: Annotation,
+  annotations: Annotation[],
+): Annotation | null {
+  if (annotation.author !== "agent" || annotation.fileLevel) return null;
+  const root = annotation.parentId
+    ? annotations.find((candidate) => candidate.id === annotation.parentId)
+    : annotation;
+  if (
+    !root ||
+    root.parentId !== null ||
+    root.fileLevel ||
+    root.filePath !== annotation.filePath ||
+    root.side !== annotation.side ||
+    root.startLine !== annotation.startLine ||
+    root.endLine !== annotation.endLine
+  )
+    return null;
+  return root;
+}
+
 function StateChip({
   tone = "muted",
   children,
@@ -185,6 +209,10 @@ function AnnotationMeta({
 const PierreReviewDiff = memo(function PierreReviewDiff({
   fileDiff,
   lineAnnotations,
+  annotations,
+  replyDrafts,
+  onReply,
+  onReplyDraft,
   composer,
   wrapLines,
   loadDiffFiles,
@@ -192,6 +220,10 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
 }: {
   fileDiff: FileDiffMetadata;
   lineAnnotations: DiffLineAnnotation<DiffAnnotation>[];
+  annotations: Annotation[];
+  replyDrafts: Map<string, string>;
+  onReply: (parent: Annotation, body: string) => Promise<void>;
+  onReplyDraft: (id: string, value: string | null) => void;
   wrapLines: boolean;
   loadDiffFiles?: FileDiffContentsLoader;
   composer: {
@@ -253,6 +285,7 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
             </div>
           ) : null;
         }
+        const replyRoot = inlineReplyRoot(annotation, annotations);
         return (
           <div
             data-annotation-id={annotation.id}
@@ -272,6 +305,35 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
             >
               {annotation.body}
             </p>
+            {replyRoot ? (
+              <div
+                className="mt-2"
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onMouseUp={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {replyDrafts.has(annotation.id) ? (
+                  <ReplyBox
+                    parent={replyRoot}
+                    onReply={onReply}
+                    draft={replyDrafts.get(annotation.id) ?? ""}
+                    onDraft={(value) => onReplyDraft(annotation.id, value)}
+                    onCancel={() => onReplyDraft(annotation.id, null)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="min-h-9 rounded px-2 py-1 text-primary hover:bg-muted"
+                    aria-label={`Reply to AI comment at ${annotationLabel(annotation)}`}
+                    onClick={() => onReplyDraft(annotation.id, "")}
+                  >
+                    Reply
+                  </button>
+                )}
+              </div>
+            ) : null}
           </div>
         );
       }}
@@ -307,6 +369,8 @@ function CommentCard({
   onSuggestion,
   onReply,
   onLocate,
+  replyDrafts,
+  onReplyDraft,
   hideReplyButton = false,
 }: {
   annotation: Annotation;
@@ -317,6 +381,8 @@ function CommentCard({
   onSuggestion: (annotation: Annotation, accept: boolean) => void;
   onReply: (parent: Annotation, body: string) => Promise<void>;
   onLocate?: (annotation: Annotation) => void;
+  replyDrafts: Map<string, string>;
+  onReplyDraft: (id: string, value: string | null) => void;
   hideReplyButton?: boolean;
 }) {
   const locate = onLocate ? (
@@ -332,8 +398,10 @@ function CommentCard({
   ) : null;
   // Resolved comments start collapsed to keep the list scannable.
   const [collapsed, setCollapsed] = useState(annotation.resolvedAt !== null);
-  const [replying, setReplying] = useState(false);
-  const selectLabel = `Select ${annotationLabel(annotation)}`;
+  const replying = replyDrafts.has(annotation.id);
+  const selectLabel = annotation.parentId
+    ? `Select reply to ${annotationLabel(annotation)}`
+    : `Select ${annotationLabel(annotation)}`;
   const notSendable =
     annotation.sentAt !== null ||
     annotation.resolvedAt !== null ||
@@ -341,24 +409,26 @@ function CommentCard({
   if (collapsed) {
     return (
       <article className="rounded-md border p-2 text-xs opacity-65">
-        <button
-          type="button"
-          aria-label={`Show ${annotationLabel(annotation)}`}
-          aria-expanded={false}
-          className="block w-full text-left"
-          onClick={() => setCollapsed(false)}
-        >
-          <span className="font-mono text-[11px] text-muted-foreground">
-            {annotationLabel(annotation)}
-          </span>
-          <span className="ml-2 inline-block align-middle">
-            <AnnotationMeta annotation={annotation} />
-          </span>
-          <span className="ml-auto inline-block align-middle">{locate}</span>
-          <p className="mt-1 truncate text-muted-foreground">
-            {annotation.body}
-          </p>
-        </button>
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            aria-label={`Show ${annotationLabel(annotation)}`}
+            aria-expanded={false}
+            className="min-w-0 flex-1 text-left"
+            onClick={() => setCollapsed(false)}
+          >
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {annotationLabel(annotation)}
+            </span>
+            <span className="ml-2 inline-block align-middle">
+              <AnnotationMeta annotation={annotation} />
+            </span>
+            <p className="mt-1 truncate text-muted-foreground">
+              {annotation.body}
+            </p>
+          </button>
+          {locate}
+        </div>
       </article>
     );
   }
@@ -427,7 +497,7 @@ function CommentCard({
           {hideReplyButton ? null : replying ? null : (
             <button
               className="ml-3 mt-1.5 text-primary hover:opacity-80"
-              onClick={() => setReplying(true)}
+              onClick={() => onReplyDraft(annotation.id, "")}
             >
               Reply
             </button>
@@ -444,7 +514,9 @@ function CommentCard({
             <ReplyBox
               parent={annotation}
               onReply={onReply}
-              onCancel={() => setReplying(false)}
+              draft={replyDrafts.get(annotation.id) ?? ""}
+              onDraft={(value) => onReplyDraft(annotation.id, value)}
+              onCancel={() => onReplyDraft(annotation.id, null)}
             />
           ) : null}
         </div>
@@ -457,20 +529,24 @@ function ReplyBox({
   parent,
   onReply,
   onCancel,
+  draft,
+  onDraft,
 }: {
   parent: Annotation;
   onReply: (parent: Annotation, body: string) => Promise<void>;
   onCancel: () => void;
+  draft: string;
+  onDraft: (value: string) => void;
 }) {
-  const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const submittingRef = useRef(false);
   return (
     <div className="mt-2 rounded bg-muted p-2">
       <textarea
         aria-label={`Reply to ${annotationLabel(parent)}`}
         maxLength={1000}
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => onDraft(event.target.value)}
         placeholder="Reply in this thread..."
         className="min-h-14 w-full rounded border bg-background p-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       />
@@ -482,10 +558,16 @@ function ReplyBox({
           size="sm"
           disabled={busy || !draft.trim()}
           onClick={() => {
+            if (submittingRef.current || busy || !draft.trim()) return;
+            submittingRef.current = true;
             setBusy(true);
             void onReply(parent, draft)
               .then(onCancel)
-              .finally(() => setBusy(false));
+              .catch(() => undefined)
+              .finally(() => {
+                submittingRef.current = false;
+                setBusy(false);
+              });
           }}
         >
           {busy ? "Replying..." : "Reply"}
@@ -504,6 +586,8 @@ function CommentList({
   onSuggestion,
   onReply,
   onLocate,
+  replyDrafts,
+  onReplyDraft,
 }: {
   annotations: Annotation[];
   selected: Set<string>;
@@ -513,6 +597,8 @@ function CommentList({
   onSuggestion: (annotation: Annotation, accept: boolean) => void;
   onReply: (parent: Annotation, body: string) => Promise<void>;
   onLocate?: (annotation: Annotation) => void;
+  replyDrafts: Map<string, string>;
+  onReplyDraft: (id: string, value: string | null) => void;
 }) {
   if (!annotations.length)
     return <p className="text-xs text-muted-foreground">No comments yet.</p>;
@@ -539,6 +625,8 @@ function CommentList({
             onSuggestion={onSuggestion}
             onReply={onReply}
             onLocate={onLocate}
+            replyDrafts={replyDrafts}
+            onReplyDraft={onReplyDraft}
           />
           {repliesByRoot.has(root.id) ? (
             <div className="ml-4 border-l-2 border-muted pl-2">
@@ -553,6 +641,8 @@ function CommentList({
                   onSuggestion={onSuggestion}
                   onReply={onReply}
                   onLocate={onLocate}
+                  replyDrafts={replyDrafts}
+                  onReplyDraft={onReplyDraft}
                   hideReplyButton
                 />
               ))}
@@ -580,6 +670,8 @@ function FileCommentsBar({
   onResolve,
   onSuggestion,
   onReply,
+  replyDrafts,
+  onReplyDraft,
 }: {
   path: string;
   annotations: Annotation[];
@@ -596,6 +688,8 @@ function FileCommentsBar({
   onResolve: (annotation: Annotation) => void;
   onSuggestion: (annotation: Annotation, accept: boolean) => void;
   onReply: (parent: Annotation, body: string) => Promise<void>;
+  replyDrafts: Map<string, string>;
+  onReplyDraft: (id: string, value: string | null) => void;
 }) {
   const roots = annotations.filter((annotation) => !annotation.parentId);
   const repliesByRoot = new Map<string, Annotation[]>();
@@ -656,6 +750,8 @@ function FileCommentsBar({
                 onResolve={onResolve}
                 onSuggestion={onSuggestion}
                 onReply={onReply}
+                replyDrafts={replyDrafts}
+                onReplyDraft={onReplyDraft}
               />
               {repliesByRoot.has(root.id) ? (
                 <div className="ml-4 border-l-2 border-muted pl-2">
@@ -669,6 +765,8 @@ function FileCommentsBar({
                       onResolve={onResolve}
                       onSuggestion={onSuggestion}
                       onReply={onReply}
+                      replyDrafts={replyDrafts}
+                      onReplyDraft={onReplyDraft}
                       hideReplyButton
                     />
                   ))}
@@ -1100,6 +1198,10 @@ function EntityExplorer({
 function ReviewSummary({
   review,
   selected,
+  summaryDraft,
+  onSummaryDraftChange,
+  replyDrafts,
+  onReplyDraft,
   onSaveSummary,
   onToggle,
   onRemove,
@@ -1112,6 +1214,10 @@ function ReviewSummary({
 }: {
   review: Review;
   selected: Set<string>;
+  summaryDraft: string;
+  onSummaryDraftChange: (summary: string) => void;
+  replyDrafts: Map<string, string>;
+  onReplyDraft: (id: string, value: string | null) => void;
   onSaveSummary: (summary: string) => Promise<void>;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
@@ -1122,8 +1228,6 @@ function ReviewSummary({
   onLocate: (annotation: Annotation) => void;
   onClose?: () => void;
 }) {
-  const [summaryDraft, setSummaryDraft] = useState(review.summary ?? "");
-  useEffect(() => setSummaryDraft(review.summary ?? ""), [review.id]);
   const pending = review.annotations.filter(
     (annotation) =>
       annotation.sentAt === null &&
@@ -1135,7 +1239,9 @@ function ReviewSummary({
     <div className="flex min-h-0 flex-col">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold">Review summary</h2>
+          <Dialog.Title className="text-sm font-semibold">
+            Review feedback
+          </Dialog.Title>
           <p className="mt-1 text-xs text-muted-foreground">
             {pending.length} pending comment{pending.length === 1 ? "" : "s"}{" "}
             across {new Set(pending.map((item) => item.filePath)).size} file
@@ -1161,7 +1267,7 @@ function ReviewSummary({
           id="review-overall-summary"
           maxLength={2000}
           value={summaryDraft}
-          onChange={(event) => setSummaryDraft(event.target.value)}
+          onChange={(event) => onSummaryDraftChange(event.target.value)}
           onBlur={() => {
             if (summaryDraft.trim() !== (review.summary ?? ""))
               void onSaveSummary(summaryDraft);
@@ -1180,6 +1286,8 @@ function ReviewSummary({
           onSuggestion={onSuggestion}
           onReply={onReply}
           onLocate={onLocate}
+          replyDrafts={replyDrafts}
+          onReplyDraft={onReplyDraft}
         />
       </div>
       <Button
@@ -1199,6 +1307,67 @@ function ReviewSummary({
   );
 }
 
+function FileFilterControls({
+  query,
+  onQuery,
+  mode,
+  onModeChange,
+  compact = false,
+}: {
+  query: string;
+  onQuery: (query: string) => void;
+  mode: FileFilterMode;
+  onModeChange: (mode: FileFilterMode) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? "flex min-w-0 flex-1 gap-2" : "space-y-2"}>
+      <Input
+        className={compact ? "h-8 min-w-0 flex-1 text-xs" : "h-8 text-xs"}
+        value={query}
+        onChange={(event) => onQuery(event.target.value)}
+        placeholder="Search files..."
+        aria-label={compact ? "Search files on mobile" : "Search changed files"}
+      />
+      {compact ? (
+        <select
+          aria-label="Changed file filter"
+          value={mode}
+          onChange={(event) =>
+            onModeChange(event.target.value as FileFilterMode)
+          }
+          className="h-8 max-w-40 rounded-md border bg-background px-2 text-xs"
+        >
+          <option value="all">All</option>
+          <option value="unviewed">Unviewed</option>
+          <option value="with-open-comments">With open comments</option>
+        </select>
+      ) : (
+        <div className="flex gap-1" aria-label="Changed file filters">
+          {(
+            [
+              ["all", "All"],
+              ["unviewed", "Unviewed"],
+              ["with-open-comments", "With open comments"],
+            ] as const
+          ).map(([value, label]) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={mode === value ? "secondary" : "ghost"}
+              aria-pressed={mode === value}
+              onClick={() => onModeChange(value)}
+              className="px-2 text-[11px]"
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReviewPanel({ threadId }: { threadId: string }) {
   const rpc = useRpc<typeof rpcContract>();
   // Full-screen mode: the panel spans the whole viewport (the BB tab it
@@ -1211,10 +1380,15 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [body, setBody] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [mobilePanel, setMobilePanel] = useState<"compose" | "batch" | null>(
-    null,
+  const [replyDrafts, setReplyDrafts] = useState<Map<string, string>>(
+    new Map(),
   );
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const feedbackOpenerRef = useRef<HTMLElement | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<"compose" | null>(null);
   const [fileQuery, setFileQuery] = useState("");
+  const [fileFilterMode, setFileFilterMode] = useState<FileFilterMode>("all");
   const [wrapLines, setWrapLines] = useState(false);
   const [busy, setBusy] = useState(false);
   // Comment locate flow: a pending locate survives the file switch and
@@ -1401,6 +1575,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       ]);
       const next = result.review as Review | null;
       setReview(next);
+      setSummaryDraft(next?.summary ?? "");
+      setReplyDrafts(new Map());
+      setFeedbackOpen(false);
       setRevisions(history.revisions as Revision[]);
       setSelected(new Set());
       setSelection(null);
@@ -1420,10 +1597,28 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     );
   }, [load]);
 
-  const visibleFiles = useMemo(
-    () => filterChangedFiles(review?.files ?? [], fileQuery),
-    [fileQuery, review?.files],
+  const openThreadCounts = useMemo(
+    () => unresolvedRootThreadCounts(review?.annotations ?? []),
+    [review?.annotations],
   );
+  const viewedPaths = useMemo(
+    () => new Set(review?.viewedPaths ?? []),
+    [review?.viewedPaths],
+  );
+  const visibleFiles = useMemo(
+    () =>
+      filterChangedFiles(review?.files ?? [], fileQuery, {
+        mode: fileFilterMode,
+        viewedPaths,
+        openThreadCounts,
+      }),
+    [fileFilterMode, fileQuery, openThreadCounts, review?.files, viewedPaths],
+  );
+  useEffect(() => {
+    if (visibleFiles.some((candidate) => candidate.path === filePath)) return;
+    setFilePath(visibleFiles[0]?.path ?? null);
+    setSelection(null);
+  }, [filePath, visibleFiles]);
   const file =
     review?.files.find((candidate) => candidate.path === filePath) ?? null;
   const parsed = useMemo(
@@ -1552,6 +1747,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       return next;
     });
   }, []);
+  const updateReplyDraft = useCallback((id: string, value: string | null) => {
+    setReplyDrafts((current) => {
+      const next = new Map(current);
+      if (value === null) next.delete(id);
+      else next.set(id, value);
+      return next;
+    });
+  }, []);
 
   async function markViewed(viewed: boolean): Promise<boolean> {
     if (!review || !file) return false;
@@ -1591,13 +1794,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   async function markViewedAndNext(openBatchWhenDone: boolean) {
     if (!review || !file) return;
     const nextPath = nextUnviewedFilePath(
-      review.files,
+      visibleFiles,
       file.path,
       review.viewedPaths,
     );
     if (await markViewed(true)) {
       if (nextPath) chooseFile(nextPath);
-      else if (openBatchWhenDone) setMobilePanel("batch");
+      else if (openBatchWhenDone && fileFilterMode !== "unviewed")
+        setFeedbackOpen(true);
     }
   }
   async function clearPrevious() {
@@ -1652,6 +1856,10 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const locateComment = useCallback(
     (annotation: Annotation) => {
       if (!review || !annotation.filePath) return;
+      setFeedbackOpen(false);
+      setFileQuery("");
+      setFileFilterMode("all");
+      setEntitiesView(false);
       if (annotation.filePath !== filePath) chooseFile(annotation.filePath);
       if (annotation.fileLevel) {
         // Whole-file comments have no in-diff anchor; snap to the top bar.
@@ -2096,6 +2304,16 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           <Icon name={fullscreen ? "Minimize2" : "Maximize2"} />
         </Button>
       </header>
+      {review && revisions[0] && review.id !== revisions[0].id ? (
+        <p
+          role="status"
+          aria-label="Stale review revision"
+          title="Comment anchors stay on this immutable snapshot."
+          className="mx-3 mt-2 shrink-0 rounded border border-yellow-500/30 bg-yellow-500/10 px-2 py-1 text-xs text-yellow-700 dark:text-yellow-300"
+        >
+          Viewing a stale revision. Anchors stay on this snapshot.
+        </p>
+      ) : null}
       {error ? (
         <p className="m-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
           {error}
@@ -2108,45 +2326,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         </div>
       ) : (
         <>
-          <div className="flex shrink-0 gap-2 border-b bg-muted/20 p-2 lg:hidden">
-            <select
-              aria-label="Review revision"
-              value={review.id}
-              onChange={(event) => void load(event.target.value)}
-              className="min-w-0 flex-1 rounded-md border bg-background px-2 py-2 text-xs"
-            >
-              {revisions.map((revision) => (
-                <option key={revision.id} value={revision.id}>
-                  {new Date(revision.createdAt).toLocaleString()} ·{" "}
-                  {describeTarget(revision.target)} · {revision.unresolvedCount}{" "}
-                  open
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Changed file"
-              value={filePath ?? ""}
-              onChange={(event) => chooseFile(event.target.value)}
-              className="min-w-0 flex-[1.5] rounded-md border bg-background px-2 py-2 text-xs"
-            >
-              {review.files.map((candidate, index) => (
-                <option key={candidate.path} value={candidate.path}>
-                  {index + 1}/{review.files.length} · {candidate.path}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)_19rem]">
-            <aside className="hidden min-h-0 overflow-auto border-r bg-card lg:block">
-              <div className="border-b p-3">
-                <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Revision
-                </label>
+          <Dialog.Root open={feedbackOpen} onOpenChange={setFeedbackOpen}>
+            <div className="shrink-0 space-y-2 border-b bg-muted/20 p-2 lg:hidden">
+              <div className="flex gap-2">
                 <select
                   aria-label="Review revision"
                   value={review.id}
                   onChange={(event) => void load(event.target.value)}
-                  className="mt-2 w-full rounded-md border bg-background px-2 py-2 text-xs"
+                  className="min-w-0 flex-1 rounded-md border bg-background px-2 py-2 text-xs"
                 >
                   {revisions.map((revision) => (
                     <option key={revision.id} value={revision.id}>
@@ -2156,393 +2343,406 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     </option>
                   ))}
                 </select>
+                <select
+                  aria-label="Changed file"
+                  value={filePath ?? ""}
+                  disabled={!visibleFiles.length}
+                  onChange={(event) => chooseFile(event.target.value)}
+                  className="min-w-0 flex-[1.5] rounded-md border bg-background px-2 py-2 text-xs"
+                >
+                  {visibleFiles.length ? null : (
+                    <option value="" disabled>
+                      No matching files
+                    </option>
+                  )}
+                  {visibleFiles.map((candidate, index) => (
+                    <option key={candidate.path} value={candidate.path}>
+                      {index + 1}/{visibleFiles.length} · {candidate.path}
+                      {openThreadCounts.has(candidate.path)
+                        ? ` · ${openThreadCounts.get(candidate.path)} open`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div className="border-b p-3">
-                <div className="flex justify-between text-xs font-medium">
-                  <span>Files changed</span>
-                  <span className="text-muted-foreground">
-                    {review.viewedPaths.length} of {review.files.length} viewed
-                  </span>
-                </div>
-                <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
-                  <i
-                    className="block h-full rounded-full bg-emerald-500"
-                    style={{
-                      width: `${review.files.length ? (review.viewedPaths.length / review.files.length) * 100 : 0}%`,
-                    }}
-                  />
-                </div>
-                <Input
-                  className="mt-3 h-8 text-xs"
-                  value={fileQuery}
-                  onChange={(event) => setFileQuery(event.target.value)}
-                  placeholder="Filter files..."
-                  aria-label="Filter changed files"
-                />
-              </div>
-              <nav className="p-2" aria-label="Changed files">
-                {entitiesView && entitySummaryChanges ? (
-                  <EntityNav
-                    changes={entitySummaryChanges}
-                    impacts={entityImpacts}
-                    expandedIds={entityExpandedIds}
-                    hideCosmetics={entityHideCosmetics}
-                    onSelect={(entityId) => {
-                      toggleEntityExpanded(entityId);
-                      scrollSectionRef.current
-                        ?.querySelector(`[data-entity-row="${entityId}"]`)
-                        ?.scrollIntoView({ block: "center" });
-                    }}
-                  />
-                ) : (
-                  <>
-                    {visibleFiles.map((candidate) => (
-                      <button
-                        key={candidate.path}
-                        onClick={() => chooseFile(candidate.path)}
-                        className={`mb-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs ${candidate.path === filePath ? "bg-muted font-medium shadow-[inset_2px_0_theme(colors.primary)]" : "hover:bg-muted/60"}`}
-                      >
-                        <span
-                          className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${(() => {
-                            const kind = normalizeChangeKind(candidate.status);
-                            return kind === "added"
-                              ? "bg-green-500/15 text-green-600"
-                              : kind === "deleted"
-                                ? "bg-red-500/15 text-red-600"
-                                : "bg-yellow-500/15 text-yellow-600";
-                          })()}`}
-                        >
-                          {candidate.status[0]?.toUpperCase()}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span
-                            className="block truncate"
-                            title={candidate.path}
-                          >
-                            {compactPath(candidate.path, 32)}
-                          </span>
-                          <span className="mt-0.5 flex gap-2 text-[11px] font-normal">
-                            <span className="text-green-600">
-                              +{candidate.additions}
-                            </span>
-                            <span className="text-red-600">
-                              -{candidate.deletions}
-                            </span>
-                          </span>
-                        </span>
-                        {review.viewedPaths.includes(candidate.path) ? (
-                          <span aria-label="Viewed" className="text-primary">
-                            ✓
-                          </span>
-                        ) : null}
-                        {review.annotations.some(
-                          (annotation) =>
-                            annotation.fileLevel &&
-                            annotation.filePath === candidate.path,
-                        ) ? (
-                          <span
-                            aria-label="Has file comment"
-                            title="Has file comment"
-                            className="shrink-0 text-muted-foreground"
-                          >
-                            <Icon name="FileText" />
-                          </span>
-                        ) : null}
-                      </button>
+              <FileFilterControls
+                compact
+                query={fileQuery}
+                onQuery={setFileQuery}
+                mode={fileFilterMode}
+                onModeChange={setFileFilterMode}
+              />
+            </div>
+            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)]">
+              <aside className="hidden min-h-0 overflow-auto border-r bg-card lg:block">
+                <div className="border-b p-3">
+                  <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Revision
+                  </label>
+                  <select
+                    aria-label="Review revision"
+                    value={review.id}
+                    onChange={(event) => void load(event.target.value)}
+                    className="mt-2 w-full rounded-md border bg-background px-2 py-2 text-xs"
+                  >
+                    {revisions.map((revision) => (
+                      <option key={revision.id} value={revision.id}>
+                        {new Date(revision.createdAt).toLocaleString()} ·{" "}
+                        {describeTarget(revision.target)} ·{" "}
+                        {revision.unresolvedCount} open
+                      </option>
                     ))}
-                    {!visibleFiles.length ? (
-                      <p className="p-2 text-xs text-muted-foreground">
-                        No matching files.
-                      </p>
-                    ) : null}
-                  </>
-                )}
-              </nav>
-            </aside>
-            <section
-              ref={scrollSectionRef}
-              className="min-h-0 overflow-auto pb-20 lg:pb-3"
-            >
-              <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur lg:px-4">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    chooseFile(
-                      adjacentFilePath(visibleFiles, filePath, -1) ??
-                        filePath ??
-                        "",
-                    )
-                  }
-                  disabled={!visibleFiles.length}
-                  aria-label="Previous changed file"
-                >
-                  ‹
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    chooseFile(
-                      adjacentFilePath(visibleFiles, filePath, 1) ??
-                        filePath ??
-                        "",
-                    )
-                  }
-                  disabled={!visibleFiles.length}
-                  aria-label="Next changed file"
-                >
-                  ›
-                </Button>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold">
-                  {file?.path ?? "No changed files"}
-                </span>
-                <span className="hidden text-[11px] text-muted-foreground sm:inline">
-                  {currentIndex} / {review.files.length}
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className={`${COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS} text-muted-foreground`}
-                  onClick={() => setWrapLines((current) => !current)}
-                  aria-pressed={wrapLines}
-                  aria-label={
-                    wrapLines ? "Disable diff line wrap" : "Wrap diff lines"
-                  }
-                >
-                  <Icon name="TextWrap" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant={!entitiesView ? "secondary" : "outline"}
-                  onClick={() => setEntitiesView(false)}
-                  aria-pressed={!entitiesView}
-                >
-                  Diff
-                </Button>
-                <Button
-                  size="sm"
-                  variant={entitiesView ? "secondary" : "outline"}
-                  onClick={() => setEntitiesView(true)}
-                  aria-pressed={entitiesView}
-                  aria-label="Entities view (experimental)"
-                >
-                  Entities
-                </Button>
-                <Button
-                  className="hidden lg:inline-flex"
-                  size="sm"
-                  variant={isViewed ? "secondary" : "outline"}
-                  onClick={() =>
-                    void (isViewed
-                      ? markViewed(false)
-                      : markViewedAndNext(false))
-                  }
-                  disabled={!file}
-                >
-                  {isViewed ? "Viewed ✓" : "Mark viewed"}
-                </Button>
-                <Button
-                  className="lg:hidden"
-                  size="sm"
-                  variant={isViewed ? "secondary" : "default"}
-                  onClick={() =>
-                    void (isViewed
-                      ? markViewed(false)
-                      : markViewedAndNext(true))
-                  }
-                  disabled={!file}
-                >
-                  {isViewed ? "Viewed ✓" : "Viewed & next"}
-                </Button>
-              </div>
-              {entitiesView ? (
-                <div className="p-2 lg:p-4">
-                  {entitySummaryReason ? (
-                    <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-                      sem is unavailable: {entitySummaryReason}
-                    </p>
-                  ) : entitySummaryChanges ? (
-                    <EntityExplorer
+                  </select>
+                </div>
+                <div className="border-b p-3">
+                  <div className="flex justify-between text-xs font-medium">
+                    <span>Files changed</span>
+                    <span className="text-muted-foreground">
+                      {review.viewedPaths.length} of {review.files.length}{" "}
+                      viewed
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
+                    <i
+                      className="block h-full rounded-full bg-emerald-500"
+                      style={{
+                        width: `${review.files.length ? (review.viewedPaths.length / review.files.length) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="mt-3">
+                    <FileFilterControls
+                      query={fileQuery}
+                      onQuery={setFileQuery}
+                      mode={fileFilterMode}
+                      onModeChange={setFileFilterMode}
+                    />
+                  </div>
+                </div>
+                <nav className="p-2" aria-label="Changed files">
+                  {entitiesView && entitySummaryChanges ? (
+                    <EntityNav
                       changes={entitySummaryChanges}
-                      onLoadImpact={loadEntityImpact}
                       impacts={entityImpacts}
-                      onJump={jumpToEntity}
-                      hideCosmetics={entityHideCosmetics}
-                      onHideCosmetics={setEntityHideCosmetics}
                       expandedIds={entityExpandedIds}
-                      onToggleExpanded={toggleEntityExpanded}
+                      hideCosmetics={entityHideCosmetics}
+                      onSelect={(entityId) => {
+                        toggleEntityExpanded(entityId);
+                        scrollSectionRef.current
+                          ?.querySelector(`[data-entity-row="${entityId}"]`)
+                          ?.scrollIntoView({ block: "center" });
+                      }}
                     />
                   ) : (
-                    <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-                      Computing entity changes...
-                    </p>
-                  )}
-                  {entityJumpMiss ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      {entityJumpMiss} has no visible lines in the diff, so it
-                      cannot be located.
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="p-2 lg:p-4">
-                  {!file ? (
-                    <p className="text-sm text-muted-foreground">
-                      No changed files.
-                    </p>
-                  ) : file.binary ? (
-                    <p className="text-sm text-muted-foreground">
-                      {file.path} is binary and cannot be annotated.
-                    </p>
-                  ) : !parsed ? (
-                    <p className="text-sm text-muted-foreground">
-                      No patch is available for {file.path}.
-                    </p>
-                  ) : (
                     <>
-                      {file.truncated ? (
-                        <p className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
-                          This patch is truncated. Comments still refer only to
-                          the visible immutable snapshot.
+                      {visibleFiles.map((candidate) => (
+                        <button
+                          key={candidate.path}
+                          onClick={() => chooseFile(candidate.path)}
+                          className={`mb-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs ${candidate.path === filePath ? "bg-muted font-medium shadow-[inset_2px_0_theme(colors.primary)]" : "hover:bg-muted/60"}`}
+                        >
+                          <span
+                            className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${(() => {
+                              const kind = normalizeChangeKind(
+                                candidate.status,
+                              );
+                              return kind === "added"
+                                ? "bg-green-500/15 text-green-600"
+                                : kind === "deleted"
+                                  ? "bg-red-500/15 text-red-600"
+                                  : "bg-yellow-500/15 text-yellow-600";
+                            })()}`}
+                          >
+                            {candidate.status[0]?.toUpperCase()}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className="block truncate"
+                              title={candidate.path}
+                            >
+                              {compactPath(candidate.path, 32)}
+                            </span>
+                            <span className="mt-0.5 flex gap-2 text-[11px] font-normal">
+                              <span className="text-green-600">
+                                +{candidate.additions}
+                              </span>
+                              <span className="text-red-600">
+                                -{candidate.deletions}
+                              </span>
+                            </span>
+                          </span>
+                          {review.viewedPaths.includes(candidate.path) ? (
+                            <span aria-label="Viewed" className="text-primary">
+                              ✓
+                            </span>
+                          ) : null}
+                          {openThreadCounts.get(candidate.path) ? (
+                            <span
+                              aria-label={`${openThreadCounts.get(candidate.path)} open comment threads`}
+                              title={`${openThreadCounts.get(candidate.path)} open comment threads`}
+                              className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                            >
+                              {openThreadCounts.get(candidate.path)}
+                            </span>
+                          ) : null}
+                        </button>
+                      ))}
+                      {!visibleFiles.length ? (
+                        <p className="p-2 text-xs text-muted-foreground">
+                          No matching files.
                         </p>
                       ) : null}
-                      <FileCommentsBar
-                        path={file.path}
-                        annotations={review.annotations.filter(
-                          (annotation) =>
-                            annotation.fileLevel &&
-                            annotation.filePath === file.path,
-                        )}
-                        selected={selected}
-                        busy={busy}
-                        composerOpen={fileComposerOpen}
-                        composerBody={fileCommentBody}
-                        onComposerBody={setFileCommentBody}
-                        onOpenComposer={() => {
-                          setFileCommentBody("");
-                          setFileComposerOpen(true);
-                        }}
-                        onCloseComposer={() => {
-                          setFileCommentBody("");
-                          setFileComposerOpen(false);
-                        }}
-                        onAdd={() => void addFileComment()}
-                        onToggle={toggleSelected}
-                        onRemove={(id) => void remove(id)}
-                        onResolve={(annotation) => void resolve(annotation)}
-                        onSuggestion={(annotation, accept) =>
-                          void decideSuggestion(annotation, accept)
-                        }
-                        onReply={reply}
-                      />
-                      <div className="overflow-hidden rounded-md border bg-card">
-                        <PierreReviewDiff
-                          fileDiff={parsed}
-                          lineAnnotations={currentAnnotations}
-                          wrapLines={wrapLines}
-                          loadDiffFiles={loadDiffFiles}
-                          composer={{
-                            file,
-                            selection,
-                            body,
-                            busy,
-                            onBody: setBody,
-                            onAdd: () => void add(),
-                            onCancel: () => {
-                              setSelection(null);
-                              setBody("");
-                            },
-                          }}
-                          onSelect={handleDiffSelection}
-                        />
-                      </div>
                     </>
                   )}
-                </div>
-              )}
-            </section>
-            <aside className="hidden min-h-0 overflow-auto border-l bg-card p-3 lg:flex lg:flex-col">
-              {review.id !== revisions[0]?.id ? (
-                <p className="mb-3 rounded border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
-                  Viewing a stale revision. Anchors stay on this snapshot.
-                </p>
-              ) : null}
-              <ReviewSummary
-                review={review}
-                selected={selected}
-                onSaveSummary={saveSummary}
-                onToggle={toggleSelected}
-                onRemove={(id) => void remove(id)}
-                onResolve={(annotation) => void resolve(annotation)}
-                onSuggestion={(annotation, accept) =>
-                  void decideSuggestion(annotation, accept)
-                }
-                onSend={() => void send()}
-                onReply={reply}
-                onLocate={locateComment}
-              />
-            </aside>
-          </div>
-          <nav
-            className="fixed bottom-0 left-0 right-0 z-20 flex items-stretch border-t bg-card/95 backdrop-blur lg:hidden"
-            aria-label="Review sections"
-            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-          >
-            <button
-              type="button"
-              onClick={() => setMobilePanel(null)}
-              aria-current={mobilePanel === null ? "page" : undefined}
-              className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${mobilePanel === null ? "text-foreground" : "text-muted-foreground"}`}
-            >
-              <Icon name="FileDiff" className="size-4" />
-              Diff
-            </button>
-            <button
-              type="button"
-              onClick={() => setMobilePanel("batch")}
-              aria-current={mobilePanel === "batch" ? "page" : undefined}
-              className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${mobilePanel === "batch" ? "text-foreground" : "text-muted-foreground"}`}
-            >
-              <span className="relative">
-                <Icon name="MessageSquare" className="size-4" />
-                {pendingCount > 0 ? (
-                  <span
-                    aria-label={`${pendingCount} pending comments`}
-                    className="absolute -right-2 -top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold leading-none text-primary-foreground"
+                </nav>
+              </aside>
+              <section
+                ref={scrollSectionRef}
+                className="min-h-0 overflow-auto pb-20 lg:pb-3"
+              >
+                <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur lg:px-4">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      chooseFile(
+                        adjacentFilePath(visibleFiles, filePath, -1) ??
+                          filePath ??
+                          "",
+                      )
+                    }
+                    disabled={!visibleFiles.length}
+                    aria-label="Previous changed file"
                   >
-                    {pendingCount}
+                    ‹
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      chooseFile(
+                        adjacentFilePath(visibleFiles, filePath, 1) ??
+                          filePath ??
+                          "",
+                      )
+                    }
+                    disabled={!visibleFiles.length}
+                    aria-label="Next changed file"
+                  >
+                    ›
+                  </Button>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold">
+                    {file?.path ?? "No changed files"}
                   </span>
-                ) : null}
-              </span>
-              Feedback
-            </button>
-          </nav>
-          {mobilePanel === "compose" && selection ? (
-            <div className="fixed inset-0 z-40 flex items-start bg-black/40 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:hidden">
-              <div className="max-h-[85dvh] w-full overflow-auto rounded-xl border bg-background p-4 shadow-2xl">
-                <Composer
-                  file={file}
-                  selection={selection}
-                  body={body}
-                  busy={busy}
-                  onBody={setBody}
-                  onAdd={() => void add()}
-                  onCancel={() => {
-                    setSelection(null);
-                    setBody("");
-                    setMobilePanel(null);
-                  }}
-                />
-              </div>
+                  <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                    {currentIndex} / {review.files.length}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={`${COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS} text-muted-foreground`}
+                    onClick={() => setWrapLines((current) => !current)}
+                    aria-pressed={wrapLines}
+                    aria-label={
+                      wrapLines ? "Disable diff line wrap" : "Wrap diff lines"
+                    }
+                  >
+                    <Icon name="TextWrap" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={!entitiesView ? "secondary" : "outline"}
+                    onClick={() => setEntitiesView(false)}
+                    aria-pressed={!entitiesView}
+                  >
+                    Diff
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={entitiesView ? "secondary" : "outline"}
+                    onClick={() => setEntitiesView(true)}
+                    aria-pressed={entitiesView}
+                    aria-label="Entities view (experimental)"
+                  >
+                    Entities
+                  </Button>
+                  <Dialog.Trigger asChild>
+                    <Button
+                      className="hidden lg:inline-flex"
+                      size="sm"
+                      variant="outline"
+                      aria-label={`Review feedback, ${pendingCount} pending/unsent comments`}
+                      onClick={(event) => {
+                        feedbackOpenerRef.current = event.currentTarget;
+                      }}
+                    >
+                      Review feedback{" "}
+                      <span className="text-[11px] tabular-nums">
+                        {pendingCount} pending/unsent
+                      </span>
+                    </Button>
+                  </Dialog.Trigger>
+                  <Button
+                    className="hidden lg:inline-flex"
+                    size="sm"
+                    variant={isViewed ? "secondary" : "outline"}
+                    onClick={() =>
+                      void (isViewed
+                        ? markViewed(false)
+                        : markViewedAndNext(false))
+                    }
+                    disabled={!file}
+                  >
+                    {isViewed ? "Viewed ✓" : "Mark viewed"}
+                  </Button>
+                  <Button
+                    className="lg:hidden"
+                    size="sm"
+                    variant={isViewed ? "secondary" : "default"}
+                    onClick={() =>
+                      void (isViewed
+                        ? markViewed(false)
+                        : markViewedAndNext(true))
+                    }
+                    disabled={!file}
+                  >
+                    {isViewed ? "Viewed ✓" : "Viewed & next"}
+                  </Button>
+                </div>
+                {entitiesView ? (
+                  <div className="p-2 lg:p-4">
+                    {entitySummaryReason ? (
+                      <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                        sem is unavailable: {entitySummaryReason}
+                      </p>
+                    ) : entitySummaryChanges ? (
+                      <EntityExplorer
+                        changes={entitySummaryChanges}
+                        onLoadImpact={loadEntityImpact}
+                        impacts={entityImpacts}
+                        onJump={jumpToEntity}
+                        hideCosmetics={entityHideCosmetics}
+                        onHideCosmetics={setEntityHideCosmetics}
+                        expandedIds={entityExpandedIds}
+                        onToggleExpanded={toggleEntityExpanded}
+                      />
+                    ) : (
+                      <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                        Computing entity changes...
+                      </p>
+                    )}
+                    {entityJumpMiss ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        {entityJumpMiss} has no visible lines in the diff, so it
+                        cannot be located.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="p-2 lg:p-4">
+                    {!file ? (
+                      <p className="text-sm text-muted-foreground">
+                        No changed files.
+                      </p>
+                    ) : file.binary ? (
+                      <p className="text-sm text-muted-foreground">
+                        {file.path} is binary and cannot be annotated.
+                      </p>
+                    ) : !parsed ? (
+                      <p className="text-sm text-muted-foreground">
+                        No patch is available for {file.path}.
+                      </p>
+                    ) : (
+                      <>
+                        {file.truncated ? (
+                          <p className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
+                            This patch is truncated. Comments still refer only
+                            to the visible immutable snapshot.
+                          </p>
+                        ) : null}
+                        <FileCommentsBar
+                          path={file.path}
+                          annotations={review.annotations.filter(
+                            (annotation) =>
+                              annotation.fileLevel &&
+                              annotation.filePath === file.path,
+                          )}
+                          selected={selected}
+                          busy={busy}
+                          composerOpen={fileComposerOpen}
+                          composerBody={fileCommentBody}
+                          onComposerBody={setFileCommentBody}
+                          onOpenComposer={() => {
+                            setFileCommentBody("");
+                            setFileComposerOpen(true);
+                          }}
+                          onCloseComposer={() => {
+                            setFileCommentBody("");
+                            setFileComposerOpen(false);
+                          }}
+                          onAdd={() => void addFileComment()}
+                          onToggle={toggleSelected}
+                          onRemove={(id) => void remove(id)}
+                          onResolve={(annotation) => void resolve(annotation)}
+                          onSuggestion={(annotation, accept) =>
+                            void decideSuggestion(annotation, accept)
+                          }
+                          onReply={reply}
+                          replyDrafts={replyDrafts}
+                          onReplyDraft={updateReplyDraft}
+                        />
+                        <div className="overflow-hidden rounded-md border bg-card">
+                          <PierreReviewDiff
+                            fileDiff={parsed}
+                            lineAnnotations={currentAnnotations}
+                            annotations={review.annotations}
+                            replyDrafts={replyDrafts}
+                            onReply={reply}
+                            onReplyDraft={updateReplyDraft}
+                            wrapLines={wrapLines}
+                            loadDiffFiles={loadDiffFiles}
+                            composer={{
+                              file,
+                              selection,
+                              body,
+                              busy,
+                              onBody: setBody,
+                              onAdd: () => void add(),
+                              onCancel: () => {
+                                setSelection(null);
+                                setBody("");
+                              },
+                            }}
+                            onSelect={handleDiffSelection}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </section>
             </div>
-          ) : null}
-          {mobilePanel === "batch" ? (
-            <div className="fixed inset-0 z-40 flex items-start bg-black/40 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:hidden">
-              <div className="max-h-[88dvh] w-full overflow-auto rounded-xl border bg-background p-4 shadow-2xl">
+            <Dialog.Portal>
+              <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
+              <Dialog.Content
+                onEscapeKeyDown={() => setFeedbackOpen(false)}
+                onCloseAutoFocus={(event) => {
+                  event.preventDefault();
+                  feedbackOpenerRef.current?.focus();
+                }}
+                className="fixed inset-0 z-50 flex max-h-dvh w-full flex-col overflow-auto border bg-background p-4 shadow-2xl focus:outline-none lg:inset-y-0 lg:left-auto lg:right-0 lg:max-w-lg"
+              >
+                <Dialog.Description className="sr-only">
+                  {pendingCount} pending/unsent comments. Review, select, and
+                  send feedback to the agent.
+                </Dialog.Description>
                 <ReviewSummary
                   review={review}
                   selected={selected}
+                  summaryDraft={summaryDraft}
+                  onSummaryDraftChange={setSummaryDraft}
+                  replyDrafts={replyDrafts}
+                  onReplyDraft={updateReplyDraft}
                   onSaveSummary={saveSummary}
                   onToggle={toggleSelected}
                   onRemove={(id) => void remove(id)}
@@ -2553,11 +2753,70 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                   onSend={() => void send()}
                   onReply={reply}
                   onLocate={locateComment}
-                  onClose={() => setMobilePanel(null)}
+                  onClose={() => setFeedbackOpen(false)}
                 />
+              </Dialog.Content>
+            </Dialog.Portal>
+            <nav
+              className="fixed bottom-0 left-0 right-0 z-20 flex items-stretch border-t bg-card/95 backdrop-blur lg:hidden"
+              aria-label="Review sections"
+              style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+            >
+              <button
+                type="button"
+                onClick={() => setMobilePanel(null)}
+                aria-current={mobilePanel === null ? "page" : undefined}
+                className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${mobilePanel === null ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                <Icon name="FileDiff" className="size-4" />
+                Diff
+              </button>
+              <button
+                type="button"
+                aria-label={`Review feedback, ${pendingCount} pending/unsent comments`}
+                aria-haspopup="dialog"
+                aria-expanded={feedbackOpen}
+                aria-current={feedbackOpen ? "page" : undefined}
+                onClick={(event) => {
+                  feedbackOpenerRef.current = event.currentTarget;
+                  setFeedbackOpen(true);
+                }}
+                className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${feedbackOpen ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                <span className="relative">
+                  <Icon name="MessageSquare" className="size-4" />
+                  {pendingCount > 0 ? (
+                    <span
+                      aria-hidden="true"
+                      className="absolute -right-2 -top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold leading-none text-primary-foreground"
+                    >
+                      {pendingCount}
+                    </span>
+                  ) : null}
+                </span>
+                Feedback
+              </button>
+            </nav>
+            {mobilePanel === "compose" && selection ? (
+              <div className="fixed inset-0 z-40 flex items-start bg-black/40 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:hidden">
+                <div className="max-h-[85dvh] w-full overflow-auto rounded-xl border bg-background p-4 shadow-2xl">
+                  <Composer
+                    file={file}
+                    selection={selection}
+                    body={body}
+                    busy={busy}
+                    onBody={setBody}
+                    onAdd={() => void add()}
+                    onCancel={() => {
+                      setSelection(null);
+                      setBody("");
+                      setMobilePanel(null);
+                    }}
+                  />
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </Dialog.Root>
         </>
       )}
     </main>

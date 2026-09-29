@@ -10,11 +10,11 @@ The composer is a single freeform text box; comments render inline with the diff
 
 1. Open **Review changes** from a thread panel.
 2. Pick a target next to Refresh: **Uncommitted** (default), **Commit** (by sha), or **Branch vs base** (committed changes relative to a base branch such as `main`). Each refresh creates an immutable revision labeled with its target.
-3. Select a revision and changed file. On mobile, both selectors are in the header.
-4. Select lines in the diff gutter and add an anchored comment. Existing comments render inline with the diff. Comments are threaded Slack-style: one top-level comment with flat replies (use **Reply** on any card, agent comments included). Resolving a comment resolves its whole thread, and threads are carried to the next revision together. The locate button on any sidebar comment jumps to its file and scrolls the comment into view.
+3. Select a revision and changed file. Filter files by **All**, **Unviewed**, or **With open comments**, and search by path. File counts show unresolved root threads, including inline and file-level comments, with replies counted as part of their thread. On mobile, the same search and filters are available above the changed-file selector.
+4. Select lines in the diff gutter and add an anchored comment. Existing comments render inline with the diff. Reply to inline AI-authored comments directly from the diff; a reply to an AI reply is added to its existing root thread. File-level replies remain in the file comments card. Threads have one top-level comment with flat replies. Resolving a comment resolves its whole thread, and threads are carried to the next revision together. The locate button on any feedback comment jumps to its file and scrolls the comment into view.
 5. Expand collapsed unchanged context with Pierre's line-info controls when the immutable snapshot has complete text contents. Binary, oversized, and truncated files remain non-expandable.
 6. Mark changed files as viewed. Viewed state is stored separately for each immutable revision.
-7. Select unresolved comments in the feedback batch.
+7. Open **Review feedback** to select unresolved comments and review the summary. The button shows the pending/unsent comment count. On mobile, use **Feedback** in the bottom navigation.
 8. Choose **Send comments to agent**.
 9. After the agent revises, refresh the review to create the next snapshot.
 

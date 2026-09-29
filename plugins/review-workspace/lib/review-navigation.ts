@@ -1,13 +1,49 @@
 export type ChangedFilePath = { path: string };
+export type FileFilterMode = "all" | "unviewed" | "with-open-comments";
+export type FileFilterContext = {
+  mode: FileFilterMode;
+  viewedPaths: ReadonlySet<string>;
+  openThreadCounts: ReadonlyMap<string, number>;
+};
+
+export function unresolvedRootThreadCounts<
+  T extends {
+    filePath: string;
+    parentId: string | null;
+    resolvedAt: number | null;
+  },
+>(annotations: T[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const annotation of annotations) {
+    if (annotation.parentId !== null || annotation.resolvedAt !== null)
+      continue;
+    counts.set(annotation.filePath, (counts.get(annotation.filePath) ?? 0) + 1);
+  }
+  return counts;
+}
 
 export function filterChangedFiles<T extends ChangedFilePath>(
   files: T[],
   query: string,
+  context: FileFilterContext = {
+    mode: "all",
+    viewedPaths: new Set(),
+    openThreadCounts: new Map(),
+  },
 ): T[] {
   const normalized = query.trim().toLowerCase();
-  return normalized
-    ? files.filter((file) => file.path.toLowerCase().includes(normalized))
-    : files;
+  return files.filter((file) => {
+    if (normalized && !file.path.toLowerCase().includes(normalized))
+      return false;
+    if (context.mode === "unviewed" && context.viewedPaths.has(file.path))
+      return false;
+    if (
+      context.mode === "with-open-comments" &&
+      !context.openThreadCounts.has(file.path)
+    )
+      return false;
+    return true;
+  });
 }
 
 export function adjacentFilePath<T extends ChangedFilePath>(

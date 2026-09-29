@@ -3,6 +3,7 @@ import {
   adjacentFilePath,
   filterChangedFiles,
   nextUnviewedFilePath,
+  unresolvedRootThreadCounts,
 } from "./review-navigation";
 
 describe("review file navigation", () => {
@@ -17,6 +18,46 @@ describe("review file navigation", () => {
       { path: "src/App.tsx" },
     ]);
     expect(filterChangedFiles(files, "missing")).toEqual([]);
+  });
+
+  it("combines review-state filters with the text query", () => {
+    const context = {
+      viewedPaths: new Set(["src/App.tsx"]),
+      openThreadCounts: new Map([
+        ["src/App.tsx", 1],
+        ["README.md", 2],
+      ]),
+    };
+    expect(
+      filterChangedFiles(files, "src", { ...context, mode: "unviewed" }),
+    ).toEqual([]);
+    expect(
+      filterChangedFiles(files, "", { ...context, mode: "unviewed" }),
+    ).toEqual([{ path: "server.ts" }, { path: "README.md" }]);
+    expect(
+      filterChangedFiles(files, "read", {
+        ...context,
+        mode: "with-open-comments",
+      }),
+    ).toEqual([{ path: "README.md" }]);
+    expect(filterChangedFiles(files, "", { ...context, mode: "all" })).toEqual(
+      files,
+    );
+  });
+
+  it("counts unresolved root threads once, including file-level roots", () => {
+    const counts = unresolvedRootThreadCounts([
+      { filePath: "src/App.tsx", parentId: null, resolvedAt: null },
+      { filePath: "src/App.tsx", parentId: "root-1", resolvedAt: null },
+      { filePath: "src/App.tsx", parentId: null, resolvedAt: 12 },
+      { filePath: "README.md", parentId: null, resolvedAt: null },
+    ]);
+    expect(counts).toEqual(
+      new Map([
+        ["src/App.tsx", 1],
+        ["README.md", 1],
+      ]),
+    );
   });
 
   it("wraps previous and next navigation", () => {
