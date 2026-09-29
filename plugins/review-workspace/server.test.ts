@@ -3,18 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
 
-// Hoisted to module scope: vitest lifts `vi.mock` out of the surrounding
-// `describe` on its own, so declaring it here only states what already
-// happens. The rest of `./lib/sem` stays real, and each test sets the
-// behavior it needs on `runEntityDiff`.
-vi.mock("./lib/sem", async () => {
-  const actual = await vi.importActual("./lib/sem");
-  return {
-    ...(actual as object),
-    runEntityDiff: vi.fn(),
-  };
-});
-
 function parseToolResult(result: any) {
   return JSON.parse(
     typeof result === "string"
@@ -56,6 +44,18 @@ describe("Review Workspace server", () => {
     expect(Object.keys(harness.registrations)).toEqual(
       expect.arrayContaining(["rpcMethods", "agentTools"]),
     );
+    expect(harness.registrations.rpcMethods).not.toHaveProperty(
+      "entitySummary",
+    );
+    expect(harness.registrations.rpcMethods).not.toHaveProperty("entityImpact");
+    expect(
+      bb.storage
+        .database()
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name = 'review_entities'",
+        )
+        .get(),
+    ).toBeUndefined();
     expect(
       harness.registrations.agentTools.map((tool: any) => tool.name),
     ).toEqual([
@@ -1924,280 +1924,5 @@ describe("Review Workspace server", () => {
         { threadId: "thread-caller" },
       ),
     ).rejects.toThrow("same project");
-  });
-});
-
-describe("entity summary (experimental, sem)", () => {
-  it("computes the whole revision with a single sem run and caches it", async () => {
-    const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
-      runEntityDiff: ReturnType<typeof vi.fn>;
-    };
-    runEntityDiff.mockResolvedValue({
-      status: "ok",
-      changes: [
-        {
-          entityId: "src/example.ts::function::one",
-          changeType: "added",
-          entityType: "function",
-          entityName: "one",
-          startLine: 3,
-          endLine: 5,
-          oldStartLine: null,
-          oldEndLine: null,
-          filePath: "src/example.ts",
-          structuralChange: null,
-        },
-        {
-          entityId: "src/other.ts::function::two",
-          changeType: "modified",
-          entityType: "function",
-          entityName: "two",
-          startLine: 2,
-          endLine: 2,
-          oldStartLine: 2,
-          oldEndLine: 2,
-          filePath: "src/other.ts",
-          structuralChange: true,
-        },
-      ],
-    });
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "review-workspace",
-    });
-    await plugin(bb);
-    const db = bb.storage.database();
-    const reviewId = randomUUID();
-    seedReview(bb, { id: reviewId, threadId: "thread-entities", createdAt: 1 });
-    db.prepare(
-      "INSERT INTO review_files (review_id, path, previous_path, status, additions, deletions, binary, patch, truncated) VALUES (?, ?, NULL, 'M', 1, 0, 0, '', 0)",
-    ).run(reviewId, "src/other.ts");
-
-    await expect(
-      harness.behavior.callRpc("entitySummary", { reviewId }),
-    ).resolves.toMatchObject({
-      status: "ok",
-      changes: [
-        { entityId: "src/other.ts::function::two" },
-        { entityId: "src/example.ts::function::one" },
-      ],
-    });
-    // One sem run covered every file of the revision.
-    expect(runEntityDiff).toHaveBeenCalledTimes(1);
-    expect(runEntityDiff.mock.calls[0][0]).toHaveLength(2);
-    // Cached payload exists for both files of the revision.
-    const rows = db
-      .prepare("SELECT path FROM review_entities WHERE review_id = ?")
-      .all(reviewId);
-    expect(rows).toHaveLength(2);
-    await expect(
-      harness.behavior.callRpc("entitySummary", { reviewId }),
-    ).resolves.toMatchObject({ status: "ok" });
-    expect(runEntityDiff).toHaveBeenCalledTimes(1);
-  });
-
-  it("shares a single sem run across concurrent callers", async () => {
-    const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
-      runEntityDiff: ReturnType<typeof vi.fn>;
-    };
-    let release!: () => void;
-    runEntityDiff.mockReturnValue(
-      new Promise((resolve) => {
-        release = () => resolve({ status: "ok", changes: [] });
-      }),
-    );
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "review-workspace",
-    });
-    await plugin(bb);
-    runEntityDiff.mockClear();
-    const reviewId = randomUUID();
-    seedReview(bb, { id: reviewId, threadId: "thread-entities", createdAt: 1 });
-
-    const first = harness.behavior.callRpc("entitySummary", { reviewId });
-    const second = harness.behavior.callRpc("entitySummary", { reviewId });
-    release();
-    await Promise.all([first, second]);
-    console.log("spawn count", runEntityDiff.mock.calls.length);
-    expect(runEntityDiff).toHaveBeenCalledTimes(1);
-  });
-
-  it("backfills missing per-entity content from snapshot contents", async () => {
-    const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
-      runEntityDiff: ReturnType<typeof vi.fn>;
-    };
-    runEntityDiff.mockResolvedValue({
-      status: "ok",
-      changes: [
-        {
-          entityId: "src/example.ts::function::one",
-          changeType: "modified",
-          entityType: "function",
-          entityName: "one",
-          startLine: 1,
-          endLine: 3,
-          oldStartLine: 1,
-          oldEndLine: 3,
-          filePath: "src/example.ts",
-          structuralChange: true,
-          // sem omitted content; the server must backfill from the snapshot
-        },
-      ],
-    });
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "review-workspace",
-    });
-    await plugin(bb);
-    const db = bb.storage.database();
-    const reviewId = randomUUID();
-    seedReview(bb, { id: reviewId, threadId: "thread-entities", createdAt: 1 });
-    db.prepare(
-      "UPDATE review_files SET old_content = ?, new_content = ? WHERE review_id = ? AND path = ?",
-    ).run(
-      "function one() {\n  return 1;\n}",
-      "function one() {\n  return 42;\n}",
-      reviewId,
-      "src/example.ts",
-    );
-
-    await expect(
-      harness.behavior.callRpc("entitySummary", { reviewId }),
-    ).resolves.toMatchObject({
-      status: "ok",
-      changes: [
-        {
-          entityId: "src/example.ts::function::one",
-          beforeContent: "function one() {\n  return 1;\n}",
-          afterContent: "function one() {\n  return 42;\n}",
-        },
-      ],
-    });
-    // added entities never get old-side content, deleted never new-side
-    runEntityDiff.mockResolvedValue({
-      status: "ok",
-      changes: [
-        {
-          entityId: "src/example.ts::function::gone",
-          changeType: "deleted",
-          entityType: "function",
-          entityName: "gone",
-          startLine: 1,
-          endLine: 2,
-          oldStartLine: 1,
-          oldEndLine: 2,
-          filePath: "src/example.ts",
-          structuralChange: true,
-        },
-      ],
-    });
-    db.prepare("DELETE FROM review_entities WHERE review_id = ?").run(reviewId);
-    await expect(
-      harness.behavior.callRpc("entitySummary", { reviewId }),
-    ).resolves.toMatchObject({
-      status: "ok",
-      changes: [{ beforeContent: null, afterContent: null }],
-    });
-  });
-
-  it("reports sem unavailability as a status instead of failing", async () => {
-    const { runEntityDiff } = (await import("./lib/sem")) as unknown as {
-      runEntityDiff: ReturnType<typeof vi.fn>;
-    };
-    runEntityDiff.mockResolvedValue({
-      status: "unavailable",
-      reason: "sem binary not found",
-    });
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "review-workspace",
-    });
-    await plugin(bb);
-    runEntityDiff.mockClear();
-    const reviewId = randomUUID();
-    seedReview(bb, { id: reviewId, threadId: "thread-no-sem", createdAt: 1 });
-
-    await expect(
-      harness.behavior.callRpc("entitySummary", { reviewId }),
-    ).resolves.toEqual({
-      status: "unavailable",
-      reason: "sem binary not found",
-      changes: [],
-    });
-
-    // unavailability is also cached
-    expect(runEntityDiff).toHaveBeenCalledTimes(1);
-    await expect(
-      harness.behavior.callRpc("entitySummary", { reviewId }),
-    ).resolves.toMatchObject({ status: "unavailable" });
-    expect(runEntityDiff).toHaveBeenCalledTimes(1);
-  });
-
-  it("rejects unknown revisions", async () => {
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "review-workspace",
-    });
-    await plugin(bb);
-    await expect(
-      harness.behavior.callRpc("entitySummary", {
-        reviewId: randomUUID(),
-      }),
-    ).rejects.toThrow("Review revision was not found.");
-  });
-
-  it("lists recent commits from the environment checkout", async () => {
-    const { execSync } = (await import("node:child_process")) as {
-      execSync: (cmd: string, opts?: unknown) => Buffer;
-    };
-    const { mkdtempSync } = (await import("node:fs")) as {
-      mkdtempSync: (prefix: string) => string;
-    };
-    const tmp = mkdtempSync("/tmp/git-log-test-");
-    execSync("git init -q", { cwd: tmp });
-    execSync("git -C . config user.email t@t", { cwd: tmp });
-    execSync("git -C . config user.name Tester", { cwd: tmp });
-    execSync("echo one > f.txt && git add f.txt && git commit -qm 'first'", {
-      cwd: tmp,
-    });
-    execSync("echo two > f.txt && git add f.txt && git commit -qm 'second'", {
-      cwd: tmp,
-    });
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "review-workspace",
-      sdk: {
-        threads: { get: async () => ({ environmentId: "env-git" }) },
-        environments: {
-          get: async () => ({ path: tmp, isGitRepo: true }),
-        },
-      },
-    });
-    await plugin(bb);
-
-    await expect(
-      harness.behavior.callRpc("recentCommits", { threadId: "thread-git" }),
-    ).resolves.toMatchObject({
-      status: "ok",
-      commits: [
-        { subject: "second", author: "Tester" },
-        { subject: "first", author: "Tester" },
-      ],
-    });
-  });
-
-  it("reports unavailability without a git checkout", async () => {
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "review-workspace",
-      sdk: {
-        threads: { get: async () => ({ environmentId: "env-nogit" }) },
-        environments: {
-          get: async () => ({ path: "/tmp", isGitRepo: false }),
-        },
-      },
-    });
-    await plugin(bb);
-    await expect(
-      harness.behavior.callRpc("recentCommits", { threadId: "thread-nogit" }),
-    ).resolves.toEqual({
-      status: "unavailable",
-      reason: "The review target needs a git checkout.",
-      commits: [],
-    });
   });
 });

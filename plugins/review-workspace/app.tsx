@@ -24,20 +24,6 @@ import {
   unresolvedRootThreadCounts,
   type FileFilterMode,
 } from "./lib/review-navigation";
-import {
-  changeTypeLabels,
-  entityAnchor,
-  entityContentDiff,
-  entityContentPatch,
-  entityHasContentChange,
-  isModuleLevelNoise,
-  stableEntityId,
-} from "./lib/sem-outline";
-import type {
-  SemEntityChange,
-  SemImpactResult,
-  SemEntityBrief,
-} from "./lib/sem";
 import { compactPath, normalizeChangeKind } from "./lib/utils";
 
 type File = {
@@ -110,10 +96,7 @@ type Selection = {
   endLine: number;
 };
 type ComposerMarker = { composer: true; selection: Selection };
-// EXPERIMENTAL: entity outline markers rendered invisibly inside the diff so
-// entity outline rows can scroll to their region.
-type EntityMarker = { entityMarker: true; entityId: string };
-type DiffAnnotation = Annotation | ComposerMarker | EntityMarker;
+type DiffAnnotation = Annotation | ComposerMarker;
 
 function rangeToAnchor(range: SelectedLineRange): Selection | null {
   const side =
@@ -275,15 +258,6 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
       renderAnnotation={(line) => {
         const annotation = line.metadata;
         if (!annotation) return null;
-        if ("entityMarker" in annotation) {
-          // Invisible anchor for the entity outline's scrollIntoView.
-          return (
-            <div
-              key={annotation.entityId}
-              data-entity-anchor={annotation.entityId}
-            />
-          );
-        }
         if ("composer" in annotation) {
           return composer.selection ? (
             <div className="hidden lg:block">
@@ -1055,367 +1029,6 @@ function Composer({
   );
 }
 
-// EXPERIMENTAL: dedicated semantic surface - the "Entities" view mode,
-// fully decoupled from the line diff. Lists changed entities grouped by
-// file; rows expand into per-entity before/after content diffs and a
-// transitive impact list. Jump-to-diff is an optional convenience that
-// switches back to the Diff view at the entity anchor; jumps without a
-// visible anchor are reported as a miss instead of silently doing nothing.
-// Sidebar surface for the entities view: files with their changed entities,
-// replacing the changed-files nav (which has nothing to select in that view).
-// Clicking an entity expands it in the main panel and scrolls to it.
-function EntityNav({
-  changes,
-  impacts,
-  expandedIds,
-  hideCosmetics,
-  onSelect,
-}: {
-  changes: SemEntityChange[];
-  impacts: Map<string, SemImpactResult | undefined>;
-  expandedIds: Set<string>;
-  hideCosmetics: boolean;
-  onSelect: (entityId: string) => void;
-}) {
-  const visible = hideCosmetics
-    ? changes.filter(
-        (change) =>
-          change.structuralChange !== false && !isModuleLevelNoise(change),
-      )
-    : changes;
-  const byFile = new Map<string, SemEntityChange[]>();
-  for (const change of visible) {
-    const list = byFile.get(change.filePath) ?? [];
-    list.push(change);
-    byFile.set(change.filePath, list);
-  }
-  return (
-    <>
-      {[...byFile.entries()].map(([path, fileChanges]) => (
-        <div key={path} className="mb-3">
-          <p
-            className="truncate px-2 text-[11px] font-semibold text-muted-foreground"
-            title={path}
-          >
-            {compactPath(path, 32)}
-          </p>
-          <ul>
-            {fileChanges.map((entity) => {
-              const impact = impacts.get(entity.entityId);
-              return (
-                <li key={entity.entityId}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(entity.entityId)}
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${expandedIds.has(entity.entityId) ? "bg-muted font-medium" : "hover:bg-muted/60"}`}
-                    title={`${changeTypeLabels[entity.changeType]} ${entity.entityName}`}
-                  >
-                    <StateChip
-                      tone={
-                        entity.changeType === "added"
-                          ? "emerald"
-                          : entity.changeType === "deleted"
-                            ? "primary"
-                            : "muted"
-                      }
-                    >
-                      {changeTypeLabels[entity.changeType]}
-                    </StateChip>
-                    <span className="min-w-0 flex-1 truncate">
-                      {entity.entityName}
-                    </span>
-                    {expandedIds.has(entity.entityId) &&
-                    impact?.status === "ok" ? (
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {impact.total}
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
-      {!changes.length ? (
-        <p className="p-2 text-xs text-muted-foreground">
-          sem found no entity-level changes.
-        </p>
-      ) : null}
-    </>
-  );
-}
-
-// Per-entity expanded diff rendered through the same Pierre FileDiff surface
-// as the file diff: the server-side content (sem-provided or snapshot
-// backfilled) is synthesized into a single-entity unified patch. Only truly
-// oversized entities (8 KB cap) fall back to a pointer at the Diff view.
-const EntityContentDiffView = memo(function EntityContentDiffView({
-  entity,
-}: {
-  entity: SemEntityChange;
-}) {
-  const parsed = useMemo(() => {
-    const built = entityContentPatch(
-      entity.beforeContent,
-      entity.afterContent,
-      entity.filePath,
-      {
-        oldStart:
-          entity.changeType === "added" ? null : (entity.oldStartLine ?? 1),
-        newStart: entity.changeType === "deleted" ? null : entity.startLine,
-      },
-    );
-    return built ? getSingularPatch(built.patch) : null;
-  }, [entity]);
-  const hasContentChange = entityHasContentChange(
-    entity.beforeContent,
-    entity.afterContent,
-  );
-  if (!hasContentChange)
-    return (
-      <p className="mb-2 text-[11px] text-muted-foreground">
-        No content changes - the entity moved or was reordered.
-      </p>
-    );
-  if (!parsed)
-    return (
-      <p className="mb-2 text-[11px] text-muted-foreground">
-        Entity too large to inline (8 KB cap) - inspect it in the Diff view.
-      </p>
-    );
-  return (
-    <div className="mb-2 overflow-hidden rounded border bg-card">
-      <FileDiff
-        fileDiff={parsed}
-        lineAnnotations={[]}
-        disableWorkerPool
-        options={{
-          diffStyle: "unified" as const,
-          overflow: "scroll" as const,
-          hunkSeparators: "line-info" as const,
-          disableFileHeader: true,
-        }}
-      />
-    </div>
-  );
-});
-
-function EntityExplorer({
-  changes,
-  onLoadImpact,
-  impacts,
-  onJump,
-  hideCosmetics,
-  onHideCosmetics,
-  expandedIds,
-  onToggleExpanded,
-}: {
-  changes: SemEntityChange[];
-  onLoadImpact: (entityId: string) => void;
-  impacts: Map<string, SemImpactResult | undefined>;
-  onJump: (entity: SemEntityChange) => void;
-  hideCosmetics: boolean;
-  onHideCosmetics: (next: boolean) => void;
-  expandedIds: Set<string>;
-  onToggleExpanded: (entityId: string) => void;
-}) {
-  const visible = hideCosmetics
-    ? changes.filter(
-        (change) =>
-          change.structuralChange !== false && !isModuleLevelNoise(change),
-      )
-    : changes;
-  // The server already orders changes by review priority, then path, then
-  // line; grouping by file preserves that order within each file.
-  const byFile = new Map<string, SemEntityChange[]>();
-  for (const change of visible) {
-    const list = byFile.get(change.filePath) ?? [];
-    list.push(change);
-    byFile.set(change.filePath, list);
-  }
-  if (!changes.length)
-    return (
-      <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-        sem found no entity-level changes in this revision.
-      </p>
-    );
-  return (
-    <div className="mb-2 rounded-md border border-primary/40 bg-card p-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Changes by entity (experimental - sem)
-        </p>
-        <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={hideCosmetics}
-            onChange={(event) => onHideCosmetics(event.target.checked)}
-            aria-label="Hide cosmetics and module-level changes"
-          />
-          hide cosmetics &amp; module-level
-        </label>
-      </div>
-      {[...byFile.entries()].map(([path, fileChanges]) => (
-        <section key={path} className="mt-2">
-          <p className="truncate font-mono text-[11px] font-semibold text-muted-foreground">
-            {compactPath(path, 40)}
-            <span className="ml-2 font-sans font-normal">
-              {fileChanges.length} entit{fileChanges.length === 1 ? "y" : "ies"}
-            </span>
-          </p>
-          <ul className="mt-0.5 space-y-0.5">
-            {fileChanges.map((entity) => {
-              const impact = impacts.get(entity.entityId);
-              const expanded = expandedIds.has(entity.entityId);
-              const contentDiff = entityContentDiff(
-                entity.beforeContent,
-                entity.afterContent,
-              );
-              const added = contentDiff.filter(
-                (line) => line.marker === "+",
-              ).length;
-              const removed = contentDiff.filter(
-                (line) => line.marker === "-",
-              ).length;
-              return (
-                <li key={entity.entityId} data-entity-row={entity.entityId}>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-muted/40"
-                      onClick={() => onToggleExpanded(entity.entityId)}
-                      title={
-                        expanded
-                          ? "Hide changes and impact"
-                          : "Show changes and impact"
-                      }
-                    >
-                      <StateChip
-                        tone={
-                          entity.changeType === "added"
-                            ? "emerald"
-                            : entity.changeType === "deleted"
-                              ? "primary"
-                              : "muted"
-                        }
-                      >
-                        {changeTypeLabels[entity.changeType]}
-                      </StateChip>
-                      <span className="truncate font-mono text-[11px]">
-                        <strong>{entity.entityName}</strong>
-                      </span>
-                      {added + removed > 0 ? (
-                        <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
-                          <span className="text-green-700 dark:text-green-300">
-                            +{added}
-                          </span>{" "}
-                          <span className="text-red-700 dark:text-red-300">
-                            &minus;{removed}
-                          </span>
-                        </span>
-                      ) : entity.structuralChange === false ? (
-                        <StateChip>cosmetic</StateChip>
-                      ) : null}
-                      {expanded && impact ? (
-                        impact.status === "ok" ? (
-                          <span className="shrink-0 text-[11px] text-muted-foreground">
-                            {impact.total} affected
-                          </span>
-                        ) : null
-                      ) : null}
-                    </button>
-                    <button
-                      type="button"
-                      className="shrink-0 text-muted-foreground hover:text-foreground"
-                      aria-label={`Go to ${entity.entityName}`}
-                      title="Show in diff"
-                      onClick={() => onJump(entity)}
-                    >
-                      <Icon name="Target" className="size-3" />
-                    </button>
-                  </div>
-                  {expanded ? (
-                    <div className="ml-6 rounded border bg-background p-2">
-                      <EntityContentDiffView entity={entity} />
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Impact
-                        {impact?.status === "ok" &&
-                        impact.resolvedAs &&
-                        impact.resolvedAs.entityId !==
-                          stableEntityId(entity.entityId) ? (
-                          <span
-                            className="ml-1 font-normal normal-case"
-                            title="sem indexes the owning entity, not this granular one"
-                          >
-                            (of {impact.resolvedAs.type}{" "}
-                            {impact.resolvedAs.name})
-                          </span>
-                        ) : null}
-                      </p>
-                      {impact === undefined ? (
-                        <p className="text-[11px] text-muted-foreground">
-                          Computing impact...
-                        </p>
-                      ) : impact.status === "unavailable" ? (
-                        <p className="text-[11px] text-muted-foreground">
-                          sem impact unavailable: {impact.reason}
-                        </p>
-                      ) : (
-                        <>
-                          {impact.total > 0 ? (
-                            <p className="text-[11px] text-muted-foreground">
-                              {impact.total} affected entit
-                              {impact.total === 1 ? "y" : "ies"}
-                              {impact.depth > 1
-                                ? ` (${impact.depth} levels deep)`
-                                : ""}
-                              {impact.tests.length
-                                ? `, ${impact.tests.length} test suite${impact.tests.length === 1 ? "" : "s"}`
-                                : ""}
-                            </p>
-                          ) : null}
-                          {impact.dependents.length ? (
-                            <ul className="mt-1 space-y-0.5">
-                              {impact.dependents
-                                .slice(0, 10)
-                                .map((dependent) => (
-                                  <li
-                                    key={dependent.entityId}
-                                    className="truncate text-[11px]"
-                                  >
-                                    <span className="font-mono text-muted-foreground">
-                                      {dependent.file}:{dependent.lines[0]}
-                                    </span>{" "}
-                                    {dependent.name} ({dependent.type})
-                                  </li>
-                                ))}
-                            </ul>
-                          ) : (
-                            <p className="text-[11px] text-muted-foreground">
-                              No dependents found outside this revision.
-                            </p>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
-      {!visible.length ? (
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          All changes are cosmetic-only (formatting, comments) - sem found no
-          structural entity edits.
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 function ReviewSummary({
   review,
   busy,
@@ -1651,118 +1264,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     id: string;
     fileLevel: boolean;
   } | null>(null);
-  // EXPERIMENTAL: single semantic surface (revision-level "Changes by
-  // entity" summary), fully off by default.
-  // EXPERIMENTAL: dedicated semantic surface. `entitiesView` switches the
-  // workspace between the classic line diff and the decoupled entities view;
-  // summary data stays loaded across switches so jump-to-diff keeps working.
-  const [entitiesView, setEntitiesView] = useState(false);
-  const [entitySummaryChanges, setEntitySummaryChanges] = useState<
-    SemEntityChange[] | null
-  >(null);
-  const [entityHideCosmetics, setEntityHideCosmetics] = useState(true);
-  const [entityExpandedIds, setEntityExpandedIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [entitySummaryReason, setEntitySummaryReason] = useState<string | null>(
-    null,
-  );
-  const [entityImpacts, setEntityImpacts] = useState<
-    Map<string, SemImpactResult | undefined>
-  >(new Map());
-  const [pendingEntityJump, setPendingEntityJump] = useState<string | null>(
-    null,
-  );
-  const [entityJumpMiss, setEntityJumpMiss] = useState<string | null>(null);
-  async function loadEntitySummary() {
-    if (!review) return;
-    try {
-      const result = await rpc.call("entitySummary", { reviewId: review.id });
-      if (result.status === "ok") {
-        setEntitySummaryChanges(result.changes as SemEntityChange[]);
-        setEntitySummaryReason(null);
-      } else {
-        setEntitySummaryChanges([]);
-        setEntitySummaryReason(result.reason ?? "sem is unavailable");
-      }
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Unable to load summary.",
-      );
-    }
-  }
-  // Reset entity data when the revision changes (snapshot contents change).
-  useEffect(() => {
-    setEntitySummaryChanges(null);
-    setEntitySummaryReason(null);
-    setEntityJumpMiss(null);
-  }, [review?.id]);
-  // Load the summary whenever the entities view is active; keep it when
-  // switching back to the Diff view so jump anchors keep working.
-  useEffect(() => {
-    if (!entitiesView || !review) return;
-    setEntityJumpMiss(null);
-    void loadEntitySummary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entitiesView, review?.id]);
-
-  // Poll for the jumped entity's anchor after a file switch (same pattern as
-  // the late-looking-annotation locate flow).
-  useEffect(() => {
-    if (!pendingEntityJump) return;
-    const entityId = pendingEntityJump;
-    const startedAt = Date.now();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const attempt = () => {
-      const element = scrollSectionRef.current?.querySelector(
-        `[data-entity-anchor="${entityId}"]`,
-      );
-      if (element) {
-        element.scrollIntoView({ block: "center" });
-        setPendingEntityJump(null);
-        return;
-      }
-      if (Date.now() - startedAt > 5000) {
-        setPendingEntityJump(null);
-        return;
-      }
-      timer = setTimeout(attempt, 100);
-    };
-    attempt();
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [pendingEntityJump]);
-
-  async function loadEntityImpact(entityId: string) {
-    if (!review || entityImpacts.has(entityId)) return;
-    setEntityImpacts((current) => {
-      const next = new Map(current);
-      next.set(entityId, undefined);
-      return next;
-    });
-    try {
-      const result = await rpc.call("entityImpact", {
-        reviewId: review.id,
-        entityId,
-      });
-      setEntityImpacts((current) => {
-        const next = new Map(current);
-        next.set(entityId, result as SemImpactResult);
-        return next;
-      });
-    } catch (cause) {
-      setEntityImpacts((current) => {
-        const next = new Map(current);
-        next.set(entityId, {
-          status: "unavailable",
-          reason:
-            cause instanceof Error ? cause.message : "sem impact failed to run",
-        });
-        return next;
-      });
-    }
-  }
   const [error, setError] = useState<string | null>(null);
   const [targetKind, setTargetKind] = useState<
     "uncommitted" | "commit" | "branch"
@@ -1916,35 +1417,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     ? (review?.files.findIndex((candidate) => candidate.path === file.path) ??
         0) + 1
     : 0;
-  // Entity outline markers placed at each anchor line, only while enabled.
-  // Anchors come from the revision-level summary, filtered to the file
-  // currently on screen.
-  const entityMarkers = useMemo(() => {
-    if (entitiesView || !entitySummaryChanges || !file) return [];
-    return entitySummaryChanges
-      .filter((entity) => entity.filePath === file.path)
-      .map((entity) => ({ entity, anchor: entityAnchor(entity, file.patch) }))
-      .filter(
-        (
-          item,
-        ): item is {
-          entity: SemEntityChange;
-          anchor: { side: "new" | "old"; line: number };
-        } => Boolean(item.anchor),
-      )
-      .map((item) => ({
-        side:
-          item.anchor.side === "old"
-            ? ("deletions" as const)
-            : ("additions" as const),
-        lineNumber: item.anchor.line,
-        metadata: {
-          entityMarker: true,
-          entityId: item.entity.entityId,
-        } as const,
-      }));
-  }, [entitiesView, entitySummaryChanges, file]);
-
   const currentAnnotations = useMemo<
     DiffLineAnnotation<DiffAnnotation>[]
   >(() => {
@@ -1962,8 +1434,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         lineNumber: annotation.startLine,
         metadata: annotation,
       }));
-    // EXPERIMENTAL: entity outline markers ride along when enabled.
-    annotations.push(...entityMarkers);
     if (selection) {
       annotations.push({
         side: selection.side === "old" ? "deletions" : "additions",
@@ -1972,7 +1442,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       });
     }
     return annotations;
-  }, [file?.path, review?.annotations, selection, entityMarkers]);
+  }, [file?.path, review?.annotations, selection]);
   const pendingCount =
     review?.annotations.filter(
       (annotation) =>
@@ -2115,7 +1585,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       setFeedbackOpen(false);
       setFileQuery("");
       setFileFilterMode("all");
-      setEntitiesView(false);
       if (annotation.filePath !== filePath) chooseFile(annotation.filePath);
       if (annotation.fileLevel) {
         // Whole-file comments have no in-diff anchor; snap to the top bar.
@@ -2155,37 +1624,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       if (timer) clearTimeout(timer);
     };
   }, [pendingLocate]);
-
-  // Expansion state lives here so the sidebar entity nav can drive it too.
-  function toggleEntityExpanded(entityId: string) {
-    setEntityExpandedIds((current) => {
-      const next = new Set(current);
-      if (next.has(entityId)) {
-        next.delete(entityId);
-      } else {
-        next.add(entityId);
-        void loadEntityImpact(entityId);
-      }
-      return next;
-    });
-  }
-
-  function jumpToEntity(entity: SemEntityChange) {
-    if (!review) return;
-    // Only jump when the entity has visible lines in the target diff;
-    // otherwise say so instead of silently timing out.
-    const target = review.files.find(
-      (candidate) => candidate.path === entity.filePath,
-    );
-    if (!target || !entityAnchor(entity, target.patch)) {
-      setEntityJumpMiss(entity.entityName);
-      return;
-    }
-    setEntityJumpMiss(null);
-    if (entitiesView) setEntitiesView(false);
-    if (entity.filePath !== filePath) chooseFile(entity.filePath);
-    setPendingEntityJump(entity.entityId);
-  }
 
   async function addFileComment() {
     if (!review || !file || !fileCommentBody.trim()) return;
@@ -2693,80 +2131,58 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                   </div>
                 </div>
                 <nav className="p-2" aria-label="Changed files">
-                  {entitiesView && entitySummaryChanges ? (
-                    <EntityNav
-                      changes={entitySummaryChanges}
-                      impacts={entityImpacts}
-                      expandedIds={entityExpandedIds}
-                      hideCosmetics={entityHideCosmetics}
-                      onSelect={(entityId) => {
-                        toggleEntityExpanded(entityId);
-                        scrollSectionRef.current
-                          ?.querySelector(`[data-entity-row="${entityId}"]`)
-                          ?.scrollIntoView({ block: "center" });
-                      }}
-                    />
-                  ) : (
-                    <>
-                      {visibleFiles.map((candidate) => (
-                        <button
-                          key={candidate.path}
-                          onClick={() => chooseFile(candidate.path)}
-                          className={`mb-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs ${candidate.path === filePath ? "bg-muted font-medium shadow-[inset_2px_0_theme(colors.primary)]" : "hover:bg-muted/60"}`}
-                        >
-                          <span
-                            className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${(() => {
-                              const kind = normalizeChangeKind(
-                                candidate.status,
-                              );
-                              return kind === "added"
-                                ? "bg-green-500/15 text-green-600"
-                                : kind === "deleted"
-                                  ? "bg-red-500/15 text-red-600"
-                                  : "bg-yellow-500/15 text-yellow-600";
-                            })()}`}
-                          >
-                            {candidate.status[0]?.toUpperCase()}
+                  {visibleFiles.map((candidate) => (
+                    <button
+                      key={candidate.path}
+                      onClick={() => chooseFile(candidate.path)}
+                      className={`mb-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs ${candidate.path === filePath ? "bg-muted font-medium shadow-[inset_2px_0_theme(colors.primary)]" : "hover:bg-muted/60"}`}
+                    >
+                      <span
+                        className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${(() => {
+                          const kind = normalizeChangeKind(candidate.status);
+                          return kind === "added"
+                            ? "bg-green-500/15 text-green-600"
+                            : kind === "deleted"
+                              ? "bg-red-500/15 text-red-600"
+                              : "bg-yellow-500/15 text-yellow-600";
+                        })()}`}
+                      >
+                        {candidate.status[0]?.toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate" title={candidate.path}>
+                          {compactPath(candidate.path, 32)}
+                        </span>
+                        <span className="mt-0.5 flex gap-2 text-[11px] font-normal">
+                          <span className="text-green-600">
+                            +{candidate.additions}
                           </span>
-                          <span className="min-w-0 flex-1">
-                            <span
-                              className="block truncate"
-                              title={candidate.path}
-                            >
-                              {compactPath(candidate.path, 32)}
-                            </span>
-                            <span className="mt-0.5 flex gap-2 text-[11px] font-normal">
-                              <span className="text-green-600">
-                                +{candidate.additions}
-                              </span>
-                              <span className="text-red-600">
-                                -{candidate.deletions}
-                              </span>
-                            </span>
+                          <span className="text-red-600">
+                            -{candidate.deletions}
                           </span>
-                          {review.viewedPaths.includes(candidate.path) ? (
-                            <span aria-label="Viewed" className="text-primary">
-                              ✓
-                            </span>
-                          ) : null}
-                          {openThreadCounts.get(candidate.path) ? (
-                            <span
-                              aria-label={`${openThreadCounts.get(candidate.path)} open comment threads`}
-                              title={`${openThreadCounts.get(candidate.path)} open comment threads`}
-                              className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
-                            >
-                              {openThreadCounts.get(candidate.path)}
-                            </span>
-                          ) : null}
-                        </button>
-                      ))}
-                      {!visibleFiles.length ? (
-                        <p className="p-2 text-xs text-muted-foreground">
-                          No matching files.
-                        </p>
+                        </span>
+                      </span>
+                      {review.viewedPaths.includes(candidate.path) ? (
+                        <span aria-label="Viewed" className="text-primary">
+                          ✓
+                        </span>
                       ) : null}
-                    </>
-                  )}
+                      {openThreadCounts.get(candidate.path) ? (
+                        <span
+                          aria-label={`${openThreadCounts.get(candidate.path)} open comment threads`}
+                          title={`${openThreadCounts.get(candidate.path)} open comment threads`}
+                          className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                        >
+                          {openThreadCounts.get(candidate.path)}
+                        </span>
+                      ) : null}
+                    </button>
+                  ))}
+                  {!visibleFiles.length ? (
+                    <p className="p-2 text-xs text-muted-foreground">
+                      No matching files.
+                    </p>
+                  ) : null}
                 </nav>
               </aside>
               <section
@@ -2822,23 +2238,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                   >
                     <Icon name="TextWrap" />
                   </Button>
-                  <Button
-                    size="sm"
-                    variant={!entitiesView ? "secondary" : "outline"}
-                    onClick={() => setEntitiesView(false)}
-                    aria-pressed={!entitiesView}
-                  >
-                    Diff
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={entitiesView ? "secondary" : "outline"}
-                    onClick={() => setEntitiesView(true)}
-                    aria-pressed={entitiesView}
-                    aria-label="Entities view (experimental)"
-                  >
-                    Entities
-                  </Button>
                   <Dialog.Trigger asChild>
                     <Button
                       className="hidden lg:inline-flex"
@@ -2882,124 +2281,91 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     {isViewed ? "Viewed ✓" : "Viewed & next"}
                   </Button>
                 </div>
-                {entitiesView ? (
-                  <div className="p-2 lg:p-4">
-                    {entitySummaryReason ? (
-                      <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-                        sem is unavailable: {entitySummaryReason}
-                      </p>
-                    ) : entitySummaryChanges ? (
-                      <EntityExplorer
-                        changes={entitySummaryChanges}
-                        onLoadImpact={loadEntityImpact}
-                        impacts={entityImpacts}
-                        onJump={jumpToEntity}
-                        hideCosmetics={entityHideCosmetics}
-                        onHideCosmetics={setEntityHideCosmetics}
-                        expandedIds={entityExpandedIds}
-                        onToggleExpanded={toggleEntityExpanded}
+                <div className="p-2 lg:p-4">
+                  {!file ? (
+                    <p className="text-sm text-muted-foreground">
+                      No changed files.
+                    </p>
+                  ) : file.binary ? (
+                    <p className="text-sm text-muted-foreground">
+                      {file.path} is binary and cannot be annotated.
+                    </p>
+                  ) : !parsed ? (
+                    <p className="text-sm text-muted-foreground">
+                      No patch is available for {file.path}.
+                    </p>
+                  ) : (
+                    <>
+                      {file.truncated ? (
+                        <p className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
+                          This patch is truncated. Comments still refer only to
+                          the visible immutable snapshot.
+                        </p>
+                      ) : null}
+                      <FileCommentsBar
+                        path={file.path}
+                        annotations={review.annotations.filter(
+                          (annotation) =>
+                            annotation.fileLevel &&
+                            annotation.filePath === file.path,
+                        )}
+                        busy={busy}
+                        composerOpen={fileComposerOpen}
+                        composerBody={fileCommentBody}
+                        onComposerBody={setFileCommentBody}
+                        onOpenComposer={() => {
+                          setFileCommentBody("");
+                          setFileComposerOpen(true);
+                        }}
+                        onCloseComposer={() => {
+                          setFileCommentBody("");
+                          setFileComposerOpen(false);
+                        }}
+                        onAdd={() => void addFileComment()}
+                        onRemove={(id) => void remove(id)}
+                        onResolve={(annotation) => void resolve(annotation)}
+                        onSuggestion={(annotation, accept) =>
+                          void decideSuggestion(annotation, accept)
+                        }
+                        onReply={reply}
+                        replyDrafts={replyDrafts}
+                        onReplyDraft={updateReplyDraft}
+                        onEdit={(annotation, body) => edit(annotation, body)}
+                        onEditDraft={updateEditDraft}
+                        editDrafts={editDrafts}
                       />
-                    ) : (
-                      <p className="mb-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-                        Computing entity changes...
-                      </p>
-                    )}
-                    {entityJumpMiss ? (
-                      <p className="text-[11px] text-muted-foreground">
-                        {entityJumpMiss} has no visible lines in the diff, so it
-                        cannot be located.
-                      </p>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="p-2 lg:p-4">
-                    {!file ? (
-                      <p className="text-sm text-muted-foreground">
-                        No changed files.
-                      </p>
-                    ) : file.binary ? (
-                      <p className="text-sm text-muted-foreground">
-                        {file.path} is binary and cannot be annotated.
-                      </p>
-                    ) : !parsed ? (
-                      <p className="text-sm text-muted-foreground">
-                        No patch is available for {file.path}.
-                      </p>
-                    ) : (
-                      <>
-                        {file.truncated ? (
-                          <p className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
-                            This patch is truncated. Comments still refer only
-                            to the visible immutable snapshot.
-                          </p>
-                        ) : null}
-                        <FileCommentsBar
-                          path={file.path}
-                          annotations={review.annotations.filter(
-                            (annotation) =>
-                              annotation.fileLevel &&
-                              annotation.filePath === file.path,
-                          )}
-                          busy={busy}
-                          composerOpen={fileComposerOpen}
-                          composerBody={fileCommentBody}
-                          onComposerBody={setFileCommentBody}
-                          onOpenComposer={() => {
-                            setFileCommentBody("");
-                            setFileComposerOpen(true);
-                          }}
-                          onCloseComposer={() => {
-                            setFileCommentBody("");
-                            setFileComposerOpen(false);
-                          }}
-                          onAdd={() => void addFileComment()}
-                          onRemove={(id) => void remove(id)}
-                          onResolve={(annotation) => void resolve(annotation)}
-                          onSuggestion={(annotation, accept) =>
-                            void decideSuggestion(annotation, accept)
-                          }
-                          onReply={reply}
+                      <div className="overflow-hidden rounded-md border bg-card">
+                        <PierreReviewDiff
+                          fileDiff={parsed}
+                          lineAnnotations={currentAnnotations}
+                          annotations={review.annotations}
                           replyDrafts={replyDrafts}
+                          onReply={reply}
                           onReplyDraft={updateReplyDraft}
+                          editDrafts={editDrafts}
                           onEdit={(annotation, body) => edit(annotation, body)}
                           onEditDraft={updateEditDraft}
-                          editDrafts={editDrafts}
+                          onRemove={(id) => void remove(id)}
+                          wrapLines={wrapLines}
+                          loadDiffFiles={loadDiffFiles}
+                          composer={{
+                            file,
+                            selection,
+                            body,
+                            busy,
+                            onBody: setBody,
+                            onAdd: () => void add(),
+                            onCancel: () => {
+                              setSelection(null);
+                              setBody("");
+                            },
+                          }}
+                          onSelect={handleDiffSelection}
                         />
-                        <div className="overflow-hidden rounded-md border bg-card">
-                          <PierreReviewDiff
-                            fileDiff={parsed}
-                            lineAnnotations={currentAnnotations}
-                            annotations={review.annotations}
-                            replyDrafts={replyDrafts}
-                            onReply={reply}
-                            onReplyDraft={updateReplyDraft}
-                            editDrafts={editDrafts}
-                            onEdit={(annotation, body) =>
-                              edit(annotation, body)
-                            }
-                            onEditDraft={updateEditDraft}
-                            onRemove={(id) => void remove(id)}
-                            wrapLines={wrapLines}
-                            loadDiffFiles={loadDiffFiles}
-                            composer={{
-                              file,
-                              selection,
-                              body,
-                              busy,
-                              onBody: setBody,
-                              onAdd: () => void add(),
-                              onCancel: () => {
-                                setSelection(null);
-                                setBody("");
-                              },
-                            }}
-                            onSelect={handleDiffSelection}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
+                      </div>
+                    </>
+                  )}
+                </div>
               </section>
             </div>
             <Dialog.Portal>

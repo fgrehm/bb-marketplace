@@ -22,15 +22,6 @@ Each refresh creates an immutable review revision. Comments stay anchored to the
 
 The workspace currently sends selected anchored comments through the existing `sendBatch` contract. Review-level verdicts and overall summaries are intentionally not persisted or sent yet, and are follow-up work rather than new semantics added to that contract.
 
-## Experimental: entities view (sem)
-
-The plugin ships an optional, fully experimental view mode in the file header: the "Diff" / "Entities" switch replaces the workspace content entirely. In the default Diff view the classic unified diff renders with no sem coupling. In the Entities view, entity-level changes (functions, classes, methods) across the whole revision are shown as a standalone "Changes by entity" surface, decoupled from the line diff: entities are grouped by file, ordered by review priority (deleted/moved/renamed first, then modified, then added), and each row expands into its per-entity before/after content diff plus a transitive impact list (dependents + affected tests). A target button optionally switches back to the Diff view at the entity's lines when its range has visible lines; jumps without a visible anchor are reported as a miss instead of silently doing nothing.
-
-- Data is computed from the revision's immutable snapshot contents via `sem diff --stdin --format json`. sem never touches git, so results are identical across threads reviewing the same snapshot and stay stable across refreshes.
-- The whole revision is computed with a single sem run on first use, cached per (review revision, file) in a `review_entities` table, shared across concurrent callers, and swept when revisions are cleared.
-- Binary resolution: prefers `SEM_BIN_PATH`, falls back to the vendored binary from `@ataraxy-labs/sem/vendor/sem` (installed via npm postinstall).
-- If sem cannot run, the panel shows a "sem is unavailable" reason and every other review path is unaffected; the `entitySummary` rpc returns `status: "unavailable"` instead of throwing.
-
 ## Development
 
 ```sh

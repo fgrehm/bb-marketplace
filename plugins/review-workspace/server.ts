@@ -3,13 +3,6 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { runRecentCommits } from "./lib/git-log";
 import { normalizeChangeKind } from "./lib/utils";
-import {
-  ENTITY_CONTENT_MAX_CHARS,
-  runEntityDiff,
-  runEntityImpact,
-} from "./lib/sem";
-import type { SemEntityChange } from "./lib/sem";
-
 const fileShape = z
   .object({
     path: z.string(),
@@ -216,80 +209,6 @@ export const rpcContract = defineRpcContract({
     output: z.object({ summary: z.string().nullable() }),
   },
 
-  // EXPERIMENTAL: transitive dependents/tests for a summarized entity.
-  entityImpact: {
-    input: z
-      .object({
-        reviewId: z.string().uuid(),
-        entityId: z.string().min(1),
-      })
-      .strict(),
-    output: z.object({
-      status: z.enum(["ok", "unavailable"]),
-      reason: z.string().nullable(),
-      dependents: z.array(
-        z
-          .object({
-            entityId: z.string(),
-            file: z.string(),
-            lines: z.tuple([z.number().int(), z.number().int()]),
-            name: z.string(),
-            type: z.string(),
-          })
-          .strict(),
-      ),
-      tests: z.array(
-        z
-          .object({
-            entityId: z.string(),
-            file: z.string(),
-            lines: z.tuple([z.number().int(), z.number().int()]),
-            name: z.string(),
-            type: z.string(),
-          })
-          .strict(),
-      ),
-      total: z.number().int(),
-      depth: z.number().int(),
-    }),
-  },
-
-  // EXPERIMENTAL: aggregated entity summary over the whole revision.
-  // EXPERIMENTAL: aggregated entity summary across the revision, ordered by
-  // review priority (structural churn first). One sem run per revision,
-  // shared with concurrent callers. Rows carry capped per-entity content so
-  // the dedicated entities view can render before/after diffs standalone.
-  entitySummary: {
-    input: z.object({ reviewId: z.string().uuid() }).strict(),
-    output: z.object({
-      status: z.enum(["ok", "unavailable"]),
-      reason: z.string().nullable(),
-      changes: z.array(
-        z
-          .object({
-            entityId: z.string(),
-            changeType: z.enum([
-              "added",
-              "modified",
-              "deleted",
-              "moved",
-              "renamed",
-              "reordered",
-            ]),
-            entityType: z.string(),
-            entityName: z.string(),
-            filePath: z.string(),
-            startLine: z.number().int().nullable(),
-            endLine: z.number().int().nullable(),
-            structuralChange: z.boolean().nullable(),
-            beforeContent: z.string().nullable().optional(),
-            afterContent: z.string().nullable().optional(),
-          })
-          .strict(),
-      ),
-    }),
-  },
-
   // EXPERIMENTAL: recent commits of the thread's environment checkout, for
   // the review target picker (pick a commit instead of pasting a sha).
   recentCommits: {
@@ -480,6 +399,8 @@ export default async function plugin(bb: BbPluginApi) {
     // Append-only (new): rows created before reply propagation adopt their
     // root's file_level so reply anchors never surface as `path:0` labels.
     `UPDATE review_annotations SET file_level = COALESCE((SELECT root.file_level FROM review_annotations AS root WHERE root.id = review_annotations.parent_id), file_level) WHERE parent_id IS NOT NULL`,
+    // Retire the experimental sem cache without changing applied migrations.
+    `DROP TABLE IF EXISTS review_entities`,
   ]);
   db.pragma("foreign_keys = ON");
 
@@ -903,195 +824,6 @@ export default async function plugin(bb: BbPluginApi) {
     return read(id)!;
   }
 
-  // EXPERIMENTAL: entity-level changes for a whole review revision, computed
-  // lazily with a single sem CLI run over the revision's immutable snapshot
-  // contents and cached per (revision, file). sem never touches git, so
-  // results are identical across threads reviewing the same snapshot.
-  type EntityRevisionResult = {
-    status: "ok" | "unavailable";
-    reason: string | null;
-    byPath: Map<string, SemEntityChange[]>;
-  };
-
-  // Concurrent callers (summary + impact lookups) share one computation.
-  const inFlightEntityRuns = new Map<string, Promise<EntityRevisionResult>>();
-
-  async function computeEntitiesForRevision(
-    reviewId: string,
-  ): Promise<EntityRevisionResult> {
-    const review = read(reviewId);
-    if (!review) throw new Error("Review revision was not found.");
-    const textFiles = review.files.filter((file) => !file.binary);
-    // Snapshot contents live in review_files.old_content / new_content.
-    // Computing from the immutable stored blobs keeps results identical
-    // across refreshes and keeps sem entirely off git.
-    const contentQuery = db.prepare(
-      "SELECT old_content, new_content FROM review_files WHERE review_id = ? AND path = ?",
-    );
-    const upsertEntity = db.prepare(
-      "INSERT OR REPLACE INTO review_entities (review_id, path, payload, updated_at) VALUES (?, ?, ?, ?)",
-    );
-    const readCache = (): EntityRevisionResult | null => {
-      const rows = db
-        .prepare(
-          "SELECT path, payload FROM review_entities WHERE review_id = ?",
-        )
-        .all(reviewId) as Array<{ path: string; payload: string }>;
-      const payloads = new Map<
-        string,
-        | { status: "ok"; changes: SemEntityChange[] }
-        | { status: "unavailable"; reason: string }
-      >();
-      for (const row of rows) {
-        try {
-          payloads.set(row.path, JSON.parse(row.payload));
-        } catch {
-          return null;
-        }
-      }
-      // A partial cache (a file without a row, e.g. written by an older
-      // plugin version) triggers recomputation.
-      if (textFiles.some((file) => !payloads.has(file.path))) return null;
-      const unavailable = textFiles
-        .map((file) => payloads.get(file.path))
-        .find((payload) => payload?.status === "unavailable");
-      if (unavailable) {
-        return {
-          status: "unavailable",
-          reason: unavailable.reason,
-          byPath: new Map(),
-        };
-      }
-      const byPath = new Map<string, SemEntityChange[]>();
-      for (const file of textFiles) {
-        byPath.set(
-          file.path,
-          (payloads.get(file.path) as { changes: SemEntityChange[] }).changes ??
-            [],
-        );
-      }
-      return { status: "ok", reason: null, byPath };
-    };
-    const cached = readCache();
-    if (cached) return cached;
-    const inputs = textFiles.map((file) => {
-      const contents = contentQuery.get(review.id, file.path) as
-        { old_content: string | null; new_content: string | null } | undefined;
-      return {
-        filePath: file.path,
-        beforeContent: contents?.old_content ?? null,
-        afterContent: contents?.new_content ?? null,
-      };
-    });
-    const result = await runEntityDiff(inputs);
-    if (result.status === "ok") {
-      // Backfill per-entity content from the stored snapshot files when sem
-      // omits it (oversized per sem's own cap, granular chunks, ...). Only
-      // modified/reordered entities are safe: added entities have no old
-      // range and deleted entities report new-side numbers that do not exist
-      // in the new content.
-      const snapshot = new Map<
-        string,
-        { old: string | null; new: string | null }
-      >();
-      for (const file of textFiles) {
-        const row = contentQuery.get(review.id, file.path) as
-          | { old_content: string | null; new_content: string | null }
-          | undefined;
-        snapshot.set(file.path, {
-          old: row?.old_content ?? null,
-          new: row?.new_content ?? null,
-        });
-      }
-      const sliceContent = (
-        content: string | null,
-        start: number | null,
-        end: number | null,
-      ): string | null => {
-        if (content == null || start == null || start < 1) return null;
-        const fileLines = content.split("\n");
-        const lo = start - 1;
-        const hi = Math.min(fileLines.length, end ?? start);
-        if (hi <= lo) return null;
-        const slice = fileLines.slice(lo, hi).join("\n");
-        return slice.length > ENTITY_CONTENT_MAX_CHARS ? null : slice;
-      };
-      for (const change of result.changes) {
-        if (
-          change.beforeContent == null &&
-          (change.changeType === "modified" ||
-            change.changeType === "reordered")
-        ) {
-          change.beforeContent = sliceContent(
-            snapshot.get(change.filePath)?.old ?? null,
-            change.oldStartLine,
-            change.oldEndLine,
-          );
-        }
-        if (
-          change.afterContent == null &&
-          (change.changeType === "modified" ||
-            change.changeType === "reordered")
-        ) {
-          change.afterContent = sliceContent(
-            snapshot.get(change.filePath)?.new ?? null,
-            change.startLine,
-            change.endLine,
-          );
-        }
-      }
-    }
-    const perPath = new Map<string, SemEntityChange[]>();
-    if (result.status === "ok") {
-      for (const change of result.changes) {
-        const list = perPath.get(change.filePath) ?? [];
-        list.push(change);
-        perPath.set(change.filePath, list);
-      }
-    }
-    const now = Date.now();
-    db.transaction(() => {
-      for (const file of textFiles) {
-        const pathChanges =
-          result.status === "ok" ? (perPath.get(file.path) ?? []) : [];
-        const payload =
-          result.status === "ok"
-            ? { status: "ok" as const, changes: pathChanges }
-            : { status: "unavailable" as const, reason: result.reason };
-        upsertEntity.run(review.id, file.path, JSON.stringify(payload), now);
-      }
-    })();
-    return {
-      status: result.status,
-      reason: result.status === "ok" ? null : result.reason,
-      byPath: result.status === "ok" ? perPath : new Map(),
-    };
-  }
-
-  function entitiesForRevision(
-    reviewId: string,
-  ): Promise<EntityRevisionResult> {
-    const inFlight = inFlightEntityRuns.get(reviewId);
-    if (inFlight) return inFlight;
-    const run = computeEntitiesForRevision(reviewId).finally(() => {
-      inFlightEntityRuns.delete(reviewId);
-    });
-    inFlightEntityRuns.set(reviewId, run);
-    return run;
-  }
-
-  // Review-priority order for the summary: structural churn first
-  // (deleted/moved/renamed are highest risk), then modifications, then
-  // additions, then cosmetic-only reordering.
-  const CHANGE_PRIORITY: Record<string, number> = {
-    deleted: 0,
-    moved: 0,
-    renamed: 0,
-    reordered: 1,
-    modified: 1,
-    added: 2,
-  };
-
   bb.rpc.register(rpcContract, {
     review({ threadId, reviewId }) {
       const review = reviewId ? read(reviewId) : latest(threadId);
@@ -1220,132 +952,6 @@ export default async function plugin(bb: BbPluginApi) {
         ).run(reviewId);
       }
       return { summary: text || null };
-    },
-    // EXPERIMENTAL: entity-level diff outline. Cached per (revision, file);
-    // computed with sem from the immutable snapshot contents (via sem's stdin
-    // mode), never from git, so results stay identical across refreshes.
-    // EXPERIMENTAL: aggregated entity summary across the revision,
-    // ordered by review priority (structural churn first). One sem run
-    // per revision, shared with concurrent callers.
-    async entitySummary({ reviewId }) {
-      const review = read(reviewId);
-      if (!review) throw new Error("Review revision was not found.");
-      const { status, reason, byPath } = await entitiesForRevision(reviewId);
-      const changes = review.files
-        .filter((file) => !file.binary)
-        .flatMap((file) => byPath.get(file.path) ?? []);
-      changes.sort((a, b) => {
-        const priority =
-          (CHANGE_PRIORITY[a.changeType] ?? 3) -
-          (CHANGE_PRIORITY[b.changeType] ?? 3);
-        if (priority !== 0) return priority;
-        return (
-          a.filePath.localeCompare(b.filePath) ||
-          (a.startLine ?? 0) - (b.startLine ?? 0)
-        );
-      });
-      return {
-        status:
-          changes.length || status === "ok"
-            ? ("ok" as const)
-            : ("unavailable" as const),
-        reason: status === "unavailable" && !changes.length ? reason : null,
-        changes: changes.map((change) => ({
-          entityId: change.entityId,
-          changeType: change.changeType,
-          entityType: change.entityType,
-          entityName: change.entityName,
-          filePath: change.filePath,
-          startLine: change.startLine,
-          endLine: change.endLine,
-          structuralChange: change.structuralChange,
-          beforeContent: change.beforeContent ?? null,
-          afterContent: change.afterContent ?? null,
-        })),
-      };
-    },
-
-    // EXPERIMENTAL: transitive dependents/tests for an outlined entity via
-    // `sem impact` run against the environment checkout root.
-    async entityImpact({ reviewId, entityId }) {
-      const review = read(reviewId);
-      if (!review) throw new Error("Review revision was not found.");
-      const rows = db
-        .prepare("SELECT payload FROM review_entities WHERE review_id = ?")
-        .all(reviewId) as Array<{ payload: string }>;
-      let entity: SemEntityChange | undefined;
-      for (const row of rows) {
-        try {
-          const payload = JSON.parse(row.payload) as {
-            status: string;
-            changes: SemEntityChange[];
-          };
-          if (payload.status !== "ok") continue;
-          const found = payload.changes.find(
-            (change) => change.entityId === entityId,
-          );
-          if (found) {
-            entity = found;
-            break;
-          }
-        } catch {
-          /* skip malformed cached rows */
-        }
-      }
-      if (!entity)
-        throw new Error("The entity is not part of this review revision.");
-      try {
-        const thread = await bb.sdk.threads.get({ threadId: review.threadId });
-        if (!thread?.environmentId)
-          return {
-            status: "unavailable" as const,
-            reason: "The review revision has no environment to analyze.",
-            dependents: [],
-            tests: [],
-            total: 0,
-            depth: 0,
-          };
-        const env = await bb.sdk.environments.get({
-          environmentId: thread.environmentId,
-        });
-        if (!env?.path || !env.isGitRepo)
-          return {
-            status: "unavailable" as const,
-            reason: "sem impact needs a git checkout of the reviewed code.",
-            dependents: [],
-            tests: [],
-            total: 0,
-            depth: 0,
-          };
-        const result = await runEntityImpact(
-          entity.entityId,
-          entity.entityName,
-          entity.filePath,
-          env.path,
-          entity.entityType,
-        );
-        if (result.status === "ok") {
-          return { ...result, reason: null };
-        }
-        return {
-          status: "unavailable" as const,
-          reason: result.reason,
-          dependents: [],
-          tests: [],
-          total: 0,
-          depth: 0,
-        };
-      } catch (cause) {
-        return {
-          status: "unavailable" as const,
-          reason:
-            cause instanceof Error ? cause.message : "sem impact failed to run",
-          dependents: [],
-          tests: [],
-          total: 0,
-          depth: 0,
-        };
-      }
     },
     removeAnnotation({ annotationId }) {
       const replies = db
@@ -1893,13 +1499,9 @@ export default async function plugin(bb: BbPluginApi) {
           db.prepare(
             "DELETE FROM review_review_summaries WHERE review_id = ?",
           ).run(id);
-          db.prepare("DELETE FROM review_entities WHERE review_id = ?").run(id);
           db.prepare("DELETE FROM review_revisions WHERE id = ?").run(id);
         }
-        // Sweep orphaned summaries/entities left by older deletion paths.
-        db.prepare(
-          "DELETE FROM review_entities WHERE review_id NOT IN (SELECT id FROM review_revisions)",
-        ).run();
+
         db.prepare(
           "DELETE FROM review_review_summaries WHERE review_id NOT IN (SELECT id FROM review_revisions)",
         ).run();

@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@ataraxy-labs/sem':
-        specifier: 0.23.1
-        version: 0.23.1
       zod:
         specifier: ^4.6.2
         version: 4.6.2
@@ -125,11 +122,6 @@ packages:
 
   '@asamuzakjp/css-color@3.2.0':
     resolution: {integrity: sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==}
-
-  '@ataraxy-labs/sem@0.23.1':
-    resolution: {integrity: sha512-wKwcfOZV1hlxOw8DaBy9X1pytqx1anw4bYZFoqZ85BWupPiO3HAxTH+wBFEbzhawNiBHCJE7XIBUtoWmGT1D5g==}
-    engines: {node: '>=20'}
-    hasBin: true
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -1877,8 +1869,6 @@ snapshots:
       '@csstools/css-parser-algorithms': 3.0.5(@csstools/css-tokenizer@3.0.4)
       '@csstools/css-tokenizer': 3.0.4
       lru-cache: 10.4.3
-
-  '@ataraxy-labs/sem@0.23.1': {}
 
   '@babel/code-frame@7.29.7':
     dependencies:
