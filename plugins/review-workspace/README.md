@@ -30,6 +30,14 @@ Choose a row to open that thread's existing review. **Reload list** updates the 
 
 Discovery is limited to the 100 most recently snapshotted threads and shows up to 50 reviews. Hidden, archived, deleted, and missing threads are omitted. Older revisions remain available from each thread's revision picker, not as duplicate rows here. If the list is empty, open a thread's **Review** button, then choose **Open review** to save its first snapshot.
 
+## Data retention
+
+Reviews for an archived thread are eligible for automatic deletion after **7 days continuously archived**, measured from the thread's archive time, not the age of its snapshots. This also applies to reviews that existed before cleanup was enabled. Unarchiving during the grace period preserves the review data; archiving again starts a new grace period. Active threads are not aged out.
+
+Purging removes all of that thread's review revisions, saved file contents and patches, comments (including unsent feedback), review and file notes, resolution suggestions, and viewed state. **Deletion is irreversible**, unarchiving afterward does not restore reviews. Comments already imported into another thread are independent copies and remain there. Deleting a BB thread triggers immediate cleanup of its reviews; missed deletions and genuinely missing threads are reconciled by the background sweep.
+
+Cleanup runs once after plugin load and hourly while the plugin is enabled. Each pass checks up to 100 saved review owners with a 60-second time budget and a persisted cursor, so large histories can take multiple passes. Thread metadata lookup failures retain data for a later retry. Cleanup does not scan Git, modify BB threads, or send feedback. Freed database pages are reused; cleanup does not force the database file to shrink.
+
 ## Development
 
 ```sh

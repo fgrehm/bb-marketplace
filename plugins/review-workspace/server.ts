@@ -3,6 +3,7 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { runRecentCommits } from "./lib/git-log";
 import { normalizeChangeKind } from "./lib/utils";
+import { registerReviewCleanup } from "./lib/review-cleanup";
 const fileShape = z
   .object({
     path: z.string(),
@@ -425,6 +426,7 @@ export default async function plugin(bb: BbPluginApi) {
     `CREATE INDEX review_annotations_review_id ON review_annotations (review_id)`,
   ]);
   db.pragma("foreign_keys = ON");
+  registerReviewCleanup(bb, db);
 
   function annotations(reviewId: string): Annotation[] {
     return db

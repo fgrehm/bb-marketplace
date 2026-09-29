@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Automatically purge reviews after seven days continuously archived, including existing archives, and on thread deletion. Bounded startup and hourly sweeps reconcile missed events and missing threads; active reviews and independently imported feedback are retained.
 - Resume existing reviews from the sidebar's Recent reviews page, with one latest snapshot per thread, pending human comments first, snapshot metadata, and viewed-file progress. Reloading the list does not refresh diffs or send feedback.
 - Review uncommitted changes, a selected commit, or a committed branch comparison through immutable revisions, with previous revisions retained.
 - Add feedback on diff lines or whole files, write a review note, and mark files as viewed. Refresh carries unresolved threads and the note forward.
