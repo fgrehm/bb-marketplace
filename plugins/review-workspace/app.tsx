@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   definePluginApp,
   experimental_usePluginId,
@@ -182,7 +190,7 @@ function AnnotationMeta({
           AI comment
         </StateChip>
       ) : (
-        <StateChip tone="primary">
+        <StateChip>
           {annotation.parentId ? "Your reply" : "Review comment"}
         </StateChip>
       )}
@@ -234,7 +242,7 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
     body: string;
     busy: boolean;
     onBody: (value: string) => void;
-    onAdd: () => void;
+    onAdd: () => Promise<void>;
     onCancel: () => void;
   };
   onSelect: (range: SelectedLineRange | null) => void;
@@ -286,17 +294,17 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
         return (
           <div
             data-annotation-id={annotation.id}
-            className={`border-l-2 px-3 py-2 text-xs ${
+            className={`group border-l-2 px-3 py-3 font-sans text-xs text-foreground ${
               annotation.resolvedAt
                 ? "border-l-muted-foreground/30 bg-muted/30"
-                : "border-l-primary bg-primary/5"
+                : "border-l-primary/40 bg-card"
             }`}
           >
             <div className="mb-1.5">
               <AnnotationMeta annotation={annotation} />
             </div>
             <p
-              className={`whitespace-pre-wrap ${
+              className={`whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere] ${
                 annotation.resolvedAt ? "text-muted-foreground" : ""
               }`}
             >
@@ -434,7 +442,7 @@ function CommentCard({
             className="min-w-0 flex-1 text-left"
             onClick={() => setCollapsed(false)}
           >
-            <span className="font-mono text-[11px] text-muted-foreground">
+            <span className="font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
               {annotationLabel(annotation)}
             </span>
             <span className="ml-2 inline-block align-middle">
@@ -451,18 +459,20 @@ function CommentCard({
   }
   return (
     <article
-      className={`group rounded-lg border bg-background p-3 text-xs shadow-sm ${annotation.sentAt || annotation.resolvedAt ? "opacity-65" : ""}`}
+      className={`group rounded-lg border bg-background p-3 font-sans text-xs ${annotation.sentAt || annotation.resolvedAt ? "opacity-65" : ""}`}
     >
       <div className="flex gap-2">
         <div className="min-w-0 flex-1">
-          <p className="font-mono text-[11px] text-muted-foreground">
+          <p className="font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
             {annotationLabel(annotation)}
           </p>
           <div className="mt-1 flex flex-wrap items-center justify-between gap-1">
             <AnnotationMeta annotation={annotation} />
             {locate}
           </div>
-          <p className="mt-1.5 whitespace-pre-wrap">{annotation.body}</p>
+          <p className="mt-2 whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
+            {annotation.body}
+          </p>
           {annotation.resolutionSuggestion && !annotation.resolvedAt ? (
             <div className="mt-2 rounded bg-muted p-2">
               <p>
@@ -483,30 +493,49 @@ function CommentCard({
               </button>
             </div>
           ) : null}
-          {annotation.resolvedAt ? null : (
-            <button
-              className="mt-1.5 text-muted-foreground hover:text-foreground"
-              onClick={() => onResolve(annotation)}
-            >
-              Resolve
-            </button>
-          )}
-          {hideReplyButton ? null : replying || editing ? null : (
-            <button
-              className="ml-3 mt-1.5 text-primary hover:opacity-80"
-              onClick={() => onReplyDraft(annotation.id, "")}
-            >
-              Reply
-            </button>
-          )}
-          {annotation.resolvedAt ? (
-            <button
-              className="ml-3 mt-1.5 text-muted-foreground hover:text-foreground"
-              onClick={() => setCollapsed(true)}
-            >
-              Collapse
-            </button>
-          ) : null}
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            {annotation.resolvedAt ? null : (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="-ml-2 h-7 px-2 text-muted-foreground"
+                onClick={() => onResolve(annotation)}
+              >
+                Resolve
+              </Button>
+            )}
+            {hideReplyButton || replying || editing ? null : (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2"
+                onClick={() => onReplyDraft(annotation.id, "")}
+              >
+                Reply
+              </Button>
+            )}
+            {annotation.resolvedAt ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-muted-foreground"
+                onClick={() => setCollapsed(true)}
+              >
+                Collapse
+              </Button>
+            ) : null}
+            {onEdit ? (
+              <div className="ml-auto">
+                <CommentActions
+                  annotation={annotation}
+                  hasReplies={hasReplies}
+                  editing={editing}
+                  onEdit={() => onEditDraft(annotation.id, annotation.body)}
+                  onDelete={onRemove}
+                />
+              </div>
+            ) : null}
+          </div>
           {replying ? (
             <ReplyBox
               parent={annotation}
@@ -514,15 +543,6 @@ function CommentCard({
               draft={replyDrafts.get(annotation.id) ?? ""}
               onDraft={(value) => onReplyDraft(annotation.id, value)}
               onCancel={() => onReplyDraft(annotation.id, null)}
-            />
-          ) : null}
-          {onEdit ? (
-            <CommentActions
-              annotation={annotation}
-              hasReplies={hasReplies}
-              editing={editing}
-              onEdit={() => onEditDraft(annotation.id, annotation.body)}
-              onDelete={onRemove}
             />
           ) : null}
           {editing ? (
@@ -569,10 +589,8 @@ function submitShortcutLabel(): string {
   return isApplePlatform() ? "Cmd+Enter" : "Ctrl+Enter";
 }
 
-// One editor for both replies and edits: it mounts only while its draft is
-// open, so focusing on mount covers opening, cancelling, and reopening. The
-// submit path is guarded so a second click or keypress cannot fire the RPC
-// twice while the first is still in flight.
+// All comment entry points share focus, keyboard submission, and failure
+// handling. A failed save keeps the draft and its error beside the editor.
 function CommentEditor({
   fieldLabel,
   placeholder,
@@ -582,6 +600,9 @@ function CommentEditor({
   onCancel,
   submitLabel,
   busyLabel,
+  heading,
+  anchorLabel,
+  disabled = false,
 }: {
   fieldLabel: string;
   placeholder: string;
@@ -591,53 +612,110 @@ function CommentEditor({
   onCancel: () => void;
   submitLabel: string;
   busyLabel: string;
+  heading?: string;
+  anchorLabel?: string;
+  disabled?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
   const submittingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
   function submit() {
-    if (submittingRef.current || busy || !draft.trim()) return;
+    if (submittingRef.current || busy || disabled || !draft.trim()) return;
     submittingRef.current = true;
     setBusy(true);
+    setError(null);
     void onSubmit(draft)
       .then(onCancel)
-      .catch(() => undefined)
+      .catch((cause) =>
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Unable to save comment. Try again.",
+        ),
+      )
       .finally(() => {
         submittingRef.current = false;
         setBusy(false);
       });
   }
   return (
-    <div className="mt-2 rounded bg-muted p-2">
-      <textarea
-        ref={textareaRef}
-        aria-label={fieldLabel}
-        maxLength={1000}
-        value={draft}
-        onChange={(event) => onDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey))
-            return;
-          event.preventDefault();
-          submit();
-        }}
-        placeholder={placeholder}
-        className="min-h-14 w-full rounded border bg-background p-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      />
-      <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">
-          {submitShortcutLabel()} to submit
-        </span>
-        <div className="flex justify-end gap-2">
-          <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
-            Cancel
-          </Button>
-          <Button size="sm" disabled={busy || !draft.trim()} onClick={submit}>
-            {busy ? busyLabel : submitLabel}
-          </Button>
+    <div className="mt-2 min-w-0 font-sans text-xs text-foreground">
+      {heading ? (
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Icon
+            name="MessageSquare"
+            className="size-3.5 text-muted-foreground"
+          />
+          <span className="font-medium">{heading}</span>
+          {anchorLabel ? (
+            <span className="text-[11px] text-muted-foreground">
+              {anchorLabel}
+            </span>
+          ) : null}
+          <span className="ml-auto text-[11px] text-muted-foreground">
+            Not sent until you send review feedback
+          </span>
+        </div>
+      ) : null}
+      <div className="overflow-hidden rounded-lg border border-border bg-background focus-within:border-ring/50">
+        <textarea
+          ref={textareaRef}
+          aria-label={fieldLabel}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? errorId : undefined}
+          maxLength={1000}
+          rows={3}
+          value={draft}
+          readOnly={busy || disabled}
+          onChange={(event) => onDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.nativeEvent.isComposing ||
+              event.key !== "Enter" ||
+              !(event.metaKey || event.ctrlKey)
+            )
+              return;
+            event.preventDefault();
+            submit();
+          }}
+          placeholder={placeholder}
+          className={`block min-h-24 w-full resize-y border-0 bg-transparent px-3 py-2.5 text-xs leading-relaxed ${COARSE_POINTER_TEXT_BASE_CLASS} placeholder:text-muted-foreground focus-visible:outline-none read-only:opacity-60`}
+        />
+        {error ? (
+          <p
+            id={errorId}
+            role="alert"
+            className="px-3 pb-2 text-xs text-destructive [overflow-wrap:anywhere]"
+          >
+            {error}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t bg-muted/30 px-3 py-2">
+          <span className="text-[11px] text-muted-foreground">
+            {submitShortcutLabel()} to submit
+          </span>
+          <div className="ml-auto flex justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onCancel}
+              disabled={busy || disabled}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || disabled || !draft.trim()}
+              onClick={submit}
+            >
+              {busy ? busyLabel : submitLabel}
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -692,9 +770,9 @@ function CommentActions({
   // Icon-only and revealed on hover or keyboard focus: these are secondary
   // actions, and filled pills made them read as primary.
   const className =
-    "inline-flex size-7 min-h-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100";
+    "inline-flex size-7 min-h-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
   return (
-    <div className="mt-1.5 flex items-center gap-0.5">
+    <div className="inline-flex items-center gap-0.5">
       {editing ? null : (
         <button
           type="button"
@@ -763,7 +841,19 @@ function CommentList({
   editDrafts: Map<string, string>;
 }) {
   if (!annotations.length)
-    return <p className="text-xs text-muted-foreground">No comments yet.</p>;
+    return (
+      <div className="rounded-lg border border-dashed px-4 py-8 text-center">
+        <Icon
+          name="MessageSquare"
+          className="mx-auto mb-2 size-5 text-muted-foreground"
+        />
+        <p className="text-sm font-medium">No comments yet</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          Select lines in the diff or comment on a whole file. Your feedback
+          will appear here before you send it.
+        </p>
+      </div>
+    );
   // One top-level comment with replies (Slack style): roots keep arrival order,
   // replies render indented under their root in arrival order.
   const roots = annotations.filter((annotation) => !annotation.parentId);
@@ -850,7 +940,6 @@ function CommentList({
 }
 
 function FileCommentsBar({
-  path,
   annotations,
   busy,
   composerOpen,
@@ -869,7 +958,6 @@ function FileCommentsBar({
   onEditDraft,
   editDrafts,
 }: {
-  path: string;
   annotations: Annotation[];
   busy: boolean;
   composerOpen: boolean;
@@ -877,7 +965,7 @@ function FileCommentsBar({
   onComposerBody: (value: string) => void;
   onOpenComposer: () => void;
   onCloseComposer: () => void;
-  onAdd: () => void;
+  onAdd: () => Promise<void>;
   onRemove: (id: string) => void;
   onResolve: (annotation: Annotation) => void;
   onSuggestion: (annotation: Annotation, accept: boolean) => void;
@@ -899,8 +987,17 @@ function FileCommentsBar({
   return (
     <div className="mb-3 rounded-lg border bg-card px-3 py-2 shadow-sm">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <p className="flex items-center gap-2 text-xs font-medium">
+          <Icon
+            name="MessageSquare"
+            className="size-3.5 text-muted-foreground"
+          />
           File comments
+          {roots.length ? (
+            <span className="text-[11px] text-muted-foreground">
+              {roots.length}
+            </span>
+          ) : null}
         </p>
         {!composerOpen ? (
           <Button size="sm" variant="outline" onClick={onOpenComposer}>
@@ -909,34 +1006,22 @@ function FileCommentsBar({
         ) : null}
       </div>
       {composerOpen ? (
-        <div className="mt-2 rounded-md border border-primary bg-background p-3 shadow-lg">
-          <p className="text-xs text-muted-foreground">
-            Comment on {path} (whole file)
-          </p>
-          <textarea
-            maxLength={1000}
-            value={composerBody}
-            onChange={(event) => onComposerBody(event.target.value)}
-            placeholder="Leave feedback on the whole file... Markdown supported"
-            aria-label="File comment"
-            className={`mt-2 min-h-24 w-full rounded border bg-background p-2 ${COARSE_POINTER_TEXT_BASE_CLASS} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`}
-          />
-          <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={onCloseComposer}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={onAdd}
-              disabled={busy || !composerBody.trim()}
-            >
-              Add comment
-            </Button>
-          </div>
-        </div>
+        <CommentEditor
+          fieldLabel="File comment"
+          heading="New comment"
+          anchorLabel="Whole file"
+          placeholder="What should the agent change or check? Markdown supported."
+          draft={composerBody}
+          onDraft={onComposerBody}
+          onSubmit={onAdd}
+          onCancel={onCloseComposer}
+          submitLabel="Add comment"
+          busyLabel="Adding..."
+          disabled={busy}
+        />
       ) : null}
       {roots.length ? (
-        <div className="mt-2">
+        <div className="mt-3 space-y-2">
           {roots.map((root) => (
             <div key={root.id}>
               <CommentCard
@@ -994,42 +1079,27 @@ function Composer({
   body: string;
   busy: boolean;
   onBody: (value: string) => void;
-  onAdd: () => void;
+  onAdd: () => Promise<void>;
   onCancel: () => void;
 }) {
-  // autoFocus does not fire reliably here on desktop: the composer mounts
-  // through Pierre's renderAnnotation callback after React's initial commit,
-  // so focus the textarea explicitly once it is in the DOM.
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
   return (
-    <div className="rounded-md border border-primary bg-background p-3 shadow-lg">
-      <p className="text-xs text-muted-foreground">
-        Comment on {file?.path}:{selection.startLine}
-        {selection.endLine === selection.startLine
-          ? ""
-          : `-${selection.endLine}`}{" "}
-        ({selection.side})
-      </p>
-      <textarea
-        ref={textareaRef}
-        maxLength={1000}
-        value={body}
-        onChange={(event) => onBody(event.target.value)}
-        placeholder="Leave feedback... Markdown supported"
-        aria-label="Comment"
-        className={`mt-2 min-h-24 w-full rounded border bg-background p-2 ${COARSE_POINTER_TEXT_BASE_CLASS} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`}
+    <div
+      className="border-l-2 border-l-primary/40 bg-card px-3 py-2"
+      title={file?.path}
+    >
+      <CommentEditor
+        fieldLabel="Comment"
+        heading="New comment"
+        anchorLabel={`${selection.side === "new" ? "New" : "Old"} ${selection.endLine === selection.startLine ? "line" : "lines"} ${selection.startLine}${selection.endLine === selection.startLine ? "" : `-${selection.endLine}`}`}
+        placeholder="What should the agent change or check? Markdown supported."
+        draft={body}
+        onDraft={onBody}
+        onSubmit={onAdd}
+        onCancel={onCancel}
+        submitLabel="Add comment"
+        busyLabel="Adding..."
+        disabled={busy}
       />
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button size="sm" onClick={onAdd} disabled={busy || !body.trim()}>
-          Add comment
-        </Button>
-      </div>
     </div>
   );
 }
@@ -1037,6 +1107,7 @@ function Composer({
 function ReviewSummary({
   review,
   busy,
+  error,
   summaryDraft,
   onSummaryDraftChange,
   noteOpen,
@@ -1057,6 +1128,7 @@ function ReviewSummary({
 }: {
   review: Review;
   busy: boolean;
+  error: string | null;
   summaryDraft: string;
   onSummaryDraftChange: (summary: string) => void;
   noteOpen: boolean;
@@ -1081,33 +1153,33 @@ function ReviewSummary({
       annotation.resolvedAt === null &&
       annotation.author !== "agent",
   );
-  const hasNotes = Boolean(review.summary?.trim());
+  const hasNotes = Boolean(summaryDraft.trim());
   return (
-    <div className="flex min-h-0 flex-col">
-      <div className="flex items-start justify-between gap-3 border-b pb-3">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b pb-3">
         <div>
           <Dialog.Title className="text-base font-semibold">
             Review feedback
           </Dialog.Title>
           <p className="mt-1 text-xs text-muted-foreground">
-            {pending.length} pending comment{pending.length === 1 ? "" : "s"}{" "}
-            across {new Set(pending.map((item) => item.filePath)).size} file
-            {new Set(pending.map((item) => item.filePath)).size === 1
-              ? ""
-              : "s"}
+            {pending.length
+              ? `${pending.length} pending comment${pending.length === 1 ? "" : "s"} across ${new Set(pending.map((item) => item.filePath)).size} file${new Set(pending.map((item) => item.filePath)).size === 1 ? "" : "s"}`
+              : hasNotes
+                ? "Your review note is ready to send."
+                : "No comments waiting to be sent."}
           </p>
         </div>
         {onClose ? (
-          <Button size="sm" variant="ghost" onClick={onClose}>
+          <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
             Done
           </Button>
         ) : null}
       </div>
-      <div className="mt-3">
+      <div className="mt-3 shrink-0">
         {noteOpen ? (
           <>
             <label
-              className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+              className="text-xs font-medium"
               htmlFor="review-overall-summary"
             >
               Review note
@@ -1117,12 +1189,13 @@ function ReviewSummary({
               maxLength={2000}
               value={summaryDraft}
               onChange={(event) => onSummaryDraftChange(event.target.value)}
+              disabled={busy}
               onBlur={() => {
                 if (summaryDraft.trim() !== (review.summary ?? ""))
-                  void onSaveSummary(summaryDraft);
+                  void onSaveSummary(summaryDraft).catch(() => undefined);
               }}
-              placeholder="Optional note about the changeset as a whole, sent with every batch."
-              className={`mt-1 min-h-16 w-full rounded border bg-background p-2 ${COARSE_POINTER_TEXT_BASE_CLASS} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`}
+              placeholder="Optional context for the agent, included with your comments."
+              className={`mt-2 block min-h-16 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-xs leading-relaxed ${COARSE_POINTER_TEXT_BASE_CLASS} focus-visible:outline-none focus-visible:border-ring/50 disabled:opacity-60`}
             />
           </>
         ) : (
@@ -1139,7 +1212,7 @@ function ReviewSummary({
           </button>
         )}
       </div>
-      <div className="mt-3 min-h-0 overflow-auto">
+      <div className="mt-3 min-h-0 flex-1 overflow-auto pb-1">
         <CommentList
           annotations={review.annotations}
           onRemove={onRemove}
@@ -1154,24 +1227,37 @@ function ReviewSummary({
           editDrafts={editDrafts}
         />
       </div>
-      <Button
-        className="mt-3 w-full"
-        onClick={() => onSend(pending.map((item) => item.id))}
-        disabled={busy || (!pending.length && !hasNotes)}
-      >
-        {busy
-          ? "Sending..."
-          : pending.length
-            ? `Send ${pending.length} comment${pending.length === 1 ? "" : "s"} to agent`
-            : "Send review note to agent"}
-      </Button>
-      <p className="mt-2 text-center text-[11px] text-muted-foreground">
-        {pending.length
-          ? "Everything you have not resolved goes to the agent in one batch."
-          : hasNotes
-            ? "No pending comments left; this sends the review note only."
-            : "Nothing to send yet. Add a comment or a review note."}
-      </p>
+      <div className="mt-3 shrink-0 border-t pt-3">
+        {error ? (
+          <p
+            role="alert"
+            className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive [overflow-wrap:anywhere]"
+          >
+            {error}
+          </p>
+        ) : null}
+        <Button
+          className="w-full"
+          onClick={() => onSend(pending.map((item) => item.id))}
+          disabled={busy || (!pending.length && !hasNotes)}
+        >
+          <Icon name="Sent" className="size-3.5" />
+          {busy
+            ? "Sending..."
+            : pending.length
+              ? `Send ${pending.length} comment${pending.length === 1 ? "" : "s"} to agent`
+              : hasNotes
+                ? "Send review note to agent"
+                : "Send comments to agent"}
+        </Button>
+        <p className="mt-2 text-center text-[11px] leading-relaxed text-muted-foreground">
+          {pending.length
+            ? `All unsent, unresolved comments${hasNotes ? " and your review note" : ""} go in one batch. You'll return to the thread.`
+            : hasNotes
+              ? "Sends your review note and returns to the thread."
+              : "Add a comment or review note to get started."}
+        </p>
+      </div>
     </div>
   );
 }
@@ -1264,6 +1350,12 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const [fileFilterMode, setFileFilterMode] = useState<FileFilterMode>("all");
   const [wrapLines, setWrapLines] = useState(false);
   const [busy, setBusy] = useState(false);
+  const sendingRef = useRef(false);
+  const summarySaveRef = useRef<Promise<void>>(Promise.resolve());
+  const savedSummaryRef = useRef<{
+    reviewId: string;
+    text: string | null;
+  } | null>(null);
   // Comment locate flow: a pending locate survives the file switch and
   // resolves after the diff re-renders.
   const [pendingLocate, setPendingLocate] = useState<{
@@ -1336,6 +1428,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       ]);
       const next = result.review as Review | null;
       setReview(next);
+      savedSummaryRef.current = next
+        ? { reviewId: next.id, text: next.summary }
+        : null;
       setSummaryDraft(next?.summary ?? "");
       setNoteOpen(Boolean(next?.summary?.trim()));
       setReplyDrafts(new Map());
@@ -1642,17 +1737,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         fileLevel: true,
       });
       const annotation = result.annotation as Annotation;
-      setReview({
-        ...review,
-        annotations: [...review.annotations, annotation],
-      });
+      setReview((current) =>
+        current?.id === review.id
+          ? { ...current, annotations: [...current.annotations, annotation] }
+          : current,
+      );
       setFileCommentBody("");
       setFileComposerOpen(false);
       setError(null);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Unable to add file comment.",
-      );
     } finally {
       setBusy(false);
     }
@@ -1668,59 +1760,72 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         body: body.trim(),
       });
       const annotation = result.annotation as Annotation;
-      setReview({
-        ...review,
-        annotations: [...review.annotations, annotation],
-      });
+      setReview((current) =>
+        current?.id === review.id
+          ? { ...current, annotations: [...current.annotations, annotation] }
+          : current,
+      );
       setBody("");
       setSelection(null);
       setMobilePanel(null);
       setError(null);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Unable to add comment.",
-      );
     } finally {
       setBusy(false);
     }
   }
   async function reply(parent: Annotation, body: string) {
     if (!review || !body.trim()) return;
-    try {
-      const result = await rpc.call("addAnnotation", {
-        reviewId: review.id,
-        filePath: parent.filePath,
-        side: parent.side,
-        startLine: parent.startLine,
-        endLine: parent.endLine,
-        body: body.trim(),
-        parentId: parent.id,
-      });
-      const annotation = result.annotation as Annotation;
-      setReview({
-        ...review,
-        annotations: [...review.annotations, annotation],
-      });
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to add reply.");
-      throw cause;
-    }
+    const result = await rpc.call("addAnnotation", {
+      reviewId: review.id,
+      filePath: parent.filePath,
+      side: parent.side,
+      startLine: parent.startLine,
+      endLine: parent.endLine,
+      body: body.trim(),
+      parentId: parent.id,
+    });
+    const annotation = result.annotation as Annotation;
+    setReview((current) =>
+      current?.id === review.id
+        ? { ...current, annotations: [...current.annotations, annotation] }
+        : current,
+    );
+    setError(null);
   }
-  async function saveSummary(text: string) {
-    if (!review) return;
-    try {
-      const result = await rpc.call("setReviewSummary", {
-        reviewId: review.id,
-        summary: text,
+  function saveSummary(text: string): Promise<void> {
+    if (!review) return Promise.resolve();
+    const reviewId = review.id;
+    // Blur saves and sending share this queue. An older save must not arrive
+    // after the final draft, and sending must wait for that draft to persist.
+    const save = summarySaveRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          const result = await rpc.call("setReviewSummary", {
+            reviewId,
+            summary: text,
+          });
+          savedSummaryRef.current = {
+            reviewId,
+            text: result.summary as string | null,
+          };
+          setReview((current) =>
+            current?.id === reviewId
+              ? { ...current, summary: result.summary as string | null }
+              : current,
+          );
+          setError(null);
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Unable to save review note.",
+          );
+          throw cause;
+        }
       });
-      setReview({ ...review, summary: result.summary as string | null });
-      setError(null);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Unable to save review note.",
-      );
-    }
+    summarySaveRef.current = save;
+    return save;
   }
   async function remove(id: string) {
     try {
@@ -1742,30 +1847,22 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     }
   }
   async function edit(annotation: Annotation, body: string) {
-    try {
-      const result = await rpc.call("editAnnotation", {
-        annotationId: annotation.id,
-        body: body.trim(),
-      });
-      const updated = result.annotation as Annotation;
-      setReview((current) =>
-        current
-          ? {
-              ...current,
-              annotations: current.annotations.map((candidate) =>
-                candidate.id === updated.id ? updated : candidate,
-              ),
-            }
-          : current,
-      );
-      setError(null);
-    } catch (cause) {
-      // Rethrow so the editor keeps the draft open with the error visible.
-      setError(
-        cause instanceof Error ? cause.message : "Unable to edit comment.",
-      );
-      throw cause;
-    }
+    const result = await rpc.call("editAnnotation", {
+      annotationId: annotation.id,
+      body: body.trim(),
+    });
+    const updated = result.annotation as Annotation;
+    setReview((current) =>
+      current
+        ? {
+            ...current,
+            annotations: current.annotations.map((candidate) =>
+              candidate.id === updated.id ? updated : candidate,
+            ),
+          }
+        : current,
+    );
+    setError(null);
   }
   async function resolve(annotation: Annotation) {
     try {
@@ -1843,27 +1940,42 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       setBusy(false);
     }
   }
-  const hasNotes = Boolean(review?.summary?.trim());
+  const hasNotes = Boolean(summaryDraft.trim());
   // Everything unsent, unresolved, and human goes in one batch. There is no
   // selection step: a comment you wrote is already addressed to the agent, and
   // resolving or deleting it is how you take it back out.
   async function send(ids: Iterable<string>) {
-    if (!review) return;
+    if (!review || sendingRef.current) return;
     const targets = new Set(ids);
     if (targets.size === 0 && !hasNotes) return;
+    sendingRef.current = true;
     setBusy(true);
+    setError(null);
     try {
+      await summarySaveRef.current.catch(() => undefined);
+      const saved = savedSummaryRef.current;
+      if (
+        saved?.reviewId !== review.id ||
+        summaryDraft.trim() !== (saved.text ?? "")
+      )
+        await saveSummary(summaryDraft);
       const result = await rpc.call("sendBatch", {
         reviewId: review.id,
         annotationIds: [...targets],
       });
       const sentAt = result.sentAt as number;
-      setReview({
-        ...review,
-        annotations: review.annotations.map((annotation) =>
-          targets.has(annotation.id) ? { ...annotation, sentAt } : annotation,
-        ),
-      });
+      setReview((current) =>
+        current
+          ? {
+              ...current,
+              annotations: current.annotations.map((annotation) =>
+                targets.has(annotation.id)
+                  ? { ...annotation, sentAt }
+                  : annotation,
+              ),
+            }
+          : current,
+      );
       setMobilePanel(null);
       setError(null);
       navigate.toThread(threadId);
@@ -1872,6 +1984,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         cause instanceof Error ? cause.message : "Unable to send feedback.",
       );
     } finally {
+      sendingRef.current = false;
       setBusy(false);
     }
   }
@@ -2046,8 +2159,11 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           Viewing a stale revision. Anchors stay on this snapshot.
         </p>
       ) : null}
-      {error ? (
-        <p className="m-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+      {error && !feedbackOpen ? (
+        <p
+          role="alert"
+          className="m-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive"
+        >
           {error}
         </p>
       ) : null}
@@ -2349,7 +2465,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                         </p>
                       ) : null}
                       <FileCommentsBar
-                        path={file.path}
                         annotations={review.annotations.filter(
                           (annotation) =>
                             annotation.fileLevel &&
@@ -2367,7 +2482,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                           setFileCommentBody("");
                           setFileComposerOpen(false);
                         }}
-                        onAdd={() => void addFileComment()}
+                        onAdd={addFileComment}
                         onRemove={(id) => void remove(id)}
                         onResolve={(annotation) => void resolve(annotation)}
                         onSuggestion={(annotation, accept) =>
@@ -2400,7 +2515,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                             body,
                             busy,
                             onBody: setBody,
-                            onAdd: () => void add(),
+                            onAdd: add,
                             onCancel: () => {
                               setSelection(null);
                               setBody("");
@@ -2439,6 +2554,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 <ReviewSummary
                   review={review}
                   busy={busy}
+                  error={error}
                   summaryDraft={summaryDraft}
                   onSummaryDraftChange={setSummaryDraft}
                   noteOpen={noteOpen}
@@ -2510,7 +2626,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     body={body}
                     busy={busy}
                     onBody={setBody}
-                    onAdd={() => void add()}
+                    onAdd={add}
                     onCancel={() => {
                       setSelection(null);
                       setBody("");

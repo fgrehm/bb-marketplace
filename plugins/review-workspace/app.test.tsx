@@ -157,6 +157,223 @@ describe("Review Workspace app", () => {
     slot.lifecycle.unmount();
   });
 
+  it.each(["file", "line"])(
+    "focuses a new %s comment, guards keyboard submission, and preserves a failed draft",
+    async (kind) => {
+      const app = await loadPluginApp(() => import("./app"));
+      const review = reviewFixture();
+      const addCalls: any[] = [];
+      let rejectAdd: ((cause: Error) => void) | undefined;
+      const slot = renderSlot(
+        app.navPanels[0]!,
+        { subPath: "review/thread-ui" },
+        {
+          context: { projectId: "project-ui", threadId: "thread-ui" },
+          rpc: {
+            review: async () => ({ review }),
+            revisions: async () => ({ revisions: [] }),
+            addAnnotation: (input: any) => {
+              addCalls.push(input);
+              return new Promise((_resolve, reject) => {
+                rejectAdd = reject;
+              });
+            },
+          } as any,
+        },
+      );
+      await slot.findByTestId("pierre-diff");
+      if (kind === "file")
+        fireEvent.click(slot.getByRole("button", { name: "Comment on file" }));
+      else
+        fireEvent.pointerUp(
+          slot.getByTestId("pierre-diff").nextElementSibling!,
+        );
+      const label = kind === "file" ? "File comment" : "Comment";
+      const boxes = await slot.findAllByLabelText(label, { exact: true });
+      const box = boxes.find((node) => node === document.activeElement)!;
+      expect(box).toBeTruthy();
+      fireEvent.change(box, { target: { value: "  keep this feedback  " } });
+      fireEvent.keyDown(box, {
+        key: "Enter",
+        ctrlKey: true,
+        isComposing: true,
+      });
+      expect(addCalls).toHaveLength(0);
+      fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
+      fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
+      await vi.waitFor(() => expect(addCalls).toHaveLength(1));
+      expect(addCalls[0]).toMatchObject({
+        body: "keep this feedback",
+        filePath: "src/example.ts",
+        ...(kind === "file"
+          ? { fileLevel: true }
+          : { side: "new", startLine: 1, endLine: 1 }),
+      });
+      rejectAdd?.(new Error("Comment could not be saved"));
+      await slot.findByRole("alert");
+      expect((box as HTMLTextAreaElement).value).toBe("  keep this feedback  ");
+      expect(
+        slot
+          .getAllByRole("button", { name: "Add comment" })
+          .some((button) => !button.hasAttribute("disabled")),
+      ).toBe(true);
+      slot.lifecycle.unmount();
+    },
+  );
+
+  it.each(["final note", "earlier note"])(
+    "waits for review-note saves and sends the latest draft only once (%s)",
+    async (finalNote) => {
+      const app = await loadPluginApp(() => import("./app"));
+      const review = { ...reviewFixture(), summary: "earlier note" };
+      const order: string[] = [];
+      let finishFirstSave: (() => void) | undefined;
+      const slot = renderSlot(
+        app.navPanels[0]!,
+        { subPath: "review/thread-ui" },
+        {
+          context: { projectId: "project-ui", threadId: "thread-ui" },
+          rpc: {
+            review: async () => ({ review }),
+            revisions: async () => ({ revisions: [] }),
+            setReviewSummary: async ({ summary }: any) => {
+              order.push(`save:${summary}`);
+              if (order.length === 1)
+                await new Promise<void>((resolve) => {
+                  finishFirstSave = resolve;
+                });
+              return { summary };
+            },
+            sendBatch: async () => {
+              order.push("send");
+              return { sentAt: 10 };
+            },
+          } as any,
+        },
+      );
+      fireEvent.click(
+        (await slot.findAllByRole("button", { name: /Review feedback,/ }))[0]!,
+      );
+      const dialog = await slot.findByRole("dialog");
+      const note = within(dialog).getByLabelText("Review note");
+      fireEvent.change(note, { target: { value: "intermediate note" } });
+      fireEvent.blur(note);
+      await vi.waitFor(() => expect(order).toEqual(["save:intermediate note"]));
+      fireEvent.change(note, { target: { value: finalNote } });
+      const send = within(dialog).getByRole("button", {
+        name: "Send review note to agent",
+      });
+      fireEvent.click(send);
+      fireEvent.click(send);
+      expect(order).not.toContain("send");
+      finishFirstSave?.();
+      await vi.waitFor(() =>
+        expect(order).toEqual([
+          "save:intermediate note",
+          `save:${finalNote}`,
+          "send",
+        ]),
+      );
+      expect(slot.inspection.navigateCalls).toContainEqual({
+        method: "toThread",
+        threadId: "thread-ui",
+      });
+      slot.lifecycle.unmount();
+    },
+  );
+
+  it("shows submission errors inside feedback and allows a retry", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = { ...reviewFixture(), summary: "ready note" };
+    let attempts = 0;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          setReviewSummary: async ({ summary }: any) => ({ summary }),
+          sendBatch: async () => {
+            attempts += 1;
+            if (attempts === 1)
+              throw new Error("Agent is unavailable. Try again.");
+            return { sentAt: 10 };
+          },
+        } as any,
+      },
+    );
+    fireEvent.click(
+      (await slot.findAllByRole("button", { name: /Review feedback,/ }))[0]!,
+    );
+    const dialog = await slot.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Send review note to agent" }),
+    );
+    const error = await within(dialog).findByRole("alert");
+    expect(error.textContent).toContain("Agent is unavailable. Try again.");
+    expect(
+      (within(dialog).getByLabelText("Review note") as HTMLTextAreaElement)
+        .value,
+    ).toBe("ready note");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Send review note to agent" }),
+    );
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    slot.lifecycle.unmount();
+  });
+
+  it("sends a newly typed note only after saving it, preserving the draft on save failure", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = reviewFixture();
+    let saves = 0;
+    let sends = 0;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          setReviewSummary: async ({ summary }: any) => {
+            saves += 1;
+            if (saves === 1) throw new Error("Could not save your note");
+            return { summary };
+          },
+          sendBatch: async () => {
+            sends += 1;
+            return { sentAt: 10 };
+          },
+        } as any,
+      },
+    );
+    fireEvent.click(
+      (await slot.findAllByRole("button", { name: /Review feedback,/ }))[0]!,
+    );
+    const dialog = await slot.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Add a review note" }),
+    );
+    const note = within(dialog).getByLabelText("Review note");
+    fireEvent.change(note, { target: { value: "new note" } });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Send review note to agent" }),
+    );
+    expect((await within(dialog).findByRole("alert")).textContent).toContain(
+      "Could not save your note",
+    );
+    expect(sends).toBe(0);
+    expect((note as HTMLTextAreaElement).value).toBe("new note");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Send review note to agent" }),
+    );
+    await vi.waitFor(() => expect(sends).toBe(1));
+    expect(saves).toBe(2);
+    slot.lifecycle.unmount();
+  });
+
   it("keeps collapsed context expandable through Pierre's supported loader", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const review = reviewFixture();
@@ -231,6 +448,7 @@ describe("Review Workspace app", () => {
         rpc: {
           review: async () => ({ review }),
           revisions: async () => ({ revisions: [] }),
+          setReviewSummary: async ({ summary }: any) => ({ summary }),
           sendBatch: async (input: any) => {
             calls.push(input);
             return { sentAt: 10 };
