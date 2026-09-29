@@ -70,7 +70,7 @@ This catalog uses Git SemVer ranges with plugin-specific tags. For each entry, `
 
 ## Releasing a catalogued plugin
 
-Plugins are versioned independently in this monorepo and are not published to npm. For the first release use `0.1.0`; later releases update only the selected plugin's `package.json` version and `CHANGELOG.md`. Date changelog entries as `YYYY-MM-DD`. Keep the marketplace short description and overview aligned with actual behavior, and widen the catalog range only when the release policy should admit a new version line.
+Plugins are versioned independently in this monorepo and are not published to npm. For the first release use `0.1.0`; later releases update only the selected plugin's `package.json` version and `CHANGELOG.md`. Keep pending changes under `## [Unreleased]`; when preparing a release, move those notes into a `## [<version>] - YYYY-MM-DD` section. Keep the marketplace short description and overview aligned with actual behavior, and widen the catalog range only when the release policy should admit a new version line.
 
 Before tagging, commit and push the reviewed release changes to `main`, run the plugin's typecheck, tests, formatter, and `bb plugin build`, then run `prek run --all-files` and `git diff --check`. Create an annotated signed tag for the exact release commit, verify it locally, and push the tag only after explicit approval:
 
