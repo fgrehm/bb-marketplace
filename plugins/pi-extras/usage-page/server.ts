@@ -1,7 +1,7 @@
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { isValidTimeZone, makeWindow } from "./lib/format";
+import { isValidTimeZone } from "./lib/format";
 import { USAGE_DATA_DIR } from "./lib/plugin-data";
 import {
   applyEnvironmentThreads,
@@ -13,8 +13,6 @@ import {
 import { mergedUsageSchema } from "./lib/rpc-schema";
 import { UsageScanner } from "./lib/scan";
 import type { MergedUsage, ProjectTotals } from "./lib/types";
-
-const USAGE_COMMAND = "bb usage show [--days 7|30|90] [--force]";
 
 const daySchema = z
   .string()
@@ -52,48 +50,6 @@ export const rpcContract = defineRpcContract({
     output: mergedUsageSchema,
   },
 });
-
-type UsageCliOptions =
-  | { days: 7 | 30 | 90; force: boolean }
-  | { error: string };
-
-function parseCliOptions(argv: readonly string[]): UsageCliOptions {
-  if (argv[0] !== "show") {
-    return { error: `Expected \"show\". Usage: ${USAGE_COMMAND}` };
-  }
-
-  let days: 7 | 30 | 90 = 30;
-  let force = false;
-  let sawDays = false;
-
-  for (let i = 1; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--days") {
-      const value = argv[i + 1];
-      if (
-        sawDays ||
-        value === undefined ||
-        !["7", "30", "90"].includes(value)
-      ) {
-        return {
-          error: `--days must be specified once as 7, 30, or 90. Usage: ${USAGE_COMMAND}`,
-        };
-      }
-      days = Number(value) as 7 | 30 | 90;
-      sawDays = true;
-      i += 1;
-    } else if (arg === "--force") {
-      if (force) {
-        return { error: `--force must not be repeated. Usage: ${USAGE_COMMAND}` };
-      }
-      force = true;
-    } else {
-      return { error: `Unknown argument: ${arg}. Usage: ${USAGE_COMMAND}` };
-    }
-  }
-
-  return { days, force };
-}
 
 async function attachEnvironmentThreads(
   bb: BbPluginApi,
@@ -224,55 +180,4 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.onDispose(() => scanner.flush());
-
-  bb.cli.register({
-    name: "usage",
-    summary: "Show Pi session usage totals",
-    commands: [
-      {
-        name: "show",
-        summary: "Print usage for a window (default 30 days)",
-        usage: "bb usage show [--days 7|30|90] [--force]",
-      },
-    ],
-    async run(argv) {
-      const options = parseCliOptions(argv);
-      if ("error" in options) {
-        return { exitCode: 2, stderr: `${options.error}\n` };
-      }
-      const { sinceDay, untilDay, timeZone } = makeWindow(options.days);
-      const { merged: scanned } = await scanner.readSummary({
-        sinceDay,
-        untilDay,
-        timeZone,
-        force: options.force,
-      });
-      const merged = await resolveUsage(scanned);
-
-      const cacheLabel = merged.cache.summaryHit
-        ? "summary cache"
-        : `${merged.cache.fileHits} file hits / ${merged.cache.filesParsed} parsed`;
-
-      const lines = [
-        `Usage ${sinceDay} to ${untilDay}`,
-        `Raw token cost: $${merged.costUsd.toFixed(2)}`,
-        ...merged.providers.map(
-          (provider) =>
-            `  ${provider.provider}: $${provider.costUsd.toFixed(2)} (${provider.totalTokens} tokens)`,
-        ),
-        ...(merged.projects.length > 0
-          ? [
-              "Projects:",
-              ...merged.projects.map(
-                (project) =>
-                  `  ${project.project}: $${project.costUsd.toFixed(2)} (${project.totalTokens} tokens)`,
-              ),
-            ]
-          : []),
-        `Sessions: ${merged.sessions}`,
-        `Scan: ${merged.scanDurationMs}ms · ${cacheLabel} · pricing ${merged.pricing.status}`,
-      ];
-      return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
-    },
-  });
 }

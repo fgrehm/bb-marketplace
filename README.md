@@ -36,7 +36,7 @@ The catalog uses marketplace schema v2, so BB versions that only support v1 cata
 
 Pi-focused usage extras in a single sidebar panel with two tabs:
 
-- **Sessions** - estimated token usage and cost computed from local Pi session transcripts, broken down by the backend each session used (Codex, OpenCode Go, Ollama Cloud), with per-provider marks. Backed by a durable parse cache and a `bb usage show` CLI. Adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page), scoped to Pi.
+- **Sessions** - estimated token usage and cost computed from local Pi session transcripts, broken down by the backend each session used (Codex, OpenCode Go, Ollama Cloud), with per-provider marks. Backed by a durable parse cache. Adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page), scoped to Pi.
 - **Subscriptions** - live subscription usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud credentials (read from Pi's `auth.json`, never logged or displayed), with a short TTL cache for snappy tab switches.
 - **Thread titles and commit messages** - registers Pi as a BB AI service for both tasks. Select Pi independently for each under Settings → AI services, with separate model choices in the settings panel.
 
