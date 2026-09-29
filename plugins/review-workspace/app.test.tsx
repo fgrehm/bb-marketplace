@@ -200,11 +200,17 @@ describe("Review Workspace app", () => {
     expect(dialog).toBeTruthy();
     expect(slot.getByRole("heading", { name: "Review feedback" })).toBeTruthy();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Reply" }));
+    fireEvent.click(
+      within(dialog).getAllByRole("button", { name: "Reply" })[0]!,
+    );
     const reply = await within(dialog).findByLabelText(
       "Reply to src/example.ts:1 (new)",
     );
     fireEvent.change(reply, { target: { value: "draft reply" } });
+    // The note is collapsed by default; open it like a user would.
+    fireEvent.click(
+      within(dialog).getAllByRole("button", { name: "Add a review note" })[0]!,
+    );
     const note = slot.getByLabelText("Review note");
     fireEvent.change(note, { target: { value: "draft summary" } });
     fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
@@ -223,14 +229,160 @@ describe("Review Workspace app", () => {
       ).value,
     ).toBe("draft reply");
 
-    const checkbox = slot.getByLabelText("Select src/example.ts:1 (new)");
-    fireEvent.click(checkbox);
     slot.getByRole("button", { name: "Send 1 comment to agent" }).click();
     await vi.waitFor(() => {
       expect(calls).toEqual([
         { reviewId: review.id, annotationIds: [root.id] },
       ]);
     });
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps resolved threads behind a disclosure and pending work on top", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const base = {
+      filePath: "src/example.ts",
+      side: "new" as const,
+      startLine: 1,
+      endLine: 1,
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "human",
+      parentId: null,
+      fileLevel: false,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    const open = {
+      ...base,
+      id: "88888888-8888-4888-8888-888888888881",
+      body: "still open",
+    };
+    const done = {
+      ...base,
+      id: "88888888-8888-4888-8888-888888888882",
+      body: "already handled",
+      resolvedAt: 9,
+    };
+    const review = { ...reviewFixture(), annotations: [done, open] } as any;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+        } as any,
+      },
+    );
+    (
+      await slot.findAllByRole("button", {
+        name: "Review feedback, 1 pending/unsent comments",
+      })
+    )[0]!.click();
+    const dialog = await slot.findByRole("dialog");
+
+    // The note stays collapsed until asked for.
+    expect(within(dialog).queryByLabelText("Review note")).toBeNull();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Add a review note" }),
+    );
+    expect(within(dialog).getByLabelText("Review note")).toBeTruthy();
+
+    // Open work is visible; resolved history needs one click.
+    expect(within(dialog).getByText("still open")).toBeTruthy();
+    expect(within(dialog).queryByText("already handled")).toBeNull();
+    const disclosure = within(dialog).getByRole("button", {
+      name: "Resolved (1)",
+    });
+    fireEvent.click(disclosure);
+    expect(within(dialog).getByText("already handled")).toBeTruthy();
+    // "carried" is gone: it is history within one refresh, not news.
+    expect(within(dialog).queryByText("carried")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("sends every pending comment in one batch, with nothing to select", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const root = {
+      id: "77777777-7777-4777-8777-777777777771",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "agent finding",
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "agent",
+      parentId: null,
+      fileLevel: false,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    // A human reply nested under an AI comment: exactly the case that read as
+    // unsendable because the parent's own checkbox is disabled.
+    const reply = {
+      ...root,
+      id: "77777777-7777-4777-8777-777777777772",
+      body: "human response",
+      author: "human",
+      parentId: root.id,
+    };
+    const other = {
+      ...root,
+      id: "77777777-7777-4777-8777-777777777773",
+      body: "another human note",
+      author: "human",
+    };
+    const review = {
+      ...reviewFixture(),
+      annotations: [root, reply, other],
+    } as any;
+    const sendCalls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          sendBatch: async (input: any) => {
+            sendCalls.push(input);
+            return { sentAt: 30 };
+          },
+        } as any,
+      },
+    );
+
+    (
+      await slot.findAllByRole("button", {
+        name: "Review feedback, 2 pending/unsent comments",
+      })
+    )[0]!.click();
+    const dialog = await slot.findByRole("dialog");
+
+    // The reply is labelled as the user's own, and still to be sent.
+    expect(within(dialog).getByText("Your reply")).toBeTruthy();
+    expect(within(dialog).getAllByText("unsent").length).toBe(2);
+
+    // Nothing to tick: the button sends everything pending in one batch.
+    expect(within(dialog).queryAllByRole("checkbox")).toHaveLength(0);
+    const sendAll = within(dialog).getAllByRole("button", {
+      name: "Send 2 comments to agent",
+    })[0]!;
+    fireEvent.click(sendAll);
+    await vi.waitFor(() =>
+      expect(sendCalls).toEqual([
+        {
+          reviewId: review.id,
+          annotationIds: [reply.id, other.id],
+        },
+      ]),
+    );
     slot.lifecycle.unmount();
   });
 
@@ -340,23 +492,7 @@ describe("Review Workspace app", () => {
       )[1]!,
     );
     const dialog = await slot.findByRole("dialog");
-    expect(
-      (
-        within(dialog).getByLabelText(
-          "Select src/example.ts:1 (new)",
-        ) as HTMLInputElement
-      ).disabled,
-    ).toBe(true);
-    expect(
-      (
-        within(dialog).getByLabelText(
-          "Select reply to src/example.ts:1 (new)",
-        ) as HTMLInputElement
-      ).disabled,
-    ).toBe(false);
-    fireEvent.click(
-      within(dialog).getByLabelText("Select reply to src/example.ts:1 (new)"),
-    );
+    // Nothing to tick: the reply is the only pending comment, so it goes.
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Send 1 comment to agent" }),
     );
@@ -499,6 +635,370 @@ describe("Review Workspace app", () => {
     slot.lifecycle.unmount();
   });
 
+  it("focuses reply editors and submits with the keyboard shortcut", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const humanRoot = {
+      id: "99999999-9999-4999-8999-999999999991",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "human root",
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "human",
+      parentId: null,
+      fileLevel: false,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    const agentRoot = {
+      ...humanRoot,
+      id: "99999999-9999-4999-8999-999999999992",
+      body: "agent note",
+      author: "agent",
+    };
+    const review = {
+      ...reviewFixture(),
+      annotations: [humanRoot, agentRoot],
+    } as any;
+    const addCalls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          addAnnotation: async (input: any) => {
+            addCalls.push(input);
+            return {
+              annotation: {
+                ...input,
+                id: `reply-${addCalls.length}`,
+                createdAt: 10 + addCalls.length,
+                sentAt: null,
+                resolvedAt: null,
+                fileLevel: false,
+                carriedFromAnnotationId: null,
+                resolutionSuggestion: null,
+                parentId: input.parentId,
+                author: "human",
+              },
+            };
+          },
+        } as any,
+      },
+    );
+
+    // Inline AI reply focuses on open.
+    fireEvent.click(
+      await slot.findByRole("button", {
+        name: "Reply to AI comment at src/example.ts:1 (new)",
+      }),
+    );
+    const inlineBox = await slot.findByLabelText(
+      "Reply to src/example.ts:1 (new)",
+    );
+    expect(document.activeElement).toBe(inlineBox);
+    expect(slot.getByText(/to submit/)).toBeTruthy();
+
+    fireEvent.change(inlineBox, { target: { value: "ctrl reply" } });
+    fireEvent.keyDown(inlineBox, { key: "Enter", ctrlKey: true });
+    await vi.waitFor(() => expect(addCalls).toHaveLength(1));
+    expect(addCalls[0]).toMatchObject({
+      body: "ctrl reply",
+      parentId: agentRoot.id,
+    });
+    await vi.waitFor(() =>
+      expect(
+        slot.queryByLabelText("Reply to src/example.ts:1 (new)"),
+      ).toBeNull(),
+    );
+
+    // Meta (Cmd) submit works the same way.
+    fireEvent.click(
+      slot.getByRole("button", {
+        name: "Reply to AI comment at src/example.ts:1 (new)",
+      }),
+    );
+    const cmdBox = await slot.findByLabelText(
+      "Reply to src/example.ts:1 (new)",
+    );
+    expect(document.activeElement).toBe(cmdBox);
+    fireEvent.change(cmdBox, { target: { value: "cmd reply" } });
+    fireEvent.keyDown(cmdBox, { key: "Enter", metaKey: true });
+    await vi.waitFor(() => expect(addCalls).toHaveLength(2));
+    expect(addCalls[1]).toMatchObject({ body: "cmd reply" });
+
+    // A top-level human comment reply focuses too, and the button still works.
+    fireEvent.click(
+      (await slot.findAllByRole("button", { name: /Review feedback/ }))[0]!,
+    );
+    const dialog = await slot.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getAllByRole("button", { name: "Reply" })[0]!,
+    );
+    const drawerBox = await within(dialog).findByLabelText(
+      "Reply to src/example.ts:1 (new)",
+    );
+    expect(document.activeElement).toBe(drawerBox);
+    fireEvent.change(drawerBox, { target: { value: "drawer reply" } });
+    fireEvent.click(
+      within(dialog).getAllByRole("button", { name: "Reply" })[0]!,
+    );
+    await vi.waitFor(() => expect(addCalls).toHaveLength(3));
+    expect(addCalls[2]).toMatchObject({
+      body: "drawer reply",
+      parentId: humanRoot.id,
+    });
+    slot.lifecycle.unmount();
+  });
+
+  it("edits and deletes human comments only", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const humanRoot = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "human root",
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "human",
+      parentId: null,
+      fileLevel: false,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    const humanReply = {
+      ...humanRoot,
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      body: "human reply",
+      parentId: humanRoot.id,
+    };
+    const sentComment = {
+      ...humanRoot,
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
+      body: "sent",
+      sentAt: 5,
+    };
+    const agentComment = {
+      ...humanRoot,
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
+      body: "agent",
+      author: "agent",
+    };
+    const review = {
+      ...reviewFixture(),
+      annotations: [humanRoot, humanReply, sentComment, agentComment],
+    } as any;
+    const editCalls: any[] = [];
+    const removeCalls: any[] = [];
+    const sendCalls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          editAnnotation: async (input: any) => {
+            editCalls.push(input);
+            return {
+              annotation: {
+                ...humanRoot,
+                id: input.annotationId,
+                body: input.body,
+              },
+            };
+          },
+          removeAnnotation: async (input: any) => {
+            removeCalls.push(input);
+            return { ok: true };
+          },
+          sendBatch: async (input: any) => {
+            sendCalls.push(input);
+            return { sentAt: 30 };
+          },
+        } as any,
+      },
+    );
+
+    // Agent and sent comments expose neither edit nor delete, inline or in
+    // the drawer.
+    expect(
+      (await slot.findAllByLabelText("Edit src/example.ts:1 (new)"))[0],
+    ).toBeTruthy();
+    expect(slot.queryByLabelText("Edit src/example.ts:2 (new)")).toBeNull();
+    expect(slot.queryByLabelText("Delete src/example.ts:2 (new)")).toBeNull();
+    expect(slot.queryByLabelText("Edit src/example.ts:3 (new)")).toBeNull();
+    expect(slot.queryByLabelText("Delete src/example.ts:3 (new)")).toBeNull();
+    fireEvent.click(
+      (
+        await slot.findAllByRole("button", {
+          name: "Review feedback, 2 pending/unsent comments",
+        })
+      )[0]!,
+    );
+    const dialog = await slot.findByRole("dialog");
+    // The drawer renders once per layout, so scope to the first match.
+    const inDrawer = (label: string) =>
+      within(dialog).queryAllByLabelText(label);
+    expect(inDrawer("Edit src/example.ts:1 (new)").length).toBeGreaterThan(0);
+    expect(inDrawer("Edit src/example.ts:2 (new)")).toHaveLength(0);
+    expect(inDrawer("Delete src/example.ts:2 (new)")).toHaveLength(0);
+    expect(inDrawer("Edit src/example.ts:3 (new)")).toHaveLength(0);
+    expect(inDrawer("Delete src/example.ts:3 (new)")).toHaveLength(0);
+    // The root has a reply, so delete is visible but disabled with a reason.
+    const rootDelete = inDrawer(
+      "Delete src/example.ts:1 (new)",
+    )[0] as HTMLButtonElement;
+    expect(rootDelete.disabled).toBe(true);
+    expect(rootDelete.title).toBe(
+      "Comment has replies and cannot be deleted on its own.",
+    );
+    expect(within(dialog).getAllByText("sent").length).toBeGreaterThan(0);
+
+    // Editing a human comment persists and keeps it unsent.
+    fireEvent.click(inDrawer("Edit src/example.ts:1 (new)")[0]!);
+    const editor = (
+      await within(dialog).findAllByLabelText("Edit src/example.ts:1 (new)")
+    ).find((node) => node.tagName === "TEXTAREA")!;
+    expect(document.activeElement).toBe(editor);
+    fireEvent.change(editor, { target: { value: "  reworded root  " } });
+    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+    await vi.waitFor(() => expect(editCalls).toHaveLength(1));
+    expect(editCalls[0]).toEqual({
+      annotationId: humanRoot.id,
+      body: "reworded root",
+    });
+    await vi.waitFor(() =>
+      expect(
+        within(dialog).getAllByText("reworded root").length,
+      ).toBeGreaterThan(0),
+    );
+    await vi.waitFor(() =>
+      expect(
+        inDrawer("Edit src/example.ts:1 (new)").some(
+          (node) => node.tagName === "TEXTAREA",
+        ),
+      ).toBe(false),
+    );
+
+    // The edited comment is unsent, so it goes with the batch.
+    const sendButton = within(dialog).getAllByRole("button", {
+      name: /Send \d+ comment/,
+    })[0]!;
+    expect(sendButton.getAttribute("disabled")).toBeNull();
+    fireEvent.click(sendButton);
+    // No selection step: every unsent, unresolved, human comment goes.
+    await vi.waitFor(() =>
+      expect(sendCalls).toEqual([
+        {
+          reviewId: review.id,
+          annotationIds: [humanRoot.id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
+        },
+      ]),
+    );
+    slot.lifecycle.unmount();
+  });
+
+  it("shows delete for a comment without replies and refuses sent edits", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const humanRoot = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "solo comment",
+      createdAt: 1,
+      sentAt: null,
+      resolvedAt: null,
+      author: "human",
+      parentId: null,
+      fileLevel: false,
+      carriedFromAnnotationId: null,
+      resolutionSuggestion: null,
+    };
+    const review = { ...reviewFixture(), annotations: [humanRoot] } as any;
+    const removeCalls: any[] = [];
+    const editCalls: any[] = [];
+    let failEdit = false;
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          removeAnnotation: async (input: any) => {
+            removeCalls.push(input);
+            return { ok: true };
+          },
+          editAnnotation: async (input: any) => {
+            editCalls.push(input);
+            if (failEdit) throw new Error("Sent comments are immutable");
+            return {
+              annotation: {
+                ...humanRoot,
+                id: input.annotationId,
+                body: input.body,
+              },
+            };
+          },
+        } as any,
+      },
+    );
+
+    // A refused edit keeps the draft and the error visible.
+    failEdit = true;
+    fireEvent.click(
+      (await slot.findAllByLabelText("Edit src/example.ts:1 (new)"))[0]!,
+    );
+    const editor = (
+      await slot.findAllByLabelText("Edit src/example.ts:1 (new)")
+    ).find((node) => node.tagName === "TEXTAREA")!;
+    expect(document.activeElement).toBe(editor);
+    fireEvent.change(editor, { target: { value: "kept draft" } });
+    fireEvent.click(slot.getAllByRole("button", { name: "Save" })[0]!);
+    await slot.findByText("Sent comments are immutable");
+    expect(
+      (
+        (await slot.findAllByLabelText("Edit src/example.ts:1 (new)")).find(
+          (node) => node.tagName === "TEXTAREA",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("kept draft");
+    expect(editCalls).toHaveLength(1);
+    // Cancelling discards it.
+    fireEvent.click(slot.getAllByRole("button", { name: "Cancel" })[0]!);
+    expect(
+      slot
+        .queryAllByLabelText("Edit src/example.ts:1 (new)")
+        .some((node) => node.tagName === "TEXTAREA"),
+    ).toBe(false);
+
+    // A comment without replies deletes inline. The diff renders once per
+    // layout, so act on the first match.
+    const deleteButton = (
+      await slot.findAllByLabelText("Delete src/example.ts:1 (new)")
+    )[0]!;
+    expect(deleteButton.title).toBe("Delete comment");
+    fireEvent.click(deleteButton);
+    await vi.waitFor(() =>
+      expect(removeCalls).toEqual([{ annotationId: humanRoot.id }]),
+    );
+    slot.lifecycle.unmount();
+  });
+
   it("shows the empty state after viewing the last unviewed file", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const review = {
@@ -541,7 +1041,7 @@ describe("Review Workspace app", () => {
     slot.lifecycle.unmount();
   });
 
-  it("filters mobile files and preserves an empty selection when no files match", async () => {
+  it("filters mobile files and clears the selection when no files match", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const review = {
       ...reviewFixture(),
@@ -714,7 +1214,7 @@ describe("Review Workspace app", () => {
   });
 });
 describe("comment list behavior", () => {
-  it("collapses resolved comments and marks agent comments unsendable", async () => {
+  it("collapses resolved comments and never shows a selection checkbox", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const review = {
       ...reviewFixture(),
@@ -783,35 +1283,29 @@ describe("comment list behavior", () => {
     )[0]!;
     fireEvent.click(feedbackTrigger);
     const dialog = await slot.findByRole("dialog");
+    // Resolved threads now sit behind one disclosure; open it to reach them.
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /Resolved \(\d+\)/ }),
+    );
     await within(dialog).findByRole("button", {
       name: "Show src/example.ts:1 (new)",
     });
-    expect(
-      within(dialog).queryByRole("checkbox", {
-        name: "Select src/example.ts:1 (new)",
-      }),
-    ).toBeNull();
+    // Resolved and agent comments carry no checkbox at all: nothing in the
+    // drawer is individually selectable any more.
+    expect(within(dialog).queryAllByRole("checkbox")).toHaveLength(0);
     within(dialog)
       .getByRole("button", { name: "Show src/example.ts:1 (new)" })
       .click();
-    const resolvedBox = (await vi.waitFor(() => {
-      const box = dialog.querySelector(
-        'input[aria-label="Select src/example.ts:1 (new)"]',
-      ) as HTMLInputElement | null;
-      expect(box).not.toBeNull();
-      return box;
-    })) as HTMLInputElement;
-    expect(resolvedBox.disabled).toBe(true);
+    await vi.waitFor(() =>
+      expect(within(dialog).getByText("✓ resolved")).toBeTruthy(),
+    );
+    expect(within(dialog).queryAllByRole("checkbox")).toHaveLength(0);
 
-    // Agent comment shows the agent chip and cannot be selected for a batch.
+    // Agent comment shows the agent chip, and is never part of a batch.
     expect(within(dialog).getByText("AI comment")).toBeTruthy();
-    const agentBox = dialog.querySelector(
-      'input[aria-label="Select src/example.ts:2 (new)"]',
-    ) as HTMLInputElement;
-    expect(agentBox.disabled).toBe(true);
 
     // Only the agent comment is unresolved, but agent comments are never
-    // pending, so nothing is counted or selectable to send.
+    // pending, so there is nothing to send.
     expect(within(dialog).queryByText(/1 pending comment/)).toBeNull();
     slot.lifecycle.unmount();
   });

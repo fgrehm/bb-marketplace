@@ -69,6 +69,99 @@ describe("Review Workspace server", () => {
     ]);
   });
 
+  it("edits human comments in place and refuses the rest", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+    });
+    await plugin(bb);
+    const reviewId = randomUUID();
+    seedReview(bb, { id: reviewId, threadId: "thread-edit", createdAt: 1 });
+    const db = bb.storage.database();
+    const added = (await harness.behavior.callRpc("addAnnotation", {
+      reviewId,
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 3,
+      endLine: 7,
+      body: "  first draft  ",
+    })) as { annotation: { id: string; body: string; createdAt: number } };
+
+    const edited = (await harness.behavior.callRpc("editAnnotation", {
+      annotationId: added.annotation.id,
+      body: "  corrected wording  ",
+    })) as { annotation: Record<string, unknown> };
+    expect(edited.annotation).toMatchObject({
+      id: added.annotation.id,
+      body: "corrected wording",
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 3,
+      endLine: 7,
+      parentId: null,
+      author: "human",
+      createdAt: added.annotation.createdAt,
+    });
+
+    await expect(
+      harness.behavior.callRpc("editAnnotation", {
+        annotationId: added.annotation.id,
+        body: "   ",
+      }),
+    ).rejects.toThrow();
+    await expect(
+      harness.behavior.callRpc("editAnnotation", {
+        annotationId: added.annotation.id,
+        body: "x".repeat(1001),
+      }),
+    ).rejects.toThrow();
+    await expect(
+      harness.behavior.callRpc("editAnnotation", {
+        annotationId: randomUUID(),
+        body: "orphan",
+      }),
+    ).rejects.toThrow("not found");
+
+    // Agent-authored comments are never editable.
+    db.prepare(
+      "UPDATE review_annotations SET author = 'agent' WHERE id = ?",
+    ).run(added.annotation.id);
+    await expect(
+      harness.behavior.callRpc("editAnnotation", {
+        annotationId: added.annotation.id,
+        body: "agent rewrite",
+      }),
+    ).rejects.toThrow("AI comments cannot be edited");
+
+    // Resolved but unsent comments stay editable.
+    db.prepare(
+      "UPDATE review_annotations SET author = 'human', resolved_at = 5 WHERE id = ?",
+    ).run(added.annotation.id);
+    await expect(
+      harness.behavior.callRpc("editAnnotation", {
+        annotationId: added.annotation.id,
+        body: "resolved rewrite",
+      }),
+    ).resolves.toMatchObject({
+      annotation: { body: "resolved rewrite", resolvedAt: 5 },
+    });
+
+    // Sent comments are immutable, matching the delete boundary.
+    db.prepare("UPDATE review_annotations SET sent_at = 9 WHERE id = ?").run(
+      added.annotation.id,
+    );
+    await expect(
+      harness.behavior.callRpc("editAnnotation", {
+        annotationId: added.annotation.id,
+        body: "sent rewrite",
+      }),
+    ).rejects.toThrow("Sent comments are immutable");
+    expect(
+      db
+        .prepare("SELECT body FROM review_annotations WHERE id = ?")
+        .get(added.annotation.id),
+    ).toEqual({ body: "resolved rewrite" });
+  });
+
   it("migrates the viewed-file table in the dedicated plugin database", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "review-workspace",

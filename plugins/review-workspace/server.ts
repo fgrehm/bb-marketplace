@@ -174,6 +174,19 @@ export const rpcContract = defineRpcContract({
     input: z.object({ annotationId: z.string().uuid() }).strict(),
     output: z.object({ ok: z.literal(true) }),
   },
+  // Editing rewrites a human comment in place. The send boundary is
+  // immutable, matching removeAnnotation: once the agent has read a comment
+  // its text must stay exactly as it was sent. Agent-authored comments are
+  // never editable. The body column is stored inline, so no migration.
+  editAnnotation: {
+    input: z
+      .object({
+        annotationId: z.string().uuid(),
+        body: z.string().trim().min(1).max(1000),
+      })
+      .strict(),
+    output: z.object({ annotation: annotationShape }),
+  },
   resolveAnnotation: {
     input: z
       .object({ annotationId: z.string().uuid(), resolved: z.boolean() })
@@ -1348,6 +1361,33 @@ export default async function plugin(bb: BbPluginApi) {
         "DELETE FROM review_annotations WHERE id = ? AND sent_at IS NULL",
       ).run(annotationId);
       return { ok: true as const };
+    },
+    editAnnotation({ annotationId, body }) {
+      const existing = db
+        .prepare(
+          "SELECT id, author, sent_at FROM review_annotations WHERE id = ?",
+        )
+        .get(annotationId) as
+        { id: string; author: string; sent_at: number | null } | undefined;
+      if (!existing) throw new Error("Comment was not found.");
+      if (existing.author !== "human")
+        throw new Error("AI comments cannot be edited.");
+      if (existing.sent_at !== null)
+        throw new Error(
+          "Sent comments are immutable: the agent already read this text.",
+        );
+      db.prepare("UPDATE review_annotations SET body = ? WHERE id = ?").run(
+        body.trim(),
+        annotationId,
+      );
+      const updated = db
+        .prepare("SELECT review_id FROM review_annotations WHERE id = ?")
+        .get(annotationId) as { review_id: string };
+      const annotation = annotations(updated.review_id).find(
+        (candidate) => candidate.id === annotationId,
+      );
+      if (!annotation) throw new Error("Comment was not found.");
+      return { annotation };
     },
     resolveAnnotation({ annotationId, resolved }) {
       const resolvedAt = resolved ? Date.now() : null;

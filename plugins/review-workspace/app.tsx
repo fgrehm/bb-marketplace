@@ -160,13 +160,14 @@ function StateChip({
   tone = "muted",
   children,
 }: {
-  tone?: "muted" | "primary" | "emerald";
+  tone?: "muted" | "primary" | "emerald" | "amber";
   children: React.ReactNode;
 }) {
   const tones = {
     muted: "bg-muted text-muted-foreground",
     primary: "bg-primary text-primary-foreground",
     emerald: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+    amber: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
   };
   return (
     <span
@@ -182,7 +183,7 @@ function AnnotationMeta({
 }: {
   annotation: Pick<
     Annotation,
-    "author" | "carriedFromAnnotationId" | "resolvedAt" | "sentAt"
+    "author" | "carriedFromAnnotationId" | "resolvedAt" | "sentAt" | "parentId"
   >;
 }) {
   return (
@@ -193,12 +194,17 @@ function AnnotationMeta({
           AI comment
         </StateChip>
       ) : (
-        <StateChip tone="primary">Review comment</StateChip>
+        <StateChip tone="primary">
+          {annotation.parentId ? "Your reply" : "Review comment"}
+        </StateChip>
       )}
-      {annotation.carriedFromAnnotationId ? (
-        <StateChip>carried</StateChip>
+      {annotation.sentAt ? (
+        <StateChip>sent</StateChip>
+      ) : annotation.resolvedAt ? null : annotation.author === "human" ? (
+        // A reply nests under an AI comment, so say plainly that this one is
+        // still waiting to go to the agent.
+        <StateChip tone="amber">unsent</StateChip>
       ) : null}
-      {annotation.sentAt ? <StateChip>sent</StateChip> : null}
       {annotation.resolvedAt ? (
         <StateChip tone="emerald">✓ resolved</StateChip>
       ) : null}
@@ -213,6 +219,10 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
   replyDrafts,
   onReply,
   onReplyDraft,
+  editDrafts,
+  onEdit,
+  onEditDraft,
+  onRemove,
   composer,
   wrapLines,
   loadDiffFiles,
@@ -224,6 +234,10 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
   replyDrafts: Map<string, string>;
   onReply: (parent: Annotation, body: string) => Promise<void>;
   onReplyDraft: (id: string, value: string | null) => void;
+  editDrafts: Map<string, string>;
+  onEdit: (annotation: Annotation, body: string) => Promise<void>;
+  onEditDraft: (id: string, value: string | null) => void;
+  onRemove: (id: string) => void;
   wrapLines: boolean;
   loadDiffFiles?: FileDiffContentsLoader;
   composer: {
@@ -286,6 +300,10 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
           ) : null;
         }
         const replyRoot = inlineReplyRoot(annotation, annotations);
+        const editing = editDrafts.has(annotation.id);
+        const hasReplies = annotations.some(
+          (candidate) => candidate.parentId === annotation.id,
+        );
         return (
           <div
             data-annotation-id={annotation.id}
@@ -305,7 +323,7 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
             >
               {annotation.body}
             </p>
-            {replyRoot ? (
+            {replyRoot || editing || annotation.author === "human" ? (
               <div
                 className="mt-2"
                 onPointerDown={(event) => event.stopPropagation()}
@@ -314,15 +332,28 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
                 onMouseUp={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
               >
-                {replyDrafts.has(annotation.id) ? (
+                {editing ? (
+                  <CommentEditor
+                    fieldLabel={`Edit ${annotationLabel(annotation)}`}
+                    placeholder="Update this comment..."
+                    draft={editDrafts.get(annotation.id) ?? ""}
+                    onDraft={(value) => onEditDraft(annotation.id, value)}
+                    onSubmit={(body) => onEdit(annotation, body)}
+                    onCancel={() => onEditDraft(annotation.id, null)}
+                    submitLabel="Save"
+                    busyLabel="Saving..."
+                  />
+                ) : null}
+                {replyRoot && replyDrafts.has(annotation.id) ? (
                   <ReplyBox
-                    parent={replyRoot}
+                    parent={replyRoot ?? annotation}
                     onReply={onReply}
                     draft={replyDrafts.get(annotation.id) ?? ""}
                     onDraft={(value) => onReplyDraft(annotation.id, value)}
                     onCancel={() => onReplyDraft(annotation.id, null)}
                   />
-                ) : (
+                ) : null}
+                {!editing && !replyDrafts.has(annotation.id) && replyRoot ? (
                   <button
                     type="button"
                     className="min-h-9 rounded px-2 py-1 text-primary hover:bg-muted"
@@ -331,7 +362,16 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
                   >
                     Reply
                   </button>
-                )}
+                ) : null}
+                {annotation.author === "human" ? (
+                  <CommentActions
+                    annotation={annotation}
+                    hasReplies={hasReplies}
+                    editing={editing}
+                    onEdit={() => onEditDraft(annotation.id, annotation.body)}
+                    onDelete={onRemove}
+                  />
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -362,8 +402,6 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
 
 function CommentCard({
   annotation,
-  selected,
-  onToggle,
   onRemove,
   onResolve,
   onSuggestion,
@@ -371,11 +409,13 @@ function CommentCard({
   onLocate,
   replyDrafts,
   onReplyDraft,
+  hasReplies = false,
+  onEdit,
+  onEditDraft,
+  editDrafts,
   hideReplyButton = false,
 }: {
   annotation: Annotation;
-  selected: Set<string>;
-  onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onResolve: (annotation: Annotation) => void;
   onSuggestion: (annotation: Annotation, accept: boolean) => void;
@@ -383,6 +423,10 @@ function CommentCard({
   onLocate?: (annotation: Annotation) => void;
   replyDrafts: Map<string, string>;
   onReplyDraft: (id: string, value: string | null) => void;
+  hasReplies?: boolean;
+  onEdit?: (annotation: Annotation, body: string) => Promise<void>;
+  onEditDraft: (id: string, value: string | null) => void;
+  editDrafts: Map<string, string>;
   hideReplyButton?: boolean;
 }) {
   const locate = onLocate ? (
@@ -399,13 +443,7 @@ function CommentCard({
   // Resolved comments start collapsed to keep the list scannable.
   const [collapsed, setCollapsed] = useState(annotation.resolvedAt !== null);
   const replying = replyDrafts.has(annotation.id);
-  const selectLabel = annotation.parentId
-    ? `Select reply to ${annotationLabel(annotation)}`
-    : `Select ${annotationLabel(annotation)}`;
-  const notSendable =
-    annotation.sentAt !== null ||
-    annotation.resolvedAt !== null ||
-    annotation.author === "agent";
+  const editing = editDrafts.has(annotation.id);
   if (collapsed) {
     return (
       <article className="rounded-md border p-2 text-xs opacity-65">
@@ -434,17 +472,9 @@ function CommentCard({
   }
   return (
     <article
-      className={`rounded-md border p-2 text-xs ${annotation.sentAt || annotation.resolvedAt ? "opacity-65" : ""}`}
+      className={`group rounded-md border p-2 text-xs ${annotation.sentAt || annotation.resolvedAt ? "opacity-65" : ""}`}
     >
       <div className="flex gap-2">
-        <input
-          type="checkbox"
-          aria-label={selectLabel}
-          checked={selected.has(annotation.id)}
-          disabled={notSendable}
-          onChange={() => onToggle(annotation.id)}
-          className="mt-0.5"
-        />
         <div className="min-w-0 flex-1">
           <p className="font-mono text-[11px] text-muted-foreground">
             {annotationLabel(annotation)}
@@ -482,19 +512,7 @@ function CommentCard({
               Resolve
             </button>
           )}
-          {annotation.sentAt ? null : (
-            <button
-              className={
-                annotation.resolvedAt
-                  ? "mt-1.5 text-muted-foreground hover:text-foreground"
-                  : "ml-3 mt-1.5 text-destructive hover:opacity-80"
-              }
-              onClick={() => onRemove(annotation.id)}
-            >
-              Remove
-            </button>
-          )}
-          {hideReplyButton ? null : replying ? null : (
+          {hideReplyButton ? null : replying || editing ? null : (
             <button
               className="ml-3 mt-1.5 text-primary hover:opacity-80"
               onClick={() => onReplyDraft(annotation.id, "")}
@@ -519,9 +537,131 @@ function CommentCard({
               onCancel={() => onReplyDraft(annotation.id, null)}
             />
           ) : null}
+          {onEdit ? (
+            <CommentActions
+              annotation={annotation}
+              hasReplies={hasReplies}
+              editing={editing}
+              onEdit={() => onEditDraft(annotation.id, annotation.body)}
+              onDelete={onRemove}
+            />
+          ) : null}
+          {editing ? (
+            <CommentEditor
+              fieldLabel={`Edit ${annotationLabel(annotation)}`}
+              placeholder="Update this comment..."
+              draft={editDrafts.get(annotation.id) ?? ""}
+              onDraft={(value) => onEditDraft(annotation.id, value)}
+              onSubmit={
+                onEdit
+                  ? (body) => onEdit(annotation, body)
+                  : () => Promise.resolve()
+              }
+              onCancel={() => onEditDraft(annotation.id, null)}
+              submitLabel="Save"
+              busyLabel="Saving..."
+            />
+          ) : null}
         </div>
       </div>
     </article>
+  );
+}
+
+// Submit shortcut label follows the platform so the hint matches the keys the
+// reviewer will actually press.
+// The key handler accepts metaKey OR ctrlKey, which is exactly what bb calls
+// `mod` ("Command on macOS, Control elsewhere") on a PluginCommandShortcut.
+// bb exposes that only for shortcuts the host matches itself, so there is no
+// resolver to borrow here and the label is the only thing that must guess.
+// navigator.platform is deprecated, so prefer userAgentData and fall back to
+// the legacy pair.
+function isApplePlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const data = (
+    navigator as Navigator & { userAgentData?: { platform?: string } }
+  ).userAgentData;
+  if (data?.platform) return /mac/i.test(data.platform);
+  return /mac|iphone|ipad|ipod/i.test(
+    `${navigator.platform ?? ""} ${navigator.userAgent ?? ""}`,
+  );
+}
+function submitShortcutLabel(): string {
+  return isApplePlatform() ? "Cmd+Enter" : "Ctrl+Enter";
+}
+
+// One editor for both replies and edits: it mounts only while its draft is
+// open, so focusing on mount covers opening, cancelling, and reopening. The
+// submit path is guarded so a second click or keypress cannot fire the RPC
+// twice while the first is still in flight.
+function CommentEditor({
+  fieldLabel,
+  placeholder,
+  draft,
+  onDraft,
+  onSubmit,
+  onCancel,
+  submitLabel,
+  busyLabel,
+}: {
+  fieldLabel: string;
+  placeholder: string;
+  draft: string;
+  onDraft: (value: string) => void;
+  onSubmit: (body: string) => Promise<void>;
+  onCancel: () => void;
+  submitLabel: string;
+  busyLabel: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const submittingRef = useRef(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+  function submit() {
+    if (submittingRef.current || busy || !draft.trim()) return;
+    submittingRef.current = true;
+    setBusy(true);
+    void onSubmit(draft)
+      .then(onCancel)
+      .catch(() => undefined)
+      .finally(() => {
+        submittingRef.current = false;
+        setBusy(false);
+      });
+  }
+  return (
+    <div className="mt-2 rounded bg-muted p-2">
+      <textarea
+        ref={textareaRef}
+        aria-label={fieldLabel}
+        maxLength={1000}
+        value={draft}
+        onChange={(event) => onDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey))
+            return;
+          event.preventDefault();
+          submit();
+        }}
+        placeholder={placeholder}
+        className="min-h-14 w-full rounded border bg-background p-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      />
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted-foreground">
+          {submitShortcutLabel()} to submit
+        </span>
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={busy || !draft.trim()} onClick={submit}>
+            {busy ? busyLabel : submitLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -538,49 +678,88 @@ function ReplyBox({
   draft: string;
   onDraft: (value: string) => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const submittingRef = useRef(false);
   return (
-    <div className="mt-2 rounded bg-muted p-2">
-      <textarea
-        aria-label={`Reply to ${annotationLabel(parent)}`}
-        maxLength={1000}
-        value={draft}
-        onChange={(event) => onDraft(event.target.value)}
-        placeholder="Reply in this thread..."
-        className="min-h-14 w-full rounded border bg-background p-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      />
-      <div className="mt-1 flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
-          Cancel
-        </Button>
-        <Button
-          size="sm"
-          disabled={busy || !draft.trim()}
-          onClick={() => {
-            if (submittingRef.current || busy || !draft.trim()) return;
-            submittingRef.current = true;
-            setBusy(true);
-            void onReply(parent, draft)
-              .then(onCancel)
-              .catch(() => undefined)
-              .finally(() => {
-                submittingRef.current = false;
-                setBusy(false);
-              });
-          }}
+    <CommentEditor
+      fieldLabel={`Reply to ${annotationLabel(parent)}`}
+      placeholder="Reply in this thread..."
+      draft={draft}
+      onDraft={onDraft}
+      onSubmit={(body) => onReply(parent, body)}
+      onCancel={onCancel}
+      submitLabel="Reply"
+      busyLabel="Replying..."
+    />
+  );
+}
+
+// Edit and delete are human-only: the agent's own comments and anything
+// already sent are immutable, so the affordances are hidden rather than
+// offered and then refused. Delete on a comment that has replies is shown
+// disabled with the server's reason, because the user needs to see why.
+function CommentActions({
+  annotation,
+  hasReplies,
+  editing,
+  onEdit,
+  onDelete,
+}: {
+  annotation: Annotation;
+  hasReplies: boolean;
+  editing: boolean;
+  onEdit: (annotation: Annotation) => void;
+  onDelete: (id: string) => void;
+}) {
+  if (annotation.author !== "human" || annotation.sentAt !== null) return null;
+  // Icon-only and revealed on hover or keyboard focus: these are secondary
+  // actions, and filled pills made them read as primary.
+  const className =
+    "inline-flex size-7 min-h-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100";
+  return (
+    <div className="mt-1.5 flex items-center gap-0.5">
+      {editing ? null : (
+        <button
+          type="button"
+          className={className}
+          aria-label={`Edit ${annotationLabel(annotation)}`}
+          title="Edit comment"
+          onClick={() => onEdit(annotation)}
         >
-          {busy ? "Replying..." : "Reply"}
-        </Button>
-      </div>
+          <Icon name="Edit" className="size-3" />
+        </button>
+      )}
+      <button
+        type="button"
+        className={`${className} disabled:opacity-50`}
+        aria-label={`Delete ${annotationLabel(annotation)}`}
+        title={
+          hasReplies
+            ? "Comment has replies and cannot be deleted on its own."
+            : "Delete comment"
+        }
+        disabled={hasReplies}
+        onClick={() => onDelete(annotation.id)}
+      >
+        <Icon name="Trash2" className="size-3" />
+      </button>
     </div>
   );
 }
 
+// Resolved threads are history: keep them behind one disclosure so the open
+// work is what the drawer shows first.
+function partitionByResolved(
+  roots: Annotation[],
+): [Annotation[], Annotation[]] {
+  const open: Annotation[] = [];
+  const done: Annotation[] = [];
+  for (const root of roots) {
+    (root.resolvedAt ? done : open).push(root);
+  }
+  return [open, done];
+}
+
 function CommentList({
   annotations,
-  selected,
-  onToggle,
   onRemove,
   onResolve,
   onSuggestion,
@@ -588,10 +767,11 @@ function CommentList({
   onLocate,
   replyDrafts,
   onReplyDraft,
+  onEdit,
+  onEditDraft,
+  editDrafts,
 }: {
   annotations: Annotation[];
-  selected: Set<string>;
-  onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onResolve: (annotation: Annotation) => void;
   onSuggestion: (annotation: Annotation, accept: boolean) => void;
@@ -599,6 +779,9 @@ function CommentList({
   onLocate?: (annotation: Annotation) => void;
   replyDrafts: Map<string, string>;
   onReplyDraft: (id: string, value: string | null) => void;
+  onEdit: (annotation: Annotation, body: string) => Promise<void>;
+  onEditDraft: (id: string, value: string | null) => void;
+  editDrafts: Map<string, string>;
 }) {
   if (!annotations.length)
     return <p className="text-xs text-muted-foreground">No comments yet.</p>;
@@ -612,44 +795,77 @@ function CommentList({
     list.push(annotation);
     repliesByRoot.set(annotation.parentId, list);
   }
+  const replyCountByParent = new Map<string, number>();
+  for (const annotation of annotations) {
+    if (!annotation.parentId) continue;
+    replyCountByParent.set(
+      annotation.parentId as string,
+      (replyCountByParent.get(annotation.parentId) ?? 0) + 1,
+    );
+  }
+  const [openRoots, doneRoots] = partitionByResolved(roots);
+  const [showDone, setShowDone] = useState(false);
+  const renderThread = (root: Annotation) => (
+    <div key={root.id}>
+      <CommentCard
+        annotation={root}
+        onRemove={onRemove}
+        onResolve={onResolve}
+        onSuggestion={onSuggestion}
+        onReply={onReply}
+        onLocate={onLocate}
+        replyDrafts={replyDrafts}
+        onReplyDraft={onReplyDraft}
+        hasReplies={(replyCountByParent.get(root.id) ?? 0) > 0}
+        onEdit={onEdit}
+        onEditDraft={onEditDraft}
+        editDrafts={editDrafts}
+      />
+      {repliesByRoot.has(root.id) ? (
+        <div className="ml-4 border-l-2 border-muted pl-2">
+          {(repliesByRoot.get(root.id) ?? []).map((reply) => (
+            <CommentCard
+              key={reply.id}
+              annotation={reply}
+              onRemove={onRemove}
+              onResolve={onResolve}
+              onSuggestion={onSuggestion}
+              onReply={onReply}
+              onLocate={onLocate}
+              replyDrafts={replyDrafts}
+              onReplyDraft={onReplyDraft}
+              onEdit={onEdit}
+              onEditDraft={onEditDraft}
+              editDrafts={editDrafts}
+              hideReplyButton
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
   return (
     <div className="space-y-2">
-      {roots.map((root) => (
-        <div key={root.id}>
-          <CommentCard
-            annotation={root}
-            selected={selected}
-            onToggle={onToggle}
-            onRemove={onRemove}
-            onResolve={onResolve}
-            onSuggestion={onSuggestion}
-            onReply={onReply}
-            onLocate={onLocate}
-            replyDrafts={replyDrafts}
-            onReplyDraft={onReplyDraft}
-          />
-          {repliesByRoot.has(root.id) ? (
-            <div className="ml-4 border-l-2 border-muted pl-2">
-              {(repliesByRoot.get(root.id) ?? []).map((reply) => (
-                <CommentCard
-                  key={reply.id}
-                  annotation={reply}
-                  selected={selected}
-                  onToggle={onToggle}
-                  onRemove={onRemove}
-                  onResolve={onResolve}
-                  onSuggestion={onSuggestion}
-                  onReply={onReply}
-                  onLocate={onLocate}
-                  replyDrafts={replyDrafts}
-                  onReplyDraft={onReplyDraft}
-                  hideReplyButton
-                />
-              ))}
-            </div>
+      {openRoots.map(renderThread)}
+      {doneRoots.length ? (
+        <div className="pt-1">
+          <button
+            type="button"
+            className="flex w-full items-center gap-1.5 rounded px-1 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            aria-expanded={showDone}
+            onClick={() => setShowDone((current) => !current)}
+          >
+            <Icon
+              name={showDone ? "ChevronDown" : "ChevronRight"}
+              className="size-3"
+            />
+            Resolved ({doneRoots.length})
+          </button>
+          {showDone ? (
+            <div className="mt-1 space-y-2">{doneRoots.map(renderThread)}</div>
           ) : null}
         </div>
-      ))}
+      ) : null}
     </div>
   );
 }
@@ -657,7 +873,6 @@ function CommentList({
 function FileCommentsBar({
   path,
   annotations,
-  selected,
   busy,
   composerOpen,
   composerBody,
@@ -665,17 +880,18 @@ function FileCommentsBar({
   onOpenComposer,
   onCloseComposer,
   onAdd,
-  onToggle,
   onRemove,
   onResolve,
   onSuggestion,
   onReply,
   replyDrafts,
   onReplyDraft,
+  onEdit,
+  onEditDraft,
+  editDrafts,
 }: {
   path: string;
   annotations: Annotation[];
-  selected: Set<string>;
   busy: boolean;
   composerOpen: boolean;
   composerBody: string;
@@ -683,13 +899,15 @@ function FileCommentsBar({
   onOpenComposer: () => void;
   onCloseComposer: () => void;
   onAdd: () => void;
-  onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onResolve: (annotation: Annotation) => void;
   onSuggestion: (annotation: Annotation, accept: boolean) => void;
   onReply: (parent: Annotation, body: string) => Promise<void>;
   replyDrafts: Map<string, string>;
   onReplyDraft: (id: string, value: string | null) => void;
+  onEdit: (annotation: Annotation, body: string) => Promise<void>;
+  onEditDraft: (id: string, value: string | null) => void;
+  editDrafts: Map<string, string>;
 }) {
   const roots = annotations.filter((annotation) => !annotation.parentId);
   const repliesByRoot = new Map<string, Annotation[]>();
@@ -744,14 +962,16 @@ function FileCommentsBar({
             <div key={root.id}>
               <CommentCard
                 annotation={root}
-                selected={selected}
-                onToggle={onToggle}
                 onRemove={onRemove}
                 onResolve={onResolve}
                 onSuggestion={onSuggestion}
                 onReply={onReply}
                 replyDrafts={replyDrafts}
                 onReplyDraft={onReplyDraft}
+                hasReplies={(repliesByRoot.get(root.id)?.length ?? 0) > 0}
+                onEdit={onEdit}
+                onEditDraft={onEditDraft}
+                editDrafts={editDrafts}
               />
               {repliesByRoot.has(root.id) ? (
                 <div className="ml-4 border-l-2 border-muted pl-2">
@@ -759,14 +979,15 @@ function FileCommentsBar({
                     <CommentCard
                       key={reply.id}
                       annotation={reply}
-                      selected={selected}
-                      onToggle={onToggle}
                       onRemove={onRemove}
                       onResolve={onResolve}
                       onSuggestion={onSuggestion}
                       onReply={onReply}
                       replyDrafts={replyDrafts}
                       onReplyDraft={onReplyDraft}
+                      onEdit={onEdit}
+                      onEditDraft={onEditDraft}
+                      editDrafts={editDrafts}
                       hideReplyButton
                     />
                   ))}
@@ -1197,35 +1418,43 @@ function EntityExplorer({
 
 function ReviewSummary({
   review,
-  selected,
+  busy,
   summaryDraft,
   onSummaryDraftChange,
+  noteOpen,
+  onNoteOpenChange,
   replyDrafts,
   onReplyDraft,
   onSaveSummary,
-  onToggle,
   onRemove,
   onResolve,
   onSuggestion,
   onSend,
   onReply,
   onLocate,
+  onEdit,
+  onEditDraft,
+  editDrafts,
   onClose,
 }: {
   review: Review;
-  selected: Set<string>;
+  busy: boolean;
   summaryDraft: string;
   onSummaryDraftChange: (summary: string) => void;
+  noteOpen: boolean;
+  onNoteOpenChange: (open: boolean) => void;
   replyDrafts: Map<string, string>;
   onReplyDraft: (id: string, value: string | null) => void;
   onSaveSummary: (summary: string) => Promise<void>;
-  onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onResolve: (annotation: Annotation) => void;
   onSuggestion: (annotation: Annotation, accept: boolean) => void;
-  onSend: () => void;
+  onSend: (ids: Iterable<string>) => void;
   onReply: (parent: Annotation, body: string) => Promise<void>;
   onLocate: (annotation: Annotation) => void;
+  onEdit: (annotation: Annotation, body: string) => Promise<void>;
+  onEditDraft: (id: string, value: string | null) => void;
+  editDrafts: Map<string, string>;
   onClose?: () => void;
 }) {
   const pending = review.annotations.filter(
@@ -1257,30 +1486,44 @@ function ReviewSummary({
         ) : null}
       </div>
       <div className="mt-3">
-        <label
-          className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-          htmlFor="review-overall-summary"
-        >
-          Review note
-        </label>
-        <textarea
-          id="review-overall-summary"
-          maxLength={2000}
-          value={summaryDraft}
-          onChange={(event) => onSummaryDraftChange(event.target.value)}
-          onBlur={() => {
-            if (summaryDraft.trim() !== (review.summary ?? ""))
-              void onSaveSummary(summaryDraft);
-          }}
-          placeholder="Optional note about the changeset as a whole, sent with every batch."
-          className={`mt-1 min-h-16 w-full rounded border bg-background p-2 ${COARSE_POINTER_TEXT_BASE_CLASS} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`}
-        />
+        {noteOpen ? (
+          <>
+            <label
+              className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+              htmlFor="review-overall-summary"
+            >
+              Review note
+            </label>
+            <textarea
+              id="review-overall-summary"
+              maxLength={2000}
+              value={summaryDraft}
+              onChange={(event) => onSummaryDraftChange(event.target.value)}
+              onBlur={() => {
+                if (summaryDraft.trim() !== (review.summary ?? ""))
+                  void onSaveSummary(summaryDraft);
+              }}
+              placeholder="Optional note about the changeset as a whole, sent with every batch."
+              className={`mt-1 min-h-16 w-full rounded border bg-background p-2 ${COARSE_POINTER_TEXT_BASE_CLASS} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`}
+            />
+          </>
+        ) : (
+          // A permanently open textarea outshouted the comments it describes.
+          <button
+            type="button"
+            className="flex w-full items-center gap-1.5 rounded border border-dashed px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            onClick={() => onNoteOpenChange(true)}
+          >
+            <Icon name="Edit" className="size-3" />
+            {summaryDraft.trim() || review.summary
+              ? "Edit review note"
+              : "Add a review note"}
+          </button>
+        )}
       </div>
       <div className="mt-3 min-h-0 overflow-auto">
         <CommentList
           annotations={review.annotations}
-          selected={selected}
-          onToggle={onToggle}
           onRemove={onRemove}
           onResolve={onResolve}
           onSuggestion={onSuggestion}
@@ -1288,20 +1531,28 @@ function ReviewSummary({
           onLocate={onLocate}
           replyDrafts={replyDrafts}
           onReplyDraft={onReplyDraft}
+          onEdit={onEdit}
+          onEditDraft={onEditDraft}
+          editDrafts={editDrafts}
         />
       </div>
       <Button
         className="mt-3 w-full"
-        onClick={onSend}
-        disabled={!selected.size && !hasNotes}
+        onClick={() => onSend(pending.map((item) => item.id))}
+        disabled={busy || (!pending.length && !hasNotes)}
       >
-        {selected.size
-          ? `Send ${selected.size} comment${selected.size === 1 ? "" : "s"} to agent`
-          : "Send summary to agent"}
+        {busy
+          ? "Sending..."
+          : pending.length
+            ? `Send ${pending.length} comment${pending.length === 1 ? "" : "s"} to agent`
+            : "Send review note to agent"}
       </Button>
       <p className="mt-2 text-center text-[11px] text-muted-foreground">
-        Select unresolved comments to send as one batch, or send just the review
-        note.
+        {pending.length
+          ? "Everything you have not resolved goes to the agent in one batch."
+          : hasNotes
+            ? "No pending comments left; this sends the review note only."
+            : "Nothing to send yet. Add a comment or a review note."}
       </p>
     </div>
   );
@@ -1379,11 +1630,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [body, setBody] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [replyDrafts, setReplyDrafts] = useState<Map<string, string>>(
     new Map(),
   );
+  const [editDrafts, setEditDrafts] = useState<Map<string, string>>(new Map());
   const [summaryDraft, setSummaryDraft] = useState("");
+  // Collapsed by default: a permanently open note outshouted the comments it
+  // describes. Lives in the panel so it survives the drawer unmounting.
+  const [noteOpen, setNoteOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const feedbackOpenerRef = useRef<HTMLElement | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"compose" | null>(null);
@@ -1576,10 +1830,10 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       const next = result.review as Review | null;
       setReview(next);
       setSummaryDraft(next?.summary ?? "");
+      setNoteOpen(Boolean(next?.summary?.trim()));
       setReplyDrafts(new Map());
       setFeedbackOpen(false);
       setRevisions(history.revisions as Revision[]);
-      setSelected(new Set());
       setSelection(null);
       setFilePath((current) =>
         current && next?.files.some((file) => file.path === current)
@@ -1740,15 +1994,18 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     setSelection(next);
     setMobilePanel(next ? "compose" : null);
   }, []);
-  const toggleSelected = useCallback((id: string) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      next.has(id) ? next.delete(id) : next.add(id);
+  const updateReplyDraft = useCallback((id: string, value: string | null) => {
+    setReplyDrafts((current) => {
+      const next = new Map(current);
+      if (value === null) next.delete(id);
+      else next.set(id, value);
       return next;
     });
   }, []);
-  const updateReplyDraft = useCallback((id: string, value: string | null) => {
-    setReplyDrafts((current) => {
+  // Edit drafts live in their own map so opening an editor on a comment never
+  // disturbs a reply draft on the same thread.
+  const updateEditDraft = useCallback((id: string, value: string | null) => {
+    setEditDrafts((current) => {
       const next = new Map(current);
       if (value === null) next.delete(id);
       else next.set(id, value);
@@ -1841,7 +2098,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       const next = result.review as Review;
       setReview(next);
       setFilePath(next.files[0]?.path ?? null);
-      setSelected(new Set());
       setSelection(null);
       await load(next.id);
       setError(null);
@@ -1946,7 +2202,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         ...review,
         annotations: [...review.annotations, annotation],
       });
-      setSelected((current) => new Set(current).add(annotation.id));
       setFileCommentBody("");
       setFileComposerOpen(false);
       setError(null);
@@ -1973,7 +2228,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         ...review,
         annotations: [...review.annotations, annotation],
       });
-      setSelected((current) => new Set(current).add(annotation.id));
       setBody("");
       setSelection(null);
       setMobilePanel(null);
@@ -2037,15 +2291,36 @@ function ReviewPanel({ threadId }: { threadId: string }) {
             }
           : current,
       );
-      setSelected((current) => {
-        const next = new Set(current);
-        next.delete(id);
-        return next;
-      });
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Unable to remove comment.",
       );
+    }
+  }
+  async function edit(annotation: Annotation, body: string) {
+    try {
+      const result = await rpc.call("editAnnotation", {
+        annotationId: annotation.id,
+        body: body.trim(),
+      });
+      const updated = result.annotation as Annotation;
+      setReview((current) =>
+        current
+          ? {
+              ...current,
+              annotations: current.annotations.map((candidate) =>
+                candidate.id === updated.id ? updated : candidate,
+              ),
+            }
+          : current,
+      );
+      setError(null);
+    } catch (cause) {
+      // Rethrow so the editor keeps the draft open with the error visible.
+      setError(
+        cause instanceof Error ? cause.message : "Unable to edit comment.",
+      );
+      throw cause;
     }
   }
   async function resolve(annotation: Annotation) {
@@ -2065,11 +2340,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
             }
           : current,
       );
-      setSelected((current) => {
-        const next = new Set(current);
-        next.delete(annotation.id);
-        return next;
-      });
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Unable to update comment.",
@@ -2118,7 +2388,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         annotationIds,
       });
       await load(revisions[0].id);
-      setSelected(new Set());
       setError(null);
     } catch (cause) {
       setError(
@@ -2131,22 +2400,26 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     }
   }
   const hasNotes = Boolean(review?.summary?.trim());
-  async function send() {
-    if (!review || (selected.size === 0 && !hasNotes)) return;
+  // Everything unsent, unresolved, and human goes in one batch. There is no
+  // selection step: a comment you wrote is already addressed to the agent, and
+  // resolving or deleting it is how you take it back out.
+  async function send(ids: Iterable<string>) {
+    if (!review) return;
+    const targets = new Set(ids);
+    if (targets.size === 0 && !hasNotes) return;
     setBusy(true);
     try {
       const result = await rpc.call("sendBatch", {
         reviewId: review.id,
-        annotationIds: [...selected],
+        annotationIds: [...targets],
       });
       const sentAt = result.sentAt as number;
       setReview({
         ...review,
         annotations: review.annotations.map((annotation) =>
-          selected.has(annotation.id) ? { ...annotation, sentAt } : annotation,
+          targets.has(annotation.id) ? { ...annotation, sentAt } : annotation,
         ),
       });
-      setSelected(new Set());
       setMobilePanel(null);
       setError(null);
       navigate.toThread(threadId);
@@ -2667,7 +2940,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                               annotation.fileLevel &&
                               annotation.filePath === file.path,
                           )}
-                          selected={selected}
                           busy={busy}
                           composerOpen={fileComposerOpen}
                           composerBody={fileCommentBody}
@@ -2681,7 +2953,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                             setFileComposerOpen(false);
                           }}
                           onAdd={() => void addFileComment()}
-                          onToggle={toggleSelected}
                           onRemove={(id) => void remove(id)}
                           onResolve={(annotation) => void resolve(annotation)}
                           onSuggestion={(annotation, accept) =>
@@ -2690,6 +2961,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                           onReply={reply}
                           replyDrafts={replyDrafts}
                           onReplyDraft={updateReplyDraft}
+                          onEdit={(annotation, body) => edit(annotation, body)}
+                          onEditDraft={updateEditDraft}
+                          editDrafts={editDrafts}
                         />
                         <div className="overflow-hidden rounded-md border bg-card">
                           <PierreReviewDiff
@@ -2699,6 +2973,12 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                             replyDrafts={replyDrafts}
                             onReply={reply}
                             onReplyDraft={updateReplyDraft}
+                            editDrafts={editDrafts}
+                            onEdit={(annotation, body) =>
+                              edit(annotation, body)
+                            }
+                            onEditDraft={updateEditDraft}
+                            onRemove={(id) => void remove(id)}
                             wrapLines={wrapLines}
                             loadDiffFiles={loadDiffFiles}
                             composer={{
@@ -2738,21 +3018,25 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 </Dialog.Description>
                 <ReviewSummary
                   review={review}
-                  selected={selected}
+                  busy={busy}
                   summaryDraft={summaryDraft}
                   onSummaryDraftChange={setSummaryDraft}
+                  noteOpen={noteOpen}
+                  onNoteOpenChange={setNoteOpen}
                   replyDrafts={replyDrafts}
                   onReplyDraft={updateReplyDraft}
                   onSaveSummary={saveSummary}
-                  onToggle={toggleSelected}
                   onRemove={(id) => void remove(id)}
                   onResolve={(annotation) => void resolve(annotation)}
                   onSuggestion={(annotation, accept) =>
                     void decideSuggestion(annotation, accept)
                   }
-                  onSend={() => void send()}
+                  onSend={(ids) => void send(ids)}
                   onReply={reply}
                   onLocate={locateComment}
+                  onEdit={(annotation, body) => edit(annotation, body)}
+                  onEditDraft={updateEditDraft}
+                  editDrafts={editDrafts}
                   onClose={() => setFeedbackOpen(false)}
                 />
               </Dialog.Content>
