@@ -48,6 +48,10 @@ Replaces the browser tab favicon with uploaded light/dark SVG artwork. Reacts to
 
 Diff-first asynchronous review workspaces inside a thread: snapshots uncommitted changes, individual commits, or committed branch diffs as immutable revisions, lets a reviewer select exact line ranges in the diff and anchor comments, carry unresolved comment threads forward to refreshed revisions, and send a batch of feedback to the agent in that same BB thread. The sidebar's Recent reviews page resumes each thread's latest saved review, with pending-comment counts and viewed-file progress.
 
+### [Rate Your Chat](plugins/rate-your-chat) - `rate-your-chat`
+
+Skippable whole-chat feedback offered after archiving. Stores usefulness, use case, notes, and recorded model/reasoning variations in local SQLite, with editing and JSON export. No feedback is sent to providers. This experiment is not in the marketplace catalog; install from a local checkout to try it.
+
 ## Repo layout
 
 Each plugin is self-contained under `plugins/<id>/` with its own `package.json` and lockfile (pnpm). [`marketplace.json`](marketplace.json) at the root is the v2 catalog BB reads; its `overview` fields contain Markdown long-form descriptions. Plugin releases are resolved from git tags like `favicon/v0.1.0` (plugin-specific prefix per catalog entry).

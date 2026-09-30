@@ -32,6 +32,31 @@ repos:
         groups: [pi-extras, typecheck]
         pass_filenames: false
 
+      - id: rate-your-chat-typecheck
+        name: rate-your-chat typecheck
+        entry: bash -c 'cd plugins/rate-your-chat && pnpm run typecheck'
+        language: system
+        files: ^plugins/rate-your-chat/
+        groups: [rate-your-chat, typecheck]
+        pass_filenames: false
+
+      - id: rate-your-chat-format
+        name: rate-your-chat format
+        entry: bash -c 'cd plugins/rate-your-chat && pnpm run lint'
+        language: system
+        files: ^plugins/rate-your-chat/
+        groups: [rate-your-chat, format]
+        pass_filenames: false
+
+      - id: rate-your-chat-tests
+        name: rate-your-chat tests
+        entry: bash -c 'cd plugins/rate-your-chat && pnpm test'
+        language: system
+        files: ^plugins/rate-your-chat/
+        groups: [rate-your-chat, test]
+        stages: [pre-push]
+        pass_filenames: false
+
       - id: review-workspace-format
         name: review-workspace format
         entry: bash -c 'cd plugins/review-workspace && pnpm run lint'

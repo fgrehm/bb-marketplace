@@ -14,6 +14,7 @@ This repository is MIT licensed (see `LICENSE`). It includes code adapted from t
 - Source: https://github.com/get-bb/bb
 - License: MIT - Copyright (c) 2026 Michael Yong
 - Used in: `plugins/pi-extras/usage-page/components/usage/providers.tsx` (the OpenCode provider mark, from bb's landing icons)
+- Used in: `plugins/rate-your-chat/components/ui/` and `plugins/rate-your-chat/lib/utils.ts` (BB scaffold UI controls and styling helpers; full license text: `plugins/rate-your-chat/components/LICENSE`)
 
 ## simple-icons/simple-icons
 
