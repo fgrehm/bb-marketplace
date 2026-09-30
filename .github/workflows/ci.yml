@@ -13,6 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Test overview sync
+        run: node --test scripts/sync-marketplace-overviews.test.mjs
+      - name: Check generated overviews
+        run: node scripts/sync-marketplace-overviews.mjs --check
       - name: Validate JSON
         run: python3 -m json.tool marketplace.json >/dev/null
       - name: Validate v2 catalog entries
@@ -31,9 +38,6 @@ jobs:
               if plugin_id in seen:
                   raise SystemExit(f"duplicate marketplace plugin id: {plugin_id}")
               seen.add(plugin_id)
-              overview = entry.get("overview")
-              if not isinstance(overview, str) or not overview.strip() or len(overview) > 4000:
-                  raise SystemExit(f"{plugin_id}: overview must be non-empty and at most 4000 characters")
               manifest = json.loads(Path(f"plugins/{plugin_id}/package.json").read_text())
               if entry["displayName"] != manifest["bb"]["name"] or entry["description"] != manifest["bb"]["description"]:
                   raise SystemExit(f"{plugin_id}: catalog identity and description must match package.json")

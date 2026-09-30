@@ -11,6 +11,12 @@
       "description": "Diff-first asynchronous review workspaces inside BB threads.",
       "overview": "Review Workspace opens a diff-first review panel in a BB thread. Create immutable snapshots of uncommitted changes, a selected commit, or committed changes against a base branch. Select exact old or new diff lines, add file-level feedback or an overall review note, mark files as viewed, and send all unsent, unresolved human feedback to the agent with relevant diff context. Unresolved comment threads and the review note carry forward when you refresh to a new snapshot; earlier revisions remain available.\n\nResume existing reviews from the sidebar's Recent reviews page, with the latest saved snapshot per thread, pending-comment counts, and viewed-file progress. Opening a review or reloading this list does not refresh the diff or send feedback.\n\n## Requirements and limits\n\nThe review uses the Git changes available in the thread environment. Review feedback is sent to the agent in the thread.\n\nReview data, including unsent feedback, is automatically and irreversibly purged after seven days continuously archived or when its BB thread is deleted. Existing archives are included. Cleanup runs on load and hourly while enabled, in bounded batches; active reviews and comments already imported into other threads are retained.",
       "icon": "GitPullRequest",
+      "screenshots": [
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/review-diff.png",
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/review-comment.png",
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/review-feedback.png",
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/recent-reviews.png"
+      ],
       "tags": [
         "review",
         "diff",
@@ -37,6 +43,14 @@
       "description": "Shows Pi usage, manages global Pi settings and updates, and generates thread titles and commit messages when selected for each task.",
       "overview": "Pi Extras brings Pi usage and settings into BB. Its Sessions view estimates token use and cost from local Pi session transcripts, broken down by backend, model, project, and day. Subscriptions shows current usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud accounts.\n\nThe settings panel edits Pi defaults, model scope, selected runtime settings, model catalogs, and extensions. For Pi to generate BB thread titles or commit messages, select Pi separately for each task under BB Settings > AI services. This does not change the model running the thread.\n\n## Requirements and privacy\n\nPi must be installed on BB's primary machine. Subscription usage requires the relevant credentials in Pi's auth.json. The plugin reads credentials to request usage but never displays, logs, refreshes, or modifies them. Subscription endpoints are undocumented and may change.",
       "icon": "ChartNoAxesCombined",
+      "screenshots": [
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/sessions.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/subscriptions.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/settings.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/model-scope.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/runtime-settings.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/text-services.webp"
+      ],
       "tags": [
         "usage",
         "provider",
@@ -62,6 +76,9 @@
       "description": "Replaces the browser tab favicon with uploaded light/dark SVG artwork.",
       "overview": "Favicon replaces the BB browser tab icon with separate SVG artwork for light and dark themes. The settings panel previews the artwork with BB's fixed 55% color tint, preserving shading and detail while keeping the unread badge visible. Uploads and removals stay pending until you choose Save and apply, so you can review both previews before changing the active icon. Each theme can be updated independently.\n\n## Requirements and limits\n\nArtwork must be uploaded as SVG; remote URLs and filesystem paths are not supported. The favicon applies to the BB window, not individual projects. The plugin restores the previous favicon when disabled or reloaded. No external service or account is required.",
       "icon": "Image",
+      "screenshots": [
+        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/favicon/docs/settings.webp"
+      ],
       "tags": [
         "favicon",
         "ui",

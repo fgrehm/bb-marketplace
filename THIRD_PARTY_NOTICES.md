@@ -1,6 +1,6 @@
 # Third-party notices
 
-This repository is MIT licensed (see `LICENSE`). It includes code adapted from the following third-party projects:
+This repository is MIT licensed (see `LICENSE`, which credits Fabio Rehm). Vendored license files retain the upstream authors' copyright notices and credit Fabio Rehm for local modifications. It includes code adapted from the following third-party projects:
 
 ## iamEvanYT/bb-usage-page
 

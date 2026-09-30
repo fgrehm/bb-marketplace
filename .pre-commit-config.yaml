@@ -8,6 +8,14 @@ repos:
         files: \.(json)$
         groups: [quality]
 
+      - id: marketplace-overviews
+        name: marketplace overview sync and tests
+        entry: bash -c 'node --test scripts/sync-marketplace-overviews.test.mjs && node scripts/sync-marketplace-overviews.mjs --check'
+        language: system
+        files: ^(marketplace\.json|plugins/[^/]+/PLUGIN_OVERVIEW\.md|scripts/sync-marketplace-overviews(\.test)?\.mjs|\.github/workflows/ci\.yml|\.pre-commit-config\.yaml)$
+        groups: [marketplace, quality]
+        pass_filenames: false
+
       - id: favicon-typecheck
         name: favicon typecheck
         entry: bash -c 'cd plugins/favicon && pnpm run typecheck'

@@ -54,7 +54,25 @@ Skippable whole-chat feedback offered after archiving. Stores usefulness, use ca
 
 ## Repo layout
 
-Each plugin is self-contained under `plugins/<id>/` with its own `package.json` and lockfile (pnpm). [`marketplace.json`](marketplace.json) at the root is the v2 catalog BB reads; its `overview` fields contain Markdown long-form descriptions. Plugin releases are resolved from git tags like `favicon/v0.1.0` (plugin-specific prefix per catalog entry).
+Each plugin is self-contained under `plugins/<id>/` with its own `package.json` and lockfile (pnpm). [`marketplace.json`](marketplace.json) at the root is the published v2 catalog BB reads. Its `overview` fields are generated from each catalogued plugin's `PLUGIN_OVERVIEW.md`; other catalog metadata stays hand-authored. Plugin releases are resolved from git tags like `favicon/v0.1.0` (plugin-specific prefix per catalog entry).
+
+## Marketplace copy
+
+Keep the short description in the manifest and catalog aligned. Author the longer store description in `plugins/<id>/PLUGIN_OVERVIEW.md`; keep installation, usage, development details, and embedded images in the plugin's `README.md`. BB shows the catalog overview on its plugin detail page, not the README.
+
+After editing an overview, run from the repository root:
+
+```sh
+node scripts/sync-marketplace-overviews.mjs
+node scripts/sync-marketplace-overviews.mjs --check
+node --test scripts/sync-marketplace-overviews.test.mjs
+```
+
+The sync command updates only the catalog's overview values for listed plugins. `--check` reports drift without writing; CI and prek run this check and its tests. Missing, empty, or oversized sources fail without updating the catalog.
+
+Store overviews support a restricted Markdown subset, not embedded images. Add image URLs to the separate `screenshots` field in `marketplace.json` for the screenshot gallery. This catalog reuses the existing plugin assets via HTTPS raw-GitHub URLs. See the [overview rules](https://github.com/get-bb/marketplace#long-form-description) and [screenshot guidance](https://github.com/get-bb/marketplace#screenshots-and-icons). Some existing settings captures are narrower than the Community marketplace submission minimum; recapture those before a Community submission rather than upscaling them.
+
+Local `path:` installs do not use catalog overviews or screenshot galleries on their Installed plugin page. Adding `PLUGIN_OVERVIEW.md` alone does not change that page.
 
 ## Development
 
