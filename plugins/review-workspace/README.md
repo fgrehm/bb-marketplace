@@ -2,16 +2,60 @@
 
 A BB plugin for asynchronous, diff-first reviews inside a thread.
 
-Review Workspace loads the thread environment's uncommitted Git diff, lets a reviewer select exact old/new line ranges with Pierre, and sends unsent, unresolved feedback to the agent in the parent thread. Long paths are compacted for display with home-directory abbreviation and leading-segment compaction.
+Review Workspace captures Git changes from a thread's environment, lets a reviewer select exact old/new line ranges with Pierre, and sends unsent, unresolved feedback back to the agent in that same BB thread. It does not spawn a separate review thread. Long paths are compacted for display with home-directory abbreviation and leading-segment compaction.
 
 The composer is a single freeform text box; comments render inline with the diff and are sent to the agent as-is in the batch, together with the diff hunks covering the commented lines (context included, capped in size). Each file can also have **file-level comments** anchored to the whole file (no line), shown in a card above its diff and threads/resolvable/sendable like any other comment; the batch panel has a **review note** for the changeset as a whole, sent with every batch. The agent can also add file-level comments via `review_workspace_comment` with `fileLevel: true`.
 
+## Screenshots
+
+These screenshots use example changes and feedback in the live BB interface.
+
+### Review a diff
+
+Choose a saved revision, navigate changed files, and read file-level and inline feedback alongside the diff.
+
+![Diff review with changed-file navigation, viewed progress, and inline AI feedback](assets/screenshots/review-diff.png)
+
+### Add anchored feedback
+
+Select diff lines and write a comment. Adding it saves feedback to the review, not to the agent.
+
+![Selected new diff line with an unsent comment draft and Add comment action](assets/screenshots/review-comment.png)
+
+### Review and send
+
+Check pending comments, replies, and the review note, then send them together in one batch.
+
+![Review feedback drawer with three pending comments, a review note, and the send action](assets/screenshots/review-feedback.png)
+
+### Resume saved reviews
+
+The sidebar landing page lists the latest snapshot per thread, with pending comments first and viewed-file progress.
+
+![Recent reviews showing snapshot targets, pending-comment counts, and viewed-file progress](assets/screenshots/recent-reviews.png)
+
+## Installation
+
+Plugins are pre-release and not published to npm. Install this plugin from the repository:
+
+```sh
+bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/review-workspace
+```
+
+For a local checkout:
+
+```sh
+bb plugin install path:/path/to/bb-marketplace/plugins/review-workspace
+```
+
+BB plugins run with full trust. Review the source before installing. This plugin reads Git changes from thread environments, stores review data in its plugin database, reads BB thread metadata for discovery and cleanup, and sends feedback to the owning thread only when requested. It has no configuration settings.
+
 ## Review workflow
 
-1. Open **Review changes** from a thread panel.
-2. Pick a target next to Refresh: **Uncommitted** (default), **Commit** (by sha), or **Branch vs base** (committed changes relative to a base branch such as `main`). Each refresh creates an immutable revision labeled with its target.
+1. Open **Review** from a thread's header (the review icon on mobile).
+2. Pick **Uncommitted changes** (default), **Specific commit** (by sha), or **Branch vs base** (committed changes relative to a base branch such as `main`). Choose **Open review**, **Review commit**, or **Review branch** to save the first snapshot. Later, use **Refresh** or the target-specific review button to capture updated changes. Each snapshot is an immutable revision labeled with its target.
 3. Select a revision and changed file. Filter files by **All**, **Unviewed**, or **With open comments**, and search by path. File counts show unresolved root threads, including inline and file-level comments, with replies counted as part of their thread. On mobile, the same search and filters are available above the changed-file selector.
-4. Select lines in the diff gutter and add an anchored comment. Existing comments render inline with the diff. Reply to inline AI-authored comments directly from the diff; a reply to an AI reply is added to its existing root thread. New comment, reply, and edit boxes take focus when they open and submit with `Ctrl+Enter` (`Cmd+Enter` on macOS), with the button still available. Adding a comment saves it to the review, not to the agent; failed saves keep the draft and show an error beside the editor. File-level replies remain in the file comments card. Threads have one top-level comment with flat replies. Human comments can be edited or deleted until they are sent: **Edit** and **Delete** are hidden on AI-authored and sent comments, and **Delete** is disabled on a comment that has replies, which must be removed with their thread. Resolving a comment resolves its whole thread, and threads are carried to the next revision together. The locate button on any feedback comment jumps to its file and scrolls the comment into view.
+4. Select lines in the diff gutter and add an anchored comment. Existing comments render inline with the diff. Reply to inline AI-authored comments directly from the diff; a reply to an AI reply is added to its existing root thread. New comment, reply, and edit boxes take focus when they open and submit with `Ctrl+Enter` (`Cmd+Enter` on macOS), with the button still available. Adding a comment saves it to the review, not to the agent; failed saves keep the draft and show an error beside the editor. File-level replies remain in the file comments card. Threads have one top-level comment with flat replies. Human comments can be edited or deleted until they are sent: **Edit** and **Delete** are hidden on AI-authored and sent comments, and **Delete** is disabled on a comment that has replies, which must be removed with their thread. Resolving a comment resolves its whole thread. Unresolved threads are carried to the next revision together. The locate button on any feedback comment jumps to its file and scrolls the comment into view.
 5. Expand collapsed unchanged context with Pierre's line-info controls when the immutable snapshot has complete text contents. Binary, oversized, and truncated files remain non-expandable.
 6. Mark changed files as viewed. Viewed state is stored separately for each immutable revision.
 7. Open **Review feedback** to read your open comments and the review note. The button shows how many comments are pending. Resolved threads are folded into a **Resolved** list, and there is nothing to select: on mobile, use **Feedback** in the bottom navigation.
@@ -36,7 +80,7 @@ Reviews for an archived thread are eligible for automatic deletion after **7 day
 
 Purging removes all of that thread's review revisions, saved file contents and patches, comments (including unsent feedback), review and file notes, resolution suggestions, and viewed state. **Deletion is irreversible**, unarchiving afterward does not restore reviews. Comments already imported into another thread are independent copies and remain there. Deleting a BB thread triggers immediate cleanup of its reviews; missed deletions and genuinely missing threads are reconciled by the background sweep.
 
-Cleanup runs once after plugin load and hourly while the plugin is enabled. Each pass checks up to 100 saved review owners with a 60-second time budget and a persisted cursor, so large histories can take multiple passes. Thread metadata lookup failures retain data for a later retry. Cleanup does not scan Git, modify BB threads, or send feedback. Freed database pages are reused; cleanup does not force the database file to shrink.
+BB runs a one-time cleanup service after plugin load, and its built-in background scheduler runs the hourly job while the plugin is enabled; no system cron or agent thread is involved. Each pass checks up to 100 saved review owners with a 60-second time budget and a persisted cursor, so large histories can take multiple passes. Thread metadata lookup failures retain data for a later retry. Cleanup does not scan Git, modify BB threads, or send feedback. Freed database pages are reused; cleanup does not force the database file to shrink.
 
 ## Development
 
@@ -65,3 +109,4 @@ The plugin registers agent tools. They are always registered and become availabl
 - `review_workspace_resolve` - resolve or reopen a comment by id (e.g. after applying the feedback).
 - `review_workspace_history` - list recent review revisions from other threads in the same project, marking those that share the calling thread's environment/checkout. Reviews stay thread-scoped; this is the discovery step for pulling in prior feedback.
 - `review_workspace_import` - copy unresolved comments from a listed revision (same project only) into the calling thread's latest revision, keeping comment threads intact via id remapping. Call `review_workspace_refresh` first so imported comments anchor to a diff.
+- `review_workspace_clear` - permanently delete reviews for the calling thread, or all stored reviews across threads and projects. This removes snapshots, comments, notes, and viewed state.
