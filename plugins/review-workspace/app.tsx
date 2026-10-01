@@ -38,6 +38,11 @@ import {
   type FileFilterMode,
 } from "./lib/review-navigation";
 import { compactPath, normalizeChangeKind } from "./lib/utils";
+import {
+  isVisiblePatchRange,
+  patchHunkStarts,
+  patchSourceLines,
+} from "./lib/tours";
 
 type File = {
   path: string;
@@ -47,7 +52,28 @@ type File = {
   deletions: number;
   binary: boolean;
   patch: string;
+  deferredReason: string | null;
   truncated: boolean;
+  oldIdentity: string | null;
+  newIdentity: string | null;
+  imageSides: {
+    old: {
+      path: string;
+      mimeType: string;
+      sizeBytes: number;
+      width: number;
+      height: number;
+      sha256: string;
+    } | null;
+    new: {
+      path: string;
+      mimeType: string;
+      sizeBytes: number;
+      width: number;
+      height: number;
+      sha256: string;
+    } | null;
+  };
 };
 type Annotation = {
   id: string;
@@ -72,25 +98,80 @@ type Annotation = {
 type ReviewTarget =
   | { type: "uncommitted" }
   | { type: "commit"; sha: string }
-  | { type: "branch_committed"; mergeBaseBranch: string };
+  | { type: "branch_committed"; mergeBaseBranch: string }
+  | { type: "all"; mergeBaseBranch: string };
 
 function describeTarget(target: ReviewTarget): string {
   if (target.type === "commit") return `commit ${target.sha.slice(0, 10)}`;
   if (target.type === "branch_committed")
     return `committed vs ${target.mergeBaseBranch}`;
+  if (target.type === "all") return `everything vs ${target.mergeBaseBranch}`;
   return "uncommitted";
 }
 
+type ReviewTourAnchor = {
+  filePath: string;
+  side: "old" | "new";
+  startLine: number;
+  endLine: number;
+  valid: boolean;
+  reason: string | null;
+};
+type ReviewTour = {
+  reviewId: string;
+  title: string;
+  overview: string | null;
+  createdAt: number;
+  steps: Array<{
+    id: string;
+    title: string;
+    body: string;
+    anchors: ReviewTourAnchor[];
+    card?:
+      | {
+          kind: "call-graph";
+          symbol: string;
+          callers: Array<{ label: string; detail: string }>;
+          callees: Array<{ label: string; detail: string }>;
+        }
+      | {
+          kind: "impact";
+          tests: Array<{
+            label: string;
+            status: "added" | "updated" | "missing";
+          }>;
+          modules: Array<{ label: string; detail: string }>;
+        }
+      | { kind: "before-after"; before: string; after: string; note: string };
+  }>;
+  coverage: {
+    totalChangedLines: number;
+    coveredChangedLines: number;
+    uncovered: Array<{ filePath: string; side: "old" | "new"; line: number }>;
+  };
+};
 type Review = {
   id: string;
   threadId: string;
   snapshot: string;
+  baseIdentity: string | null;
   createdAt: number;
   target: ReviewTarget;
   files: File[];
   annotations: Annotation[];
   viewedPaths: string[];
   summary: string | null;
+  tour: ReviewTour | null;
+};
+type RevisionDelta = {
+  currentReviewId: string;
+  status: "comparable" | "unknown";
+  changedPaths: string[];
+  unchangedPaths: string[];
+  unknownPaths: string[];
+  revertedPaths: string[];
+  baselines: Array<{ path: string; reviewId: string; viewedAt: number }>;
+  reason: string | null;
 };
 type Revision = {
   id: string;
@@ -109,7 +190,8 @@ type Selection = {
   endLine: number;
 };
 type ComposerMarker = { composer: true; selection: Selection };
-type DiffAnnotation = Annotation | ComposerMarker;
+type TourMarker = { tourMarker: true };
+type DiffAnnotation = Annotation | ComposerMarker | TourMarker;
 
 function rangeToAnchor(range: SelectedLineRange): Selection | null {
   const side =
@@ -223,6 +305,8 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
   wrapLines,
   loadDiffFiles,
   onSelect,
+  tourAnchor,
+  keyboardSelection,
 }: {
   fileDiff: FileDiffMetadata;
   lineAnnotations: DiffLineAnnotation<DiffAnnotation>[];
@@ -246,6 +330,8 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
     onCancel: () => void;
   };
   onSelect: (range: SelectedLineRange | null) => void;
+  tourAnchor: ReviewTourAnchor | null;
+  keyboardSelection: SelectedLineRange | null;
 }) {
   const options = useMemo(
     () => ({
@@ -266,11 +352,32 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
     <FileDiff<DiffAnnotation>
       fileDiff={fileDiff}
       lineAnnotations={lineAnnotations}
+      selectedLines={
+        keyboardSelection ??
+        (tourAnchor
+          ? {
+              start: tourAnchor.startLine,
+              end: tourAnchor.endLine,
+              side: tourAnchor.side === "old" ? "deletions" : "additions",
+              endSide: tourAnchor.side === "old" ? "deletions" : "additions",
+            }
+          : null)
+      }
       disableWorkerPool
       options={options}
       renderAnnotation={(line) => {
         const annotation = line.metadata;
         if (!annotation) return null;
+        if ("tourMarker" in annotation) {
+          return (
+            <div
+              data-active-tour-anchor=""
+              className="rounded border border-primary bg-primary/10 px-3 py-2 text-xs font-semibold text-primary"
+            >
+              Tour anchor · exact range
+            </div>
+          );
+        }
         if ("composer" in annotation) {
           return composer.selection ? (
             <div className="hidden lg:block">
@@ -386,6 +493,410 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
     />
   );
 });
+
+function ImageSidePreview({
+  reviewId,
+  file,
+  side,
+}: {
+  reviewId: string;
+  file: File;
+  side: "old" | "new";
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const info = file.imageSides[side];
+  const [asset, setAsset] = useState<{
+    contentBase64: string;
+    mimeType: string;
+  } | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!info) return;
+    rpc
+      .call("reviewImageAsset", { reviewId, filePath: file.path, side })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.asset && result.asset.sha256 === info.sha256)
+          setAsset({
+            contentBase64: result.asset.contentBase64,
+            mimeType: result.asset.mimeType,
+          });
+        else setUnavailable(true);
+      })
+      .catch(() => {
+        if (!cancelled) setUnavailable(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [file.path, info?.sha256, reviewId, rpc, side]);
+
+  return (
+    <section
+      className="min-w-0 rounded-lg border bg-background p-3"
+      aria-label={`${side === "old" ? "Old" : "New"} image preview`}
+    >
+      <h3 className="mb-2 text-xs font-semibold">
+        {side === "old" ? "Old" : "New"}
+        {info ? ` · ${info.path}` : ""}
+      </h3>
+      {info && asset && !broken ? (
+        <img
+          src={`data:${asset.mimeType};base64,${asset.contentBase64}`}
+          alt={`${side === "old" ? "Old" : "New"} snapshot of ${info.path}`}
+          className="mx-auto max-h-[70vh] max-w-full object-contain"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        <p
+          role="status"
+          className="rounded border border-dashed p-6 text-center text-xs text-muted-foreground"
+        >
+          {!info
+            ? "No captured safe raster preview is available for this side."
+            : unavailable
+              ? "Stored image preview is unavailable or corrupt."
+              : broken
+                ? "Image could not be decoded."
+                : "Loading immutable image preview…"}
+        </p>
+      )}
+      {info ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          {info.width} × {info.height} · {(info.sizeBytes / 1024).toFixed(1)}{" "}
+          KiB
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function BinaryImagePreview({
+  file,
+  reviewId,
+}: {
+  file: File;
+  reviewId: string;
+}) {
+  const status = normalizeChangeKind(file.status);
+  const sides: Array<"old" | "new"> =
+    status === "added"
+      ? ["new"]
+      : status === "deleted"
+        ? ["old"]
+        : ["old", "new"];
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        Binary changes have file-level feedback only. Image bytes are stored
+        with this revision.
+      </p>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {sides.map((side) => (
+          <ImageSidePreview
+            key={side}
+            reviewId={reviewId}
+            file={file}
+            side={side}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TourCardView({
+  card,
+}: {
+  card: NonNullable<ReviewTour["steps"][number]["card"]>;
+}) {
+  if (card.kind === "before-after")
+    return (
+      <div className="grid gap-2 text-xs">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Agent-authored before / after
+        </p>
+        <pre className="overflow-auto rounded bg-muted p-2">{card.before}</pre>
+        <pre className="overflow-auto rounded bg-muted p-2">{card.after}</pre>
+        <p>{card.note}</p>
+      </div>
+    );
+  if (card.kind === "call-graph")
+    return (
+      <div className="space-y-2 text-xs">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Agent-authored call graph · not runtime-verified
+        </p>
+        <p className="font-mono">{card.symbol}</p>
+        {[
+          ...card.callers.map((item) => ({ ...item, relation: "Caller" })),
+          ...card.callees.map((item) => ({ ...item, relation: "Callee" })),
+        ].map((item, index) => (
+          <p key={`${item.relation}-${index}`}>
+            <span className="font-semibold">
+              {item.relation}: {item.label}
+            </span>
+            <br />
+            <span className="text-muted-foreground">{item.detail}</span>
+          </p>
+        ))}
+      </div>
+    );
+  return (
+    <div className="space-y-2 text-xs">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Agent-authored impact notes · verify independently
+      </p>
+      {card.tests.map((test, index) => (
+        <p
+          key={`${test.label}-${index}`}
+          className="flex justify-between gap-2"
+        >
+          <span>{test.label}</span>
+          <span
+            className={
+              test.status === "missing"
+                ? "text-destructive"
+                : "text-muted-foreground"
+            }
+          >
+            {test.status}
+          </span>
+        </p>
+      ))}
+      {card.modules.map((module, index) => (
+        <p key={`${module.label}-${index}`}>
+          <span className="font-semibold">{module.label}</span>
+          <br />
+          <span className="text-muted-foreground">{module.detail}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function TourRail({
+  tour,
+  activeStepId,
+  scopePaths,
+  files,
+  onStep,
+  onAnchor,
+  onFile,
+  mobile = false,
+}: {
+  tour: ReviewTour | null;
+  files: Array<
+    Pick<
+      File,
+      "path" | "additions" | "deletions" | "patch" | "deferredReason" | "binary"
+    >
+  >;
+  activeStepId: string | null;
+  scopePaths: Set<string> | null;
+  onStep: (step: ReviewTour["steps"][number]) => void;
+  onAnchor: (stepId: string, anchor: ReviewTourAnchor) => void;
+  onFile: (path: string) => void;
+  mobile?: boolean;
+}) {
+  const content = (
+    <div className="space-y-3 p-3">
+      {tour ? (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Revision tour
+          </p>
+          <h2 className="mt-1 text-sm font-semibold">{tour.title}</h2>
+          {tour.overview ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {tour.overview}
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          No tour is authored for this immutable revision.
+        </p>
+      )}
+      <details open className="rounded-lg border bg-card p-2">
+        <summary className="cursor-pointer text-xs font-semibold">
+          Operations and raw changes ({files.length} files)
+        </summary>
+        <ul className="mt-2 space-y-2">
+          {files.map((file) => {
+            const side = file.additions > 0 || !file.deletions ? "new" : "old";
+            const hunks = file.patch ? patchHunkStarts(file.patch, side) : [];
+            return (
+              <li key={file.path} className="rounded border p-2">
+                <button
+                  className="w-full text-left font-mono text-[11px] underline"
+                  onClick={() => onFile(file.path)}
+                >
+                  {file.path}
+                </button>
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  +{file.additions} / -{file.deletions}
+                  {file.binary ? " · binary" : ""}
+                  {file.deferredReason
+                    ? ` · deferred: ${file.deferredReason}`
+                    : ""}
+                </p>
+                {hunks.map((line, index) => (
+                  <button
+                    key={`${side}-${line}-${index}`}
+                    className="mt-1 block rounded px-1 py-0.5 text-[10px] hover:bg-muted"
+                    onClick={() =>
+                      onAnchor("", {
+                        filePath: file.path,
+                        side,
+                        startLine: line,
+                        endLine: line,
+                        valid: true,
+                        reason: null,
+                      })
+                    }
+                  >
+                    Hunk {index + 1} · {side}:{line}
+                  </button>
+                ))}
+                {!file.patch && !file.binary ? (
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    Hunks load only when requested in the main pane.
+                  </p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </details>
+      {tour ? (
+        <>
+          {tour.steps.map((step, index) => {
+            const selected = step.id === activeStepId;
+            const anchors = step.anchors.filter(
+              (anchor) => !scopePaths || scopePaths.has(anchor.filePath),
+            );
+            return (
+              <section
+                key={step.id}
+                className={`rounded-lg border p-2 ${selected ? "border-primary/50 bg-primary/5" : "bg-card"}`}
+              >
+                <button
+                  className="w-full text-left text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-pressed={selected}
+                  onClick={() => onStep(step)}
+                >
+                  {index + 1}. {step.title}
+                </button>
+                <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+                  {step.body}
+                </p>
+                {step.card ? (
+                  <details className="mt-2 rounded border p-2">
+                    <summary className="cursor-pointer text-[11px] font-semibold">
+                      Evidence card
+                    </summary>
+                    <div className="mt-2">
+                      <TourCardView card={step.card} />
+                    </div>
+                  </details>
+                ) : null}
+                <details className="mt-2 rounded border p-2" open={selected}>
+                  <summary className="cursor-pointer text-[11px] font-semibold">
+                    Hunks and exact anchors ({anchors.length})
+                  </summary>
+                  <ul className="mt-1 space-y-1">
+                    {anchors.map((anchor, anchorIndex) => (
+                      <li
+                        key={`${anchor.filePath}-${anchor.side}-${anchor.startLine}-${anchorIndex}`}
+                      >
+                        <button
+                          disabled={!anchor.valid}
+                          className="w-full rounded px-1 py-1 text-left font-mono text-[10px] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => onAnchor(step.id, anchor)}
+                        >
+                          {anchor.filePath} · {anchor.side}:{anchor.startLine}
+                          {anchor.endLine !== anchor.startLine
+                            ? `-${anchor.endLine}`
+                            : ""}
+                          {!anchor.valid
+                            ? ` · unavailable (${anchor.reason})`
+                            : ""}
+                        </button>
+                      </li>
+                    ))}
+                    {!anchors.length ? (
+                      <li className="text-[10px] text-muted-foreground">
+                        No anchors in this scope.
+                      </li>
+                    ) : null}
+                  </ul>
+                </details>
+              </section>
+            );
+          })}
+          <details className="rounded-lg border bg-card p-2">
+            <summary className="cursor-pointer text-xs font-semibold">
+              Raw-change coverage
+            </summary>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {tour.coverage.coveredChangedLines} of{" "}
+              {tour.coverage.totalChangedLines} added/deleted lines have tour
+              anchors.
+            </p>
+            <ul className="mt-2 space-y-1">
+              {tour.coverage.uncovered
+                .filter((item) => !scopePaths || scopePaths.has(item.filePath))
+                .slice(0, 100)
+                .map((item, index) => (
+                  <li
+                    key={`${item.filePath}-${item.side}-${item.line}-${index}`}
+                  >
+                    <button
+                      className="font-mono text-[10px] text-amber-700 underline dark:text-amber-300"
+                      onClick={() =>
+                        onAnchor(activeStepId ?? "", {
+                          ...item,
+                          startLine: item.line,
+                          endLine: item.line,
+                          valid: true,
+                          reason: null,
+                        })
+                      }
+                    >
+                      {item.filePath} · {item.side}:{item.line}
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </details>
+          <p className="text-[10px] text-muted-foreground">
+            The full immutable diff remains available in the center pane. Step
+            cards are explanatory; exact anchored lines and raw changes are
+            separate evidence.
+          </p>
+        </>
+      ) : null}
+    </div>
+  );
+  return mobile ? (
+    <details className="shrink-0 max-h-[min(25dvh,22rem)] overflow-y-auto overscroll-contain border-b bg-card lg:hidden">
+      <summary className="sticky top-0 z-10 cursor-pointer bg-card px-3 py-2 text-xs font-semibold">
+        Tour · {tour?.title ?? "none authored"}
+      </summary>
+      {content}
+    </details>
+  ) : (
+    <aside
+      aria-label="Review tour and operations"
+      className="hidden min-h-0 overflow-auto border-l bg-muted/30 lg:block"
+    >
+      {content}
+    </aside>
+  );
+}
 
 function CommentCard({
   annotation,
@@ -621,16 +1132,24 @@ function CommentEditor({
   const errorId = useId();
   const submittingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
+    const active = document.activeElement;
+    returnFocusRef.current =
+      active instanceof HTMLElement && active !== document.body ? active : null;
     textareaRef.current?.focus();
   }, []);
+  function close() {
+    onCancel();
+    if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
+  }
   function submit() {
     if (submittingRef.current || busy || disabled || !draft.trim()) return;
     submittingRef.current = true;
     setBusy(true);
     setError(null);
     void onSubmit(draft)
-      .then(onCancel)
+      .then(close)
       .catch((cause) =>
         setError(
           cause instanceof Error
@@ -674,11 +1193,13 @@ function CommentEditor({
           readOnly={busy || disabled}
           onChange={(event) => onDraft(event.target.value)}
           onKeyDown={(event) => {
-            if (
-              event.nativeEvent.isComposing ||
-              event.key !== "Enter" ||
-              !(event.metaKey || event.ctrlKey)
-            )
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Escape" && !busy && !disabled) {
+              event.preventDefault();
+              close();
+              return;
+            }
+            if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey))
               return;
             event.preventDefault();
             submit();
@@ -703,7 +1224,7 @@ function CommentEditor({
             <Button
               size="sm"
               variant="ghost"
-              onClick={onCancel}
+              onClick={close}
               disabled={busy || disabled}
             >
               Cancel
@@ -1333,7 +1854,38 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const [review, setReview] = useState<Review | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [reviewScope, setReviewScope] = useState<"all" | "since-viewed">("all");
+  const [revisionDelta, setRevisionDelta] = useState<RevisionDelta | null>(
+    null,
+  );
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [selectionPath, setSelectionPath] = useState<string | null>(null);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const [activeTourStepId, setActiveTourStepId] = useState<string | null>(null);
+  const [activeTourAnchor, setActiveTourAnchor] =
+    useState<ReviewTourAnchor | null>(null);
+  const [deferredPatches, setDeferredPatches] = useState<Map<string, string>>(
+    new Map(),
+  );
+  const [deferredLoading, setDeferredLoading] = useState(false);
+  const [deferredError, setDeferredError] = useState<string | null>(null);
+  const [keyboardCursor, setKeyboardCursor] = useState<{
+    path: string;
+    side: "old" | "new";
+    line: number;
+  } | null>(null);
+  const [keyboardRangeStart, setKeyboardRangeStart] = useState<{
+    path: string;
+    side: "old" | "new";
+    line: number;
+  } | null>(null);
+  const [keyboardRangeValue, setKeyboardRangeValue] =
+    useState<Selection | null>(null);
+  const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false);
+  const [rangeSide, setRangeSide] = useState<"old" | "new">("new");
+  const [rangeStartInput, setRangeStartInput] = useState("");
+  const [rangeEndInput, setRangeEndInput] = useState("");
+  const [rangeInputError, setRangeInputError] = useState<string | null>(null);
   const [body, setBody] = useState("");
   const [replyDrafts, setReplyDrafts] = useState<Map<string, string>>(
     new Map(),
@@ -1364,7 +1916,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [targetKind, setTargetKind] = useState<
-    "uncommitted" | "commit" | "branch"
+    "uncommitted" | "commit" | "branch" | "all"
   >("uncommitted");
   const [targetValue, setTargetValue] = useState("");
   const [recentCommits, setRecentCommits] = useState<{
@@ -1417,6 +1969,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       return { type: "commit", sha: targetValue.trim() };
     if (targetKind === "branch" && targetValue.trim())
       return { type: "branch_committed", mergeBaseBranch: targetValue.trim() };
+    if (targetKind === "all" && targetValue.trim())
+      return { type: "all", mergeBaseBranch: targetValue.trim() };
     return undefined;
   }
 
@@ -1428,6 +1982,18 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       ]);
       const next = result.review as Review | null;
       setReview(next);
+      if (next) {
+        setTargetKind(
+          next.target.type === "branch_committed" ? "branch" : next.target.type,
+        );
+        setTargetValue(
+          next.target.type === "commit"
+            ? next.target.sha
+            : next.target.type === "uncommitted"
+              ? ""
+              : next.target.mergeBaseBranch,
+        );
+      }
       savedSummaryRef.current = next
         ? { reviewId: next.id, text: next.summary }
         : null;
@@ -1437,6 +2003,11 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       setFeedbackOpen(false);
       setRevisions(history.revisions as Revision[]);
       setSelection(null);
+      setSelectionPath(null);
+      setKeyboardRangeStart(null);
+      setKeyboardRangeValue(null);
+      setBody("");
+      setDraftNotice(null);
       setFilePath((current) =>
         current && next?.files.some((file) => file.path === current)
           ? current
@@ -1461,25 +2032,55 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     () => new Set(review?.viewedPaths ?? []),
     [review?.viewedPaths],
   );
+  useEffect(() => {
+    if (!review) {
+      setRevisionDelta(null);
+      return;
+    }
+    let cancelled = false;
+    rpc
+      .call("revisionDelta", { reviewId: review.id })
+      .then((result) => {
+        if (!cancelled) setRevisionDelta(result as RevisionDelta);
+      })
+      .catch(() => {
+        if (!cancelled) setRevisionDelta(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [review?.id, review?.viewedPaths, rpc]);
+  const scopedFiles = useMemo(() => {
+    const files = review?.files ?? [];
+    if (reviewScope === "all" || !revisionDelta) return files;
+    const paths = new Set([
+      ...revisionDelta.changedPaths,
+      ...revisionDelta.unknownPaths,
+    ]);
+    return files.filter((candidate) => paths.has(candidate.path));
+  }, [review?.files, reviewScope, revisionDelta]);
   const visibleFiles = useMemo(
     () =>
-      filterChangedFiles(review?.files ?? [], fileQuery, {
+      filterChangedFiles(scopedFiles, fileQuery, {
         mode: fileFilterMode,
         viewedPaths,
         openThreadCounts,
       }),
-    [fileFilterMode, fileQuery, openThreadCounts, review?.files, viewedPaths],
+    [fileFilterMode, fileQuery, openThreadCounts, scopedFiles, viewedPaths],
   );
   useEffect(() => {
     if (visibleFiles.some((candidate) => candidate.path === filePath)) return;
     setFilePath(visibleFiles[0]?.path ?? null);
-    setSelection(null);
   }, [filePath, visibleFiles]);
   const file =
     review?.files.find((candidate) => candidate.path === filePath) ?? null;
+  const patchCacheKey = review && file ? `${review.id}\\0${file.path}` : "";
+  const currentPatch = file
+    ? (deferredPatches.get(patchCacheKey) ?? file.patch)
+    : "";
   const parsed = useMemo(
-    () => (file?.patch ? getSingularPatch(file.patch) : null),
-    [file],
+    () => (currentPatch ? getSingularPatch(currentPatch) : null),
+    [currentPatch],
   );
   const loadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     if (
@@ -1515,9 +2116,40 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     };
   }, [file, parsed, review, rpc]);
   const currentIndex = file
-    ? (review?.files.findIndex((candidate) => candidate.path === file.path) ??
+    ? (visibleFiles.findIndex((candidate) => candidate.path === file.path) ??
         0) + 1
     : 0;
+  const keyboardSelection = useMemo<SelectedLineRange | null>(() => {
+    if (selection && selectionPath === file?.path)
+      return {
+        start: selection.startLine,
+        end: selection.endLine,
+        side: selection.side === "old" ? "deletions" : "additions",
+        endSide: selection.side === "old" ? "deletions" : "additions",
+      };
+    if (keyboardRangeStart?.path === file?.path && keyboardRangeValue)
+      return {
+        start: keyboardRangeValue.startLine,
+        end: keyboardRangeValue.endLine,
+        side: keyboardRangeValue.side === "old" ? "deletions" : "additions",
+        endSide: keyboardRangeValue.side === "old" ? "deletions" : "additions",
+      };
+    if (keyboardCursor && keyboardCursor.path === file?.path)
+      return {
+        start: keyboardCursor.line,
+        end: keyboardCursor.line,
+        side: keyboardCursor.side === "old" ? "deletions" : "additions",
+        endSide: keyboardCursor.side === "old" ? "deletions" : "additions",
+      };
+    return null;
+  }, [
+    file?.path,
+    keyboardCursor,
+    keyboardRangeStart,
+    keyboardRangeValue,
+    selection,
+    selectionPath,
+  ]);
   const currentAnnotations = useMemo<
     DiffLineAnnotation<DiffAnnotation>[]
   >(() => {
@@ -1535,7 +2167,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         lineNumber: annotation.startLine,
         metadata: annotation,
       }));
-    if (selection) {
+    if (activeTourAnchor?.valid && activeTourAnchor.filePath === file?.path) {
+      annotations.push({
+        side: activeTourAnchor.side === "old" ? "deletions" : "additions",
+        lineNumber: activeTourAnchor.startLine,
+        metadata: { tourMarker: true },
+      });
+    }
+    if (selection && selectionPath === file?.path) {
       annotations.push({
         side: selection.side === "old" ? "deletions" : "additions",
         lineNumber: selection.startLine,
@@ -1543,7 +2182,13 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       });
     }
     return annotations;
-  }, [file?.path, review?.annotations, selection]);
+  }, [
+    activeTourAnchor,
+    file?.path,
+    review?.annotations,
+    selection,
+    selectionPath,
+  ]);
   const pendingCount =
     review?.annotations.filter(
       (annotation) =>
@@ -1553,18 +2198,340 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     ).length ?? 0;
   const isViewed = Boolean(file && review?.viewedPaths.includes(file.path));
 
-  const chooseFile = useCallback((path: string) => {
-    setFilePath(path);
-    setSelection(null);
-    setMobilePanel(null);
-    setFileComposerOpen(false);
-    scrollSectionRef.current?.scrollTo?.({ top: 0 });
-  }, []);
-  const handleDiffSelection = useCallback((range: SelectedLineRange | null) => {
-    const next = range ? rangeToAnchor(range) : null;
-    setSelection(next);
-    setMobilePanel(next ? "compose" : null);
-  }, []);
+  const loadDeferredDiff = useCallback(
+    async (path: string) => {
+      if (!review) return;
+      const key = `${review.id}\\0${path}`;
+      const candidate = review.files.find((item) => item.path === path);
+      if (!candidate?.deferredReason || deferredPatches.has(key)) return;
+      setDeferredLoading(true);
+      setDeferredError(null);
+      try {
+        const result = await rpc.call("reviewFileDiff", {
+          reviewId: review.id,
+          filePath: path,
+        });
+        setDeferredPatches((current) =>
+          new Map(current).set(key, result.patch),
+        );
+      } catch (cause) {
+        setDeferredError(
+          cause instanceof Error ? cause.message : "Unable to load this diff.",
+        );
+      } finally {
+        setDeferredLoading(false);
+      }
+    },
+    [deferredPatches, review, rpc],
+  );
+  const chooseFile = useCallback(
+    (path: string) => {
+      setFilePath(path);
+      if (!body.trim()) {
+        setSelection(null);
+        setSelectionPath(null);
+        setDraftNotice(null);
+      } else if (selection && selectionPath && selectionPath !== path) {
+        setDraftNotice(
+          `Draft remains anchored to ${selectionPath}. Return to that file or discard the draft before choosing a different range.`,
+        );
+      }
+      setMobilePanel(null);
+      setFileComposerOpen(false);
+      scrollSectionRef.current?.scrollTo?.({ top: 0 });
+    },
+    [body, selection, selectionPath],
+  );
+  const tourScopePaths = useMemo(
+    () =>
+      reviewScope === "all"
+        ? null
+        : new Set([
+            ...(revisionDelta?.changedPaths ?? []),
+            ...(revisionDelta?.unknownPaths ?? []),
+          ]),
+    [reviewScope, revisionDelta],
+  );
+  const activateTourAnchor = useCallback(
+    (anchor: ReviewTourAnchor) => {
+      if (!anchor.valid || !review || review.tour?.reviewId !== review.id)
+        return;
+      setActiveTourAnchor(anchor);
+      chooseFile(anchor.filePath);
+      void loadDeferredDiff(anchor.filePath);
+    },
+    [chooseFile, loadDeferredDiff, review],
+  );
+  const activateTourStep = useCallback(
+    (step: ReviewTour["steps"][number]) => {
+      setActiveTourStepId(step.id);
+      const anchor = step.anchors.find(
+        (candidate) =>
+          candidate.valid &&
+          (!tourScopePaths || tourScopePaths.has(candidate.filePath)),
+      );
+      if (anchor) activateTourAnchor(anchor);
+    },
+    [activateTourAnchor, tourScopePaths],
+  );
+  const selectTourAnchor = useCallback(
+    (stepId: string, anchor: ReviewTourAnchor) => {
+      setActiveTourStepId(stepId);
+      activateTourAnchor(anchor);
+    },
+    [activateTourAnchor],
+  );
+  useEffect(() => {
+    setActiveTourAnchor(null);
+    setActiveTourStepId(review?.tour?.steps[0]?.id ?? null);
+  }, [review?.id]);
+  useEffect(() => {
+    if (!activeTourAnchor || file?.path !== activeTourAnchor.filePath) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const locate = () => {
+      const target = scrollSectionRef.current?.querySelector(
+        "[data-active-tour-anchor]",
+      );
+      if (target)
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+      else if (attempts++ < 20) timer = setTimeout(locate, 50);
+    };
+    timer = setTimeout(locate, 0);
+    return () => clearTimeout(timer);
+  }, [activeTourAnchor, file?.path, parsed]);
+  useEffect(() => {
+    const steps = review?.tour?.steps ?? [];
+    const step = steps.find((candidate) => candidate.id === activeTourStepId);
+    if (step && step.anchors.some((anchor) => anchor.valid)) return;
+    setActiveTourStepId(
+      steps.find((candidate) =>
+        candidate.anchors.some((anchor) => anchor.valid),
+      )?.id ?? null,
+    );
+  }, [activeTourStepId, review?.tour]);
+  const handleDiffSelection = useCallback(
+    (range: SelectedLineRange | null) => {
+      const next = range ? rangeToAnchor(range) : null;
+      if (
+        next &&
+        body.trim() &&
+        selection &&
+        (selectionPath !== file?.path ||
+          JSON.stringify(next) !== JSON.stringify(selection))
+      ) {
+        setDraftNotice(
+          `Draft remains anchored to ${selectionPath ?? "its original file"}. Save or discard it before selecting another range.`,
+        );
+        return;
+      }
+      setSelection(next);
+      setSelectionPath(next ? (file?.path ?? null) : null);
+      if (next) {
+        setKeyboardRangeStart(null);
+        setKeyboardRangeValue(null);
+      }
+      setDraftNotice(null);
+      setMobilePanel(next ? "compose" : null);
+    },
+    [body, file?.path, selection, selectionPath],
+  );
+  function selectExactRange() {
+    if (!file || !currentPatch) return;
+    const startLine = Number(rangeStartInput);
+    const endLine = Number(rangeEndInput || rangeStartInput);
+    if (!isVisiblePatchRange(currentPatch, rangeSide, startLine, endLine)) {
+      setRangeInputError(
+        `That ${rangeSide}-side range is not fully visible in this immutable patch.`,
+      );
+      return;
+    }
+    if (
+      body.trim() &&
+      selection &&
+      (selectionPath !== file.path ||
+        selection.side !== rangeSide ||
+        selection.startLine !== startLine ||
+        selection.endLine !== endLine)
+    ) {
+      setRangeInputError(
+        `Save or discard the draft anchored to ${selectionPath ?? "another file"} first.`,
+      );
+      return;
+    }
+    setSelection({ side: rangeSide, startLine, endLine });
+    setSelectionPath(file.path);
+    setKeyboardRangeStart(null);
+    setKeyboardRangeValue(null);
+    setKeyboardCursor({ path: file.path, side: rangeSide, line: startLine });
+    setRangeInputError(null);
+    setDraftNotice(null);
+    setMobilePanel("compose");
+  }
+  const handleDiffKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLElement>) => {
+      if (
+        event.target !== event.currentTarget ||
+        event.nativeEvent.isComposing ||
+        !file ||
+        file.binary ||
+        !currentPatch
+      )
+        return;
+      const key = event.key;
+      const side =
+        keyboardCursor?.path === file.path ? keyboardCursor.side : "new";
+      const lines = patchSourceLines(currentPatch, side);
+      const cursorLine =
+        keyboardCursor?.path === file.path && keyboardCursor.side === side
+          ? keyboardCursor.line
+          : null;
+      const moveCursor = (nextSide: "old" | "new", line: number) => {
+        setKeyboardCursor({ path: file.path, side: nextSide, line });
+        if (
+          keyboardRangeStart?.path === file.path &&
+          keyboardRangeStart.side === nextSide
+        ) {
+          setKeyboardRangeValue({
+            side: nextSide,
+            startLine: Math.min(keyboardRangeStart.line, line),
+            endLine: Math.max(keyboardRangeStart.line, line),
+          });
+        }
+      };
+      if (key === "j" || key === "k") {
+        event.preventDefault();
+        const index =
+          cursorLine === null
+            ? key === "j"
+              ? -1
+              : lines.length
+            : lines.indexOf(cursorLine);
+        const next = lines[index + (key === "j" ? 1 : -1)];
+        if (next === undefined)
+          setDraftNotice("End of visible lines on this side.");
+        else {
+          setDraftNotice(null);
+          moveCursor(side, next);
+        }
+      } else if (key === "h" || key === "l") {
+        event.preventDefault();
+        if (keyboardRangeStart) {
+          setDraftNotice(
+            "Finish or clear the current range before changing sides.",
+          );
+          return;
+        }
+        const nextSide = key === "h" ? "old" : "new";
+        const candidates = patchSourceLines(currentPatch, nextSide);
+        if (!candidates.length) {
+          setDraftNotice(`No visible ${nextSide}-side lines in this diff.`);
+          return;
+        }
+        const target = candidates.reduce(
+          (best, line) =>
+            Math.abs(line - (cursorLine ?? line)) <
+            Math.abs(best - (cursorLine ?? best))
+              ? line
+              : best,
+          candidates[0]!,
+        );
+        moveCursor(nextSide, target);
+        setDraftNotice(`Cursor on ${nextSide} side, line ${target}.`);
+      } else if (key === "V") {
+        event.preventDefault();
+        const line = cursorLine ?? lines[0];
+        if (line === undefined) {
+          setDraftNotice("No visible source lines to select.");
+          return;
+        }
+        if (body.trim() && selection) {
+          setDraftNotice(
+            `Draft remains anchored to ${selectionPath ?? file.path}. Save or discard it first.`,
+          );
+          return;
+        }
+        const anchor = { path: file.path, side, line };
+        setKeyboardRangeStart(anchor);
+        setKeyboardRangeValue({ side, startLine: line, endLine: line });
+        setKeyboardCursor(anchor);
+        setDraftNotice(
+          `Selecting ${side} lines from ${line}. Use j/k to extend, c to comment, Escape to clear.`,
+        );
+      } else if (key === "c") {
+        if (!keyboardRangeValue || keyboardRangeStart?.path !== file.path) {
+          setDraftNotice(
+            "Press V to start an exact line range before opening a comment.",
+          );
+          return;
+        }
+        event.preventDefault();
+        setSelection(keyboardRangeValue);
+        setSelectionPath(file.path);
+        setMobilePanel("compose");
+      } else if (key === "Escape" && keyboardRangeStart) {
+        event.preventDefault();
+        setKeyboardRangeStart(null);
+        setKeyboardRangeValue(null);
+        if (!body.trim()) {
+          setSelection(null);
+          setSelectionPath(null);
+        }
+        setDraftNotice("Line selection cleared.");
+      } else if (key === "[" || key === "]") {
+        event.preventDefault();
+        if (keyboardRangeStart) {
+          setDraftNotice(
+            "Clear the current range before jumping between hunks.",
+          );
+          return;
+        }
+        const starts = patchHunkStarts(currentPatch, side);
+        if (!starts.length) return;
+        const next =
+          key === "]"
+            ? starts.find((line) => line > (cursorLine ?? 0))
+            : [...starts]
+                .reverse()
+                .find(
+                  (line) => line < (cursorLine ?? Number.POSITIVE_INFINITY),
+                );
+        if (next === undefined) setDraftNotice("No further hunk on this side.");
+        else moveCursor(side, next);
+      } else if (key === "," || key === ".") {
+        event.preventDefault();
+        if (keyboardRangeStart) {
+          setDraftNotice("Clear the current range before changing files.");
+          return;
+        }
+        const next = adjacentFilePath(
+          visibleFiles,
+          file.path,
+          key === "," ? -1 : 1,
+        );
+        if (next) chooseFile(next);
+      } else if (key === "m") {
+        event.preventDefault();
+        void markViewed(false);
+      } else if (key === "?") {
+        event.preventDefault();
+        setKeyboardHelpOpen((open) => !open);
+      }
+    },
+    [
+      body,
+      chooseFile,
+      currentPatch,
+      file,
+      keyboardCursor,
+      keyboardRangeStart,
+      keyboardRangeValue,
+      markViewed,
+      selection,
+      selectionPath,
+      visibleFiles,
+    ],
+  );
   const updateReplyDraft = useCallback((id: string, value: string | null) => {
     setReplyDrafts((current) => {
       const next = new Map(current);
@@ -1670,6 +2637,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       setReview(next);
       setFilePath(next.files[0]?.path ?? null);
       setSelection(null);
+      setKeyboardRangeStart(null);
+      setKeyboardRangeValue(null);
       await load(next.id);
       setError(null);
     } catch (cause) {
@@ -1750,7 +2719,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     }
   }
   async function add() {
-    if (!review || !file || !selection || !body.trim()) return;
+    if (
+      !review ||
+      !file ||
+      !selection ||
+      selectionPath !== file.path ||
+      !body.trim()
+    )
+      return;
     setBusy(true);
     try {
       const result = await rpc.call("addAnnotation", {
@@ -1767,7 +2743,13 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       );
       setBody("");
       setSelection(null);
+      setSelectionPath(null);
+      setKeyboardRangeStart(null);
+      setKeyboardRangeValue(null);
+      setDraftNotice(null);
       setMobilePanel(null);
+      if (keyboardRangeStart)
+        requestAnimationFrame(() => scrollSectionRef.current?.focus());
       setError(null);
     } finally {
       setBusy(false);
@@ -1989,6 +2971,40 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     }
   }
 
+  const fileCommentsBar =
+    file && review ? (
+      <FileCommentsBar
+        annotations={review.annotations.filter(
+          (annotation) =>
+            annotation.fileLevel && annotation.filePath === file.path,
+        )}
+        busy={busy}
+        composerOpen={fileComposerOpen}
+        composerBody={fileCommentBody}
+        onComposerBody={setFileCommentBody}
+        onOpenComposer={() => {
+          setFileCommentBody("");
+          setFileComposerOpen(true);
+        }}
+        onCloseComposer={() => {
+          setFileCommentBody("");
+          setFileComposerOpen(false);
+        }}
+        onAdd={addFileComment}
+        onRemove={(id) => void remove(id)}
+        onResolve={(annotation) => void resolve(annotation)}
+        onSuggestion={(annotation, accept) =>
+          void decideSuggestion(annotation, accept)
+        }
+        onReply={reply}
+        replyDrafts={replyDrafts}
+        onReplyDraft={updateReplyDraft}
+        onEdit={(annotation, text) => edit(annotation, text)}
+        onEditDraft={updateEditDraft}
+        editDrafts={editDrafts}
+      />
+    ) : null;
+
   return (
     <main
       className={`flex min-h-0 flex-col overflow-hidden bg-background text-foreground ${fullscreen ? "fixed inset-0 z-50" : "h-full"}`}
@@ -2083,7 +3099,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           >
             <option value="uncommitted">Uncommitted changes</option>
             <option value="commit">Specific commit</option>
-            <option value="branch">Branch vs base</option>
+            <option value="branch">Committed vs base</option>
+            <option value="all">Everything vs base</option>
           </select>
           {targetKind === "commit" ? (
             recentCommits === null ? (
@@ -2142,10 +3159,12 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               : targetKind === "commit"
                 ? "Review commit"
                 : targetKind === "branch"
-                  ? "Review branch"
-                  : review
-                    ? "Refresh"
-                    : "Open review"}
+                  ? "Review committed"
+                  : targetKind === "all"
+                    ? "Review everything"
+                    : review
+                      ? "Refresh"
+                      : "Open review"}
           </Button>
         </div>
       </header>
@@ -2169,8 +3188,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       ) : null}
       {!review ? (
         <div className="p-6 text-sm text-muted-foreground">
-          Open a review to load the uncommitted changes in this thread&apos;s
-          environment.
+          Open a review to load changes from this thread&apos;s environment.
         </div>
       ) : (
         <>
@@ -2221,7 +3239,17 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 onModeChange={setFileFilterMode}
               />
             </div>
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)]">
+            <TourRail
+              tour={review.tour}
+              activeStepId={activeTourStepId}
+              scopePaths={tourScopePaths}
+              files={scopedFiles}
+              onStep={activateTourStep}
+              onAnchor={selectTourAnchor}
+              onFile={chooseFile}
+              mobile
+            />
+            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)_18rem]">
               <aside className="hidden min-h-0 overflow-auto border-r bg-muted/30 lg:block">
                 <div className="border-b p-3">
                   <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -2336,7 +3364,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               <section
                 ref={scrollSectionRef}
                 aria-label="File diff"
-                className="min-h-0 overflow-auto bg-muted/60 pb-20 lg:pb-3"
+                tabIndex={0}
+                onKeyDown={handleDiffKeyDown}
+                className="min-h-0 overflow-auto bg-muted/60 pb-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary lg:pb-3"
               >
                 <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b bg-card px-3 py-2 shadow-sm lg:px-4">
                   <div className="flex min-w-0 flex-1 basis-40 items-center gap-1">
@@ -2381,6 +3411,166 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     </span>
                   </div>
                   <div className="ml-auto flex shrink-0 items-center gap-2">
+                    <details className="relative">
+                      <summary className="cursor-pointer rounded border px-2 py-1 text-[11px]">
+                        Exact range
+                      </summary>
+                      <div className="absolute right-0 z-30 mt-1 w-64 rounded-md border bg-popover p-3 shadow-lg">
+                        <label className="block text-xs">
+                          Side
+                          <select
+                            aria-label="Exact range side"
+                            value={rangeSide}
+                            onChange={(event) =>
+                              setRangeSide(event.target.value as "old" | "new")
+                            }
+                            className="mt-1 w-full rounded border bg-background p-1"
+                          >
+                            <option value="old">Old</option>
+                            <option value="new">New</option>
+                          </select>
+                        </label>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <label className="text-xs">
+                            Start line
+                            <input
+                              aria-label="Exact range start line"
+                              type="number"
+                              min="1"
+                              value={rangeStartInput}
+                              onChange={(event) =>
+                                setRangeStartInput(event.target.value)
+                              }
+                              className="mt-1 w-full rounded border bg-background p-1"
+                            />
+                          </label>
+                          <label className="text-xs">
+                            End line
+                            <input
+                              aria-label="Exact range end line"
+                              type="number"
+                              min="1"
+                              value={rangeEndInput}
+                              onChange={(event) =>
+                                setRangeEndInput(event.target.value)
+                              }
+                              className="mt-1 w-full rounded border bg-background p-1"
+                            />
+                          </label>
+                        </div>
+                        {rangeInputError ? (
+                          <p
+                            role="alert"
+                            className="mt-2 text-xs text-destructive"
+                          >
+                            {rangeInputError}
+                          </p>
+                        ) : null}
+                        <Button
+                          className="mt-2 w-full"
+                          size="sm"
+                          onClick={selectExactRange}
+                        >
+                          Comment on exact range
+                        </Button>
+                      </div>
+                    </details>
+                    <div
+                      role="group"
+                      aria-label="Review scope"
+                      className="flex items-center gap-1 rounded-md border p-0.5"
+                    >
+                      <Button
+                        size="sm"
+                        variant={reviewScope === "all" ? "secondary" : "ghost"}
+                        aria-pressed={reviewScope === "all"}
+                        onClick={() => setReviewScope("all")}
+                      >
+                        All {review.files.length}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={
+                          reviewScope === "since-viewed" ? "secondary" : "ghost"
+                        }
+                        aria-pressed={reviewScope === "since-viewed"}
+                        onClick={() => setReviewScope("since-viewed")}
+                      >
+                        Since viewed{" "}
+                        {(revisionDelta?.changedPaths.length ?? 0) +
+                          (revisionDelta?.unknownPaths.length ?? 0)}
+                      </Button>
+                    </div>
+                    <details className="relative">
+                      <summary className="cursor-pointer rounded px-1 text-[11px] text-muted-foreground">
+                        Baseline
+                      </summary>
+                      <div className="absolute right-0 z-30 mt-1 max-h-64 w-72 overflow-auto rounded-md border bg-popover p-2 text-xs shadow-lg">
+                        <p className="mb-2 text-muted-foreground">
+                          Each path uses its latest explicitly marked viewed
+                          revision. Opening a review does not advance this
+                          baseline.
+                        </p>
+                        {revisionDelta?.baselines.length ? (
+                          <ul className="space-y-1">
+                            {revisionDelta.baselines
+                              .slice(0, 30)
+                              .map((entry) => (
+                                <li key={entry.path} className="font-mono">
+                                  {entry.path}
+                                  <span className="ml-1 text-muted-foreground">
+                                    · {entry.reviewId.slice(0, 8)}
+                                  </span>
+                                </li>
+                              ))}
+                          </ul>
+                        ) : (
+                          <p>
+                            No file has a saved viewed baseline yet; current
+                            changes remain in scope.
+                          </p>
+                        )}
+                        {revisionDelta?.revertedPaths.length ? (
+                          <div className="mt-2">
+                            <p>
+                              {revisionDelta.revertedPaths.length} path(s)
+                              returned to the verified base; no current patch
+                              row exists.
+                            </p>
+                            <ul className="mt-1 list-inside list-disc font-mono">
+                              {revisionDelta.revertedPaths
+                                .slice(0, 100)
+                                .map((path) => (
+                                  <li key={path}>{path}</li>
+                                ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                        {revisionDelta?.unknownPaths.length ? (
+                          <div className="mt-2">
+                            <p>
+                              {revisionDelta.unknownPaths.length} path(s) have
+                              unknown deltas.
+                            </p>
+                            <ul className="mt-1 list-inside list-disc font-mono">
+                              {revisionDelta.unknownPaths
+                                .slice(0, 100)
+                                .map((path) => (
+                                  <li key={path}>{path}</li>
+                                ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                        {revisionDelta?.reason ? (
+                          <p
+                            role="status"
+                            className="mt-2 text-amber-700 dark:text-amber-300"
+                          >
+                            {revisionDelta.reason}
+                          </p>
+                        ) : null}
+                      </div>
+                    </details>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -2444,18 +3634,130 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                   </div>
                 </div>
                 <div className="p-2 lg:p-4">
+                  <div className="mb-3 rounded border bg-background px-3 py-2 text-[11px] text-muted-foreground">
+                    Focus this diff surface, then use j/k for lines, h/l for
+                    old/new side, V to start a range, c to comment, [/] for
+                    hunks, ,/. for files, m to mark viewed, and ? for help.
+                    Navigation never sends feedback.
+                    {keyboardHelpOpen ? (
+                      <p className="mt-1">
+                        Ranges stay on one file and one side. Escape clears a
+                        range. Use the Exact range controls for direct multiline
+                        line numbers. Tab continues through native controls and
+                        out of this surface.
+                      </p>
+                    ) : null}
+                  </div>
+                  {draftNotice ? (
+                    <p
+                      role="status"
+                      aria-live="polite"
+                      className="mb-2 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs"
+                    >
+                      {draftNotice}
+                    </p>
+                  ) : null}
+                  {selection && body.trim() && selectionPath !== file?.path ? (
+                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                      <span>
+                        Unsent draft remains anchored to{" "}
+                        <code>{selectionPath}</code>.
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setReviewScope("all");
+                          if (selectionPath) chooseFile(selectionPath);
+                        }}
+                      >
+                        Return to draft
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setBody("");
+                          setSelection(null);
+                          setSelectionPath(null);
+                          setKeyboardRangeStart(null);
+                          setKeyboardRangeValue(null);
+                          setDraftNotice(null);
+                        }}
+                      >
+                        Discard draft
+                      </Button>
+                    </div>
+                  ) : null}
+                  {file ? fileCommentsBar : null}
                   {!file ? (
-                    <p className="text-sm text-muted-foreground">
-                      No changed files.
-                    </p>
+                    <div className="space-y-2 text-sm text-muted-foreground">
+                      <p>
+                        {reviewScope === "since-viewed" &&
+                        revisionDelta?.revertedPaths.length
+                          ? `No current patch rows in scope. ${revisionDelta.revertedPaths.length} path(s) returned to the verified base; inspect Baseline details.`
+                          : review.files.length
+                            ? "No files match this scope or filter."
+                            : "No changed files."}
+                      </p>
+                      {!review.files.length &&
+                      review.target.type === "uncommitted" ? (
+                        <div className="max-w-xl rounded border bg-card p-3 text-xs">
+                          <p>
+                            If the agent committed its work, switch targets to
+                            include committed changes. This empty snapshot is
+                            still retained as captured.
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setTargetKind("all");
+                                setTargetValue("");
+                              }}
+                            >
+                              Everything vs base
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setTargetKind("branch");
+                                setTargetValue("");
+                              }}
+                            >
+                              Committed vs base
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   ) : file.binary ? (
-                    <p className="text-sm text-muted-foreground">
-                      {file.path} is binary and cannot be annotated.
-                    </p>
+                    <BinaryImagePreview file={file} reviewId={review.id} />
                   ) : !parsed ? (
-                    <p className="text-sm text-muted-foreground">
-                      No patch is available for {file.path}.
-                    </p>
+                    <div className="space-y-2 rounded-lg border border-dashed bg-background p-4 text-sm">
+                      <p>
+                        {file.deferredReason
+                          ? `${file.deferredReason} is deferred until requested.`
+                          : `No patch is available for ${file.path}.`}
+                      </p>
+                      {file.deferredReason ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void loadDeferredDiff(file.path)}
+                          disabled={deferredLoading}
+                        >
+                          {deferredLoading ? "Loading diff…" : "Load diff"}
+                        </Button>
+                      ) : null}
+                      {deferredError ? (
+                        <p role="alert" className="text-xs text-destructive">
+                          {deferredError}
+                        </p>
+                      ) : null}
+                    </div>
                   ) : (
                     <>
                       {file.truncated ? (
@@ -2464,37 +3766,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                           the visible immutable snapshot.
                         </p>
                       ) : null}
-                      <FileCommentsBar
-                        annotations={review.annotations.filter(
-                          (annotation) =>
-                            annotation.fileLevel &&
-                            annotation.filePath === file.path,
-                        )}
-                        busy={busy}
-                        composerOpen={fileComposerOpen}
-                        composerBody={fileCommentBody}
-                        onComposerBody={setFileCommentBody}
-                        onOpenComposer={() => {
-                          setFileCommentBody("");
-                          setFileComposerOpen(true);
-                        }}
-                        onCloseComposer={() => {
-                          setFileCommentBody("");
-                          setFileComposerOpen(false);
-                        }}
-                        onAdd={addFileComment}
-                        onRemove={(id) => void remove(id)}
-                        onResolve={(annotation) => void resolve(annotation)}
-                        onSuggestion={(annotation, accept) =>
-                          void decideSuggestion(annotation, accept)
-                        }
-                        onReply={reply}
-                        replyDrafts={replyDrafts}
-                        onReplyDraft={updateReplyDraft}
-                        onEdit={(annotation, body) => edit(annotation, body)}
-                        onEditDraft={updateEditDraft}
-                        editDrafts={editDrafts}
-                      />
                       <div className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
                         <PierreReviewDiff
                           fileDiff={parsed}
@@ -2511,23 +3782,50 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                           loadDiffFiles={loadDiffFiles}
                           composer={{
                             file,
-                            selection,
+                            selection:
+                              selectionPath === file.path ? selection : null,
                             body,
                             busy,
                             onBody: setBody,
                             onAdd: add,
                             onCancel: () => {
+                              const restoreKeyboardFocus =
+                                Boolean(keyboardRangeStart);
                               setSelection(null);
+                              setSelectionPath(null);
+                              setKeyboardRangeStart(null);
+                              setKeyboardRangeValue(null);
                               setBody("");
+                              setDraftNotice(null);
+                              if (restoreKeyboardFocus)
+                                requestAnimationFrame(() =>
+                                  scrollSectionRef.current?.focus(),
+                                );
                             },
                           }}
                           onSelect={handleDiffSelection}
+                          tourAnchor={
+                            activeTourAnchor?.valid &&
+                            activeTourAnchor.filePath === file.path
+                              ? activeTourAnchor
+                              : null
+                          }
+                          keyboardSelection={keyboardSelection}
                         />
                       </div>
                     </>
                   )}
                 </div>
               </section>
+              <TourRail
+                tour={review.tour}
+                activeStepId={activeTourStepId}
+                scopePaths={tourScopePaths}
+                files={scopedFiles}
+                onStep={activateTourStep}
+                onAnchor={selectTourAnchor}
+                onFile={chooseFile}
+              />
             </div>
             <Dialog.Portal>
               <Dialog.Overlay
@@ -2617,7 +3915,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 Feedback
               </button>
             </nav>
-            {mobilePanel === "compose" && selection ? (
+            {mobilePanel === "compose" &&
+            selection &&
+            selectionPath === file?.path ? (
               <div className="fixed inset-0 z-40 flex items-start bg-black/40 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:hidden">
                 <div className="max-h-[85dvh] w-full overflow-auto rounded-xl border bg-background p-4 shadow-2xl">
                   <Composer
@@ -2628,9 +3928,17 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     onBody={setBody}
                     onAdd={add}
                     onCancel={() => {
+                      const restoreKeyboardFocus = Boolean(keyboardRangeStart);
                       setSelection(null);
+                      setSelectionPath(null);
+                      setKeyboardRangeStart(null);
+                      setKeyboardRangeValue(null);
                       setBody("");
                       setMobilePanel(null);
+                      if (restoreKeyboardFocus)
+                        requestAnimationFrame(() =>
+                          scrollSectionRef.current?.focus(),
+                        );
                     }}
                   />
                 </div>

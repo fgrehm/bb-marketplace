@@ -4,6 +4,28 @@ import { z } from "zod";
 import { runRecentCommits } from "./lib/git-log";
 import { normalizeChangeKind } from "./lib/utils";
 import { registerReviewCleanup } from "./lib/review-cleanup";
+import {
+  decodeReviewTarget,
+  describeReviewTarget,
+  encodeReviewTarget,
+  type ReviewTarget as ModelReviewTarget,
+  compareSinceViewed,
+  isDeferredDiff,
+  type DeltaSnapshot,
+  type ViewedBaseline,
+} from "./lib/review-model";
+import { inspectRasterAsset, isRasterImagePath } from "./lib/review-assets";
+import { validateTour, type TourStep } from "./lib/tours";
+const imageInfoShape = z
+  .object({
+    path: z.string(),
+    mimeType: z.string(),
+    sizeBytes: z.number().int().nonnegative(),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    sha256: z.string(),
+  })
+  .strict();
 const fileShape = z
   .object({
     path: z.string(),
@@ -13,7 +35,16 @@ const fileShape = z
     deletions: z.number(),
     binary: z.boolean(),
     patch: z.string(),
+    deferredReason: z.string().nullable(),
     truncated: z.boolean(),
+    oldIdentity: z.string().nullable(),
+    newIdentity: z.string().nullable(),
+    imageSides: z
+      .object({
+        old: imageInfoShape.nullable(),
+        new: imageInfoShape.nullable(),
+      })
+      .strict(),
   })
   .strict();
 const suggestionShape = z
@@ -48,47 +79,160 @@ export const reviewTargetShape = z.discriminatedUnion("type", [
       mergeBaseBranch: z.string().min(1).max(200),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("all"),
+      mergeBaseBranch: z.string().min(1).max(200),
+    })
+    .strict(),
 ]);
 export type ReviewTarget = z.infer<typeof reviewTargetShape>;
 
 function encodeTarget(target: ReviewTarget): string {
-  if (target.type === "commit") return `commit:${target.sha}`;
-  if (target.type === "branch_committed")
-    return `branch_committed:${target.mergeBaseBranch}`;
-  return "uncommitted";
+  return encodeReviewTarget(target);
 }
 
 function decodeTarget(value: string): ReviewTarget {
-  const [type, rest] = value.split(":");
-  if (type === "commit" && rest) return { type: "commit", sha: rest };
-  if (type === "branch_committed" && rest)
-    return { type: "branch_committed", mergeBaseBranch: rest };
-  return { type: "uncommitted" };
+  return decodeReviewTarget(value) as ReviewTarget;
 }
 
-type PatchTarget =
-  | { type: "uncommitted" }
-  | { type: "commit"; sha: string }
-  | { type: "branch_committed"; mergeBaseBranch: string };
+type PatchTarget = ModelReviewTarget;
 
 function describeTarget(target: ReviewTarget): string {
-  if (target.type === "commit") return `commit ${target.sha.slice(0, 10)}`;
-  if (target.type === "branch_committed")
-    return `committed vs ${target.mergeBaseBranch}`;
-  return "uncommitted changes";
+  return describeReviewTarget(target);
 }
 
+const tourAnchorShape = z
+  .object({
+    filePath: z.string().min(1),
+    side: z.enum(["old", "new"]),
+    startLine: z.number().int().positive(),
+    endLine: z.number().int().positive(),
+  })
+  .strict();
+const tourCardShape = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("call-graph"),
+      symbol: z.string().max(200),
+      callers: z
+        .array(
+          z
+            .object({ label: z.string().max(200), detail: z.string().max(500) })
+            .strict(),
+        )
+        .max(50),
+      callees: z
+        .array(
+          z
+            .object({ label: z.string().max(200), detail: z.string().max(500) })
+            .strict(),
+        )
+        .max(50),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("impact"),
+      tests: z
+        .array(
+          z
+            .object({
+              label: z.string().max(200),
+              status: z.enum(["added", "updated", "missing"]),
+            })
+            .strict(),
+        )
+        .max(100),
+      modules: z
+        .array(
+          z
+            .object({ label: z.string().max(200), detail: z.string().max(500) })
+            .strict(),
+        )
+        .max(100),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("before-after"),
+      before: z.string().max(5000),
+      after: z.string().max(5000),
+      note: z.string().max(2000),
+    })
+    .strict(),
+]);
+const tourInputShape = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    overview: z.string().max(4000).optional(),
+    steps: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(100),
+            title: z.string().trim().min(1).max(200),
+            body: z.string().max(4000),
+            anchors: z.array(tourAnchorShape).max(100),
+            card: tourCardShape.optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(50),
+  })
+  .strict();
+const tourAnchorResultShape = tourAnchorShape.extend({
+  valid: z.boolean(),
+  reason: z.string().nullable(),
+});
+const tourShape = z
+  .object({
+    reviewId: z.string(),
+    title: z.string(),
+    overview: z.string().nullable(),
+    createdAt: z.number(),
+    steps: z.array(
+      z
+        .object({
+          id: z.string(),
+          title: z.string(),
+          body: z.string(),
+          anchors: z.array(tourAnchorResultShape),
+          card: tourCardShape.optional(),
+        })
+        .strict(),
+    ),
+    coverage: z
+      .object({
+        totalChangedLines: z.number().int(),
+        coveredChangedLines: z.number().int(),
+        uncovered: z.array(
+          z
+            .object({
+              filePath: z.string(),
+              side: z.enum(["old", "new"]),
+              line: z.number().int(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+  })
+  .strict();
 const reviewShape = z
   .object({
     id: z.string(),
     threadId: z.string(),
     snapshot: z.string(),
+    baseIdentity: z.string().nullable(),
     createdAt: z.number(),
     target: reviewTargetShape,
     files: z.array(fileShape),
     annotations: z.array(annotationShape),
     viewedPaths: z.array(z.string()),
     summary: z.string().nullable(),
+    tour: tourShape.nullable(),
   })
   .strict();
 const reviewSummaryShape = reviewShape
@@ -135,6 +279,35 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: z.string().min(1) }).strict(),
     output: z.object({ revisions: z.array(reviewSummaryShape) }),
   },
+  setReviewTour: {
+    input: z
+      .object({ reviewId: z.string().uuid(), ...tourInputShape.shape })
+      .strict(),
+    output: z.object({ tour: tourShape }),
+  },
+  revisionDelta: {
+    input: z.object({ reviewId: z.string().uuid() }).strict(),
+    output: z
+      .object({
+        currentReviewId: z.string(),
+        status: z.enum(["comparable", "unknown"]),
+        changedPaths: z.array(z.string()),
+        unchangedPaths: z.array(z.string()),
+        unknownPaths: z.array(z.string()),
+        revertedPaths: z.array(z.string()),
+        baselines: z.array(
+          z
+            .object({
+              path: z.string(),
+              reviewId: z.string(),
+              viewedAt: z.number(),
+            })
+            .strict(),
+        ),
+        reason: z.string().nullable(),
+      })
+      .strict(),
+  },
   refreshReview: {
     input: z
       .object({
@@ -153,6 +326,36 @@ export const rpcContract = defineRpcContract({
       })
       .strict(),
     output: z.object({ viewed: z.boolean(), viewedCount: z.number().int() }),
+  },
+  reviewImageAsset: {
+    input: z
+      .object({
+        reviewId: z.string().uuid(),
+        filePath: z.string().min(1),
+        side: z.enum(["old", "new"]),
+      })
+      .strict(),
+    output: z.object({
+      asset: z
+        .object({
+          contentBase64: z.string(),
+          mimeType: z.string(),
+          sizeBytes: z.number().int().nonnegative(),
+          width: z.number().int().positive(),
+          height: z.number().int().positive(),
+          sha256: z.string(),
+        })
+        .strict()
+        .nullable(),
+    }),
+  },
+  reviewFileDiff: {
+    input: z
+      .object({ reviewId: z.string().uuid(), filePath: z.string().min(1) })
+      .strict(),
+    output: z
+      .object({ patch: z.string(), deferredReason: z.string().nullable() })
+      .strict(),
   },
   reviewFileContents: {
     input: z
@@ -424,6 +627,11 @@ export default async function plugin(bb: BbPluginApi) {
     `DROP TABLE IF EXISTS review_entities`,
     `CREATE INDEX review_revisions_thread_created_at ON review_revisions (thread_id, created_at DESC)`,
     `CREATE INDEX review_annotations_review_id ON review_annotations (review_id)`,
+    `ALTER TABLE review_revisions ADD COLUMN base_identity TEXT`,
+    `ALTER TABLE review_files ADD COLUMN old_identity TEXT`,
+    `ALTER TABLE review_files ADD COLUMN new_identity TEXT`,
+    `CREATE TABLE review_assets (review_id TEXT NOT NULL, path TEXT NOT NULL, side TEXT NOT NULL, mime_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, sha256 TEXT NOT NULL, content_base64 TEXT NOT NULL, PRIMARY KEY (review_id, path, side), FOREIGN KEY (review_id) REFERENCES review_revisions (id) ON DELETE CASCADE)`,
+    `CREATE TABLE review_tours (review_id TEXT PRIMARY KEY, title TEXT NOT NULL, overview TEXT, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY (review_id) REFERENCES review_revisions (id) ON DELETE CASCADE)`,
   ]);
   db.pragma("foreign_keys = ON");
   registerReviewCleanup(bb, db);
@@ -474,38 +682,132 @@ export default async function plugin(bb: BbPluginApi) {
         .all(reviewId) as Array<{ path: string }>
     ).map((row) => row.path);
   }
+  function imageSides(reviewId: string, path: string) {
+    const rows = db
+      .prepare(
+        "SELECT a.side, f.previous_path, a.mime_type, a.size_bytes, a.width, a.height, a.sha256 FROM review_assets a JOIN review_files f ON f.review_id = a.review_id AND f.path = a.path WHERE a.review_id = ? AND a.path = ?",
+      )
+      .all(reviewId, path) as Array<{
+      side: string;
+      previous_path: string | null;
+      mime_type: string;
+      size_bytes: number;
+      width: number;
+      height: number;
+      sha256: string;
+    }>;
+    const sides: {
+      old: z.infer<typeof imageInfoShape> | null;
+      new: z.infer<typeof imageInfoShape> | null;
+    } = { old: null, new: null };
+    for (const row of rows) {
+      if (row.side !== "old" && row.side !== "new") continue;
+      sides[row.side] = {
+        path: row.side === "old" ? (row.previous_path ?? path) : path,
+        mimeType: row.mime_type,
+        sizeBytes: row.size_bytes,
+        width: row.width,
+        height: row.height,
+        sha256: row.sha256,
+      };
+    }
+    return sides;
+  }
+  function tourForReview(reviewId: string) {
+    const row = db
+      .prepare("SELECT payload FROM review_tours WHERE review_id = ?")
+      .get(reviewId) as { payload: string } | undefined;
+    if (!row) return null;
+    return tourShape.parse(JSON.parse(row.payload));
+  }
+  function buildTour(review: Review, input: z.infer<typeof tourInputShape>) {
+    const tourFiles = db
+      .prepare(
+        "SELECT path, patch, binary, truncated FROM review_files WHERE review_id = ? ORDER BY path",
+      )
+      .all(review.id) as Array<{
+      path: string;
+      patch: string;
+      binary: number;
+      truncated: number;
+    }>;
+    const validation = validateTour(
+      tourFiles.map((file) => ({
+        ...file,
+        binary: Boolean(file.binary),
+        truncated: Boolean(file.truncated),
+      })),
+      input.steps as TourStep[],
+    );
+    return tourShape.parse({
+      reviewId: review.id,
+      title: input.title,
+      overview: input.overview ?? null,
+      createdAt: Date.now(),
+      steps: input.steps.map((step, index) => ({
+        ...step,
+        anchors: validation.anchors[index] ?? [],
+      })),
+      coverage: validation.coverage,
+    });
+  }
+  function saveTour(review: Review, input: z.infer<typeof tourInputShape>) {
+    const tour = buildTour(review, input);
+    db.prepare(
+      "INSERT INTO review_tours (review_id, title, overview, payload, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(review_id) DO UPDATE SET title = excluded.title, overview = excluded.overview, payload = excluded.payload, updated_at = excluded.updated_at",
+    ).run(
+      review.id,
+      input.title,
+      input.overview ?? null,
+      JSON.stringify(tour),
+      tour.createdAt,
+    );
+    return tour;
+  }
   function read(reviewId: string): Review | null {
     const revision = db
       .prepare(
-        "SELECT id, thread_id, snapshot, created_at, target FROM review_revisions WHERE id = ?",
+        "SELECT id, thread_id, snapshot, created_at, target, base_identity FROM review_revisions WHERE id = ?",
       )
       .get(reviewId) as any;
     if (!revision) return null;
     const files = db
       .prepare(
-        "SELECT path, previous_path, status, additions, deletions, binary, patch, truncated FROM review_files WHERE review_id = ? ORDER BY path",
+        "SELECT path, previous_path, status, additions, deletions, binary, patch, truncated, old_identity, new_identity FROM review_files WHERE review_id = ? ORDER BY path",
       )
       .all(reviewId)
-      .map((row: any) => ({
-        path: row.path,
-        previousPath: row.previous_path ?? null,
-        status: row.status,
-        additions: row.additions,
-        deletions: row.deletions,
-        binary: Boolean(row.binary),
-        patch: row.patch,
-        truncated: Boolean(row.truncated),
-      }));
+      .map((row: any) => {
+        const deferredReason = isDeferredDiff(
+          row.path,
+          Buffer.byteLength(row.patch ?? ""),
+        );
+        return {
+          path: row.path,
+          previousPath: row.previous_path ?? null,
+          status: row.status,
+          additions: row.additions,
+          deletions: row.deletions,
+          binary: Boolean(row.binary),
+          patch: deferredReason ? "" : row.patch,
+          deferredReason,
+          truncated: Boolean(row.truncated),
+          oldIdentity: row.old_identity ?? null,
+          newIdentity: row.new_identity ?? null,
+          imageSides: imageSides(reviewId, row.path),
+        };
+      });
     return {
       id: revision.id,
       threadId: revision.thread_id,
       snapshot: revision.snapshot,
+      baseIdentity: revision.base_identity ?? null,
       createdAt: revision.created_at,
       target: decodeTarget(revision.target),
       files,
       annotations: annotations(reviewId),
       viewedPaths: viewedPaths(reviewId),
       summary: reviewSummary(reviewId),
+      tour: tourForReview(reviewId),
     };
   }
   function latest(threadId: string): Review | null {
@@ -700,11 +1002,23 @@ export default async function plugin(bb: BbPluginApi) {
               target: "branch_committed" as const,
               mergeBaseBranch: target.mergeBaseBranch,
             }
-          : { target: "uncommitted" as const }),
+          : target.type === "all"
+            ? {
+                target: "all" as const,
+                mergeBaseBranch: target.mergeBaseBranch,
+              }
+            : { target: "uncommitted" as const }),
     });
     if (listing.outcome !== "available")
       throw new Error(
         "message" in listing ? listing.message : listing.failure.message,
+      );
+    if (
+      (target.type === "branch_committed" || target.type === "all") &&
+      !listing.mergeBaseRef
+    )
+      throw new Error(
+        `BB did not resolve the merge base for ${describeTarget(target)}; immutable file sides cannot be captured safely.`,
       );
     const paths = listing.files
       .filter((file) => !file.binary)
@@ -717,7 +1031,7 @@ export default async function plugin(bb: BbPluginApi) {
             type: target.type,
             ...(target.type === "commit"
               ? { sha: target.sha }
-              : target.type === "branch_committed"
+              : target.type === "branch_committed" || target.type === "all"
                 ? { mergeBaseBranch: target.mergeBaseBranch }
                 : {}),
           } as PatchTarget,
@@ -732,28 +1046,73 @@ export default async function plugin(bb: BbPluginApi) {
     const patchByPath = new Map(
       patches.patches.map((patch) => [patch.path, patch]),
     );
+    const diffFileTarget =
+      target.type === "commit"
+        ? { target: "commit" as const, sha: target.sha }
+        : target.type === "branch_committed"
+          ? {
+              target: "branch_committed" as const,
+              mergeBaseRef: listing.mergeBaseRef as string,
+            }
+          : target.type === "all"
+            ? {
+                target: "all" as const,
+                mergeBaseRef: listing.mergeBaseRef as string,
+              }
+            : { target: "uncommitted" as const };
     const fileContents = await Promise.all(
       files.map(async (file) => {
+        const changeKind = normalizeChangeKind(file.changeKind);
+        if (file.binary) {
+          if (!isRasterImagePath(file.path))
+            return {
+              file,
+              old: null,
+              new: null,
+              oldImage: null,
+              newImage: null,
+            };
+          const readImage = async (side: "old" | "new", path: string) => {
+            try {
+              const result = await bb.sdk.environments.diffFile({
+                environmentId: thread.environmentId!,
+                path,
+                side,
+                ...diffFileTarget,
+              });
+              if (
+                result.path !== path ||
+                result.contentEncoding !== "base64" ||
+                result.sizeBytes > 2 * 1024 * 1024
+              )
+                return null;
+              return inspectRasterAsset(path, result.content, result.mimeType);
+            } catch {
+              return null;
+            }
+          };
+          const [oldImage, newImage] = await Promise.all([
+            changeKind === "added"
+              ? Promise.resolve(null)
+              : readImage("old", file.previousPath ?? file.path),
+            changeKind === "deleted"
+              ? Promise.resolve(null)
+              : readImage("new", file.path),
+          ]);
+          return { file, old: null, new: null, oldImage, newImage };
+        }
         if (
-          file.binary ||
           file.loadMode === "too_large" ||
           patchByPath.get(file.path)?.truncated
         )
-          return { file, old: null, new: null };
+          return { file, old: null, new: null, oldImage: null, newImage: null };
         const readSide = async (side: "old" | "new", path: string) => {
           try {
             const result = await bb.sdk.environments.diffFile({
               environmentId: thread.environmentId!,
               path,
               side,
-              ...(target.type === "commit"
-                ? { target: "commit" as const, sha: target.sha }
-                : target.type === "branch_committed"
-                  ? {
-                      target: "branch_committed" as const,
-                      mergeBaseRef: target.mergeBaseBranch,
-                    }
-                  : { target: "uncommitted" as const }),
+              ...diffFileTarget,
             });
             return {
               path: result.path,
@@ -766,7 +1125,6 @@ export default async function plugin(bb: BbPluginApi) {
             return null;
           }
         };
-        const changeKind = normalizeChangeKind(file.changeKind);
         const [old, newer] = await Promise.all([
           changeKind === "added"
             ? Promise.resolve(null)
@@ -775,19 +1133,69 @@ export default async function plugin(bb: BbPluginApi) {
             ? Promise.resolve(null)
             : readSide("new", file.path),
         ]);
-        return { file, old, new: newer };
+        return { file, old, new: newer, oldImage: null, newImage: null };
       }),
     );
+    const captureCheck = await bb.sdk.environments.diffFiles({
+      environmentId: thread.environmentId,
+      ...(target.type === "commit"
+        ? { target: "commit" as const, sha: target.sha }
+        : target.type === "branch_committed"
+          ? {
+              target: "branch_committed" as const,
+              mergeBaseBranch: target.mergeBaseBranch,
+            }
+          : target.type === "all"
+            ? {
+                target: "all" as const,
+                mergeBaseBranch: target.mergeBaseBranch,
+              }
+            : { target: "uncommitted" as const }),
+    });
+    if (
+      captureCheck.outcome !== "available" ||
+      captureCheck.mergeBaseRef !== listing.mergeBaseRef ||
+      JSON.stringify(
+        [...captureCheck.files].sort((a, b) => a.path.localeCompare(b.path)),
+      ) !==
+        JSON.stringify(
+          [...listing.files].sort((a, b) => a.path.localeCompare(b.path)),
+        )
+    )
+      throw new Error(
+        "The environment changed while Review Workspace was capturing this snapshot. Retry after the diff settles.",
+      );
+    const baseIdentity =
+      target.type === "all" || target.type === "branch_committed"
+        ? `merge-base:${listing.mergeBaseRef}`
+        : target.type === "commit"
+          ? `commit-parent:${target.sha}`
+          : null;
+    const fileIdentity = (
+      file: (typeof fileContents)[number],
+      side: "old" | "new",
+    ) => {
+      const image = side === "old" ? file.oldImage : file.newImage;
+      const content = side === "old" ? file.old?.content : file.new?.content;
+      return (
+        image?.sha256 ??
+        (content === undefined || content === null
+          ? null
+          : createHash("sha256").update(content).digest("hex"))
+      );
+    };
     const snapshot = createHash("sha256")
       .update(encodeTarget(target))
       .update(JSON.stringify(listing.files))
       .update(patches.patches.map((p) => p.patch).join("\n"))
       .update(
         JSON.stringify(
-          fileContents.map(({ file, old, new: newer }) => ({
-            path: file.path,
-            old,
-            new: newer,
+          fileContents.map((item) => ({
+            path: item.file.path,
+            oldIdentity: fileIdentity(item, "old"),
+            newIdentity: fileIdentity(item, "new"),
+            old: item.old,
+            new: item.new,
           })),
         ),
       )
@@ -797,10 +1205,13 @@ export default async function plugin(bb: BbPluginApi) {
     const id = randomUUID();
     const createdAt = Date.now();
     const insertRevision = db.prepare(
-      "INSERT INTO review_revisions (id, thread_id, snapshot, created_at, target) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO review_revisions (id, thread_id, snapshot, created_at, target, base_identity) VALUES (?, ?, ?, ?, ?, ?)",
     );
     const insertFile = db.prepare(
-      "INSERT INTO review_files (review_id, path, previous_path, status, additions, deletions, binary, patch, truncated, old_content, new_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO review_files (review_id, path, previous_path, status, additions, deletions, binary, patch, truncated, old_content, new_content, old_identity, new_identity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const insertAsset = db.prepare(
+      "INSERT INTO review_assets (review_id, path, side, mime_type, size_bytes, width, height, sha256, content_base64) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     db.transaction(() => {
       insertRevision.run(
@@ -809,8 +1220,10 @@ export default async function plugin(bb: BbPluginApi) {
         snapshot,
         createdAt,
         encodeTarget(target),
+        baseIdentity,
       );
-      for (const { file, old, new: newer } of fileContents) {
+      for (const item of fileContents) {
+        const { file, old, new: newer, oldImage, newImage } = item;
         const patch = patchByPath.get(file.path);
         insertFile.run(
           id,
@@ -824,7 +1237,26 @@ export default async function plugin(bb: BbPluginApi) {
           Number(patch?.truncated ?? false),
           old?.content ?? null,
           newer?.content ?? null,
+          fileIdentity(item, "old"),
+          fileIdentity(item, "new"),
         );
+        for (const [side, image] of [
+          ["old", oldImage],
+          ["new", newImage],
+        ] as const) {
+          if (!image) continue;
+          insertAsset.run(
+            id,
+            file.path,
+            side,
+            image.mimeType,
+            image.sizeBytes,
+            image.width,
+            image.height,
+            image.sha256,
+            image.contentBase64,
+          );
+        }
       }
       // Auto-carry open feedback into the new snapshot via the same shared
       // carry logic used for cross-revision imports: unresolved comment
@@ -966,6 +1398,84 @@ export default async function plugin(bb: BbPluginApi) {
           })),
       };
     },
+    setReviewTour(input) {
+      const review = read(input.reviewId);
+      if (!review) throw new Error("Review revision was not found.");
+      return { tour: saveTour(review, input) };
+    },
+    revisionDelta({ reviewId }) {
+      const currentReview = read(reviewId);
+      if (!currentReview) throw new Error("Review revision was not found.");
+      const loadEvidence = (id: string): DeltaSnapshot | null => {
+        const revision = db
+          .prepare(
+            "SELECT target, base_identity FROM review_revisions WHERE id = ?",
+          )
+          .get(id) as
+          { target: string; base_identity: string | null } | undefined;
+        if (!revision) return null;
+        const files = db
+          .prepare(
+            "SELECT path, previous_path, status, binary, truncated, old_content, new_content, old_identity, new_identity FROM review_files WHERE review_id = ?",
+          )
+          .all(id) as Array<any>;
+        return {
+          id,
+          target: decodeTarget(revision.target),
+          baseIdentity: revision.base_identity,
+          files: files.map((row) => ({
+            path: row.path,
+            previousPath: row.previous_path ?? null,
+            status: row.status,
+            binary: Boolean(row.binary),
+            truncated: Boolean(row.truncated),
+            oldContent: row.old_content ?? null,
+            newContent: row.new_content ?? null,
+            oldIdentity: row.old_identity ?? null,
+            newIdentity: row.new_identity ?? null,
+          })),
+        };
+      };
+      const current = loadEvidence(reviewId);
+      if (!current) throw new Error("Review revision was not found.");
+      const rows = db
+        .prepare(
+          `
+        SELECT v.path, v.review_id, v.viewed_at, r.created_at, r.base_identity, f.previous_path, f.status, f.binary, f.truncated, f.old_content, f.new_content, f.old_identity, f.new_identity
+        FROM review_viewed_files v
+        JOIN review_revisions r ON r.id = v.review_id
+        JOIN review_files f ON f.review_id = v.review_id AND f.path = v.path
+        WHERE r.thread_id = ? AND v.review_id = (
+          SELECT v2.review_id FROM review_viewed_files v2
+          JOIN review_revisions r2 ON r2.id = v2.review_id
+          WHERE r2.thread_id = r.thread_id AND v2.path = v.path
+          ORDER BY v2.viewed_at DESC, r2.created_at DESC, r2.rowid DESC LIMIT 1
+        )
+        ORDER BY v.viewed_at DESC, r.created_at DESC, r.rowid DESC LIMIT 1000
+      `,
+        )
+        .all(currentReview.threadId) as Array<any>;
+      const viewed: ViewedBaseline[] = rows.map((row) => ({
+        path: row.path,
+        reviewId: row.review_id,
+        viewedAt: row.viewed_at,
+        createdAt: row.created_at,
+        baseIdentity: row.base_identity,
+        file: {
+          path: row.path,
+          previousPath: row.previous_path ?? null,
+          status: row.status,
+          binary: Boolean(row.binary),
+          truncated: Boolean(row.truncated),
+          oldContent: row.old_content ?? null,
+          newContent: row.new_content ?? null,
+          oldIdentity: row.old_identity ?? null,
+          newIdentity: row.new_identity ?? null,
+        },
+      }));
+      const delta = compareSinceViewed(current, viewed);
+      return { currentReviewId: reviewId, ...delta };
+    },
     markFileViewed({ reviewId, filePath, viewed }) {
       const review = read(reviewId);
       if (!review) throw new Error("Review revision was not found.");
@@ -984,6 +1494,53 @@ export default async function plugin(bb: BbPluginApi) {
         viewed,
         viewedCount: viewedPaths(reviewId).length,
       };
+    },
+    reviewImageAsset({ reviewId, filePath, side }) {
+      const review = read(reviewId);
+      if (!review || !review.files.some((file) => file.path === filePath))
+        throw new Error("The file is not part of this review revision.");
+      const asset = db
+        .prepare(
+          "SELECT content_base64, mime_type, size_bytes, width, height, sha256 FROM review_assets WHERE review_id = ? AND path = ? AND side = ?",
+        )
+        .get(reviewId, filePath, side) as
+        | {
+            content_base64: string;
+            mime_type: string;
+            size_bytes: number;
+            width: number;
+            height: number;
+            sha256: string;
+          }
+        | undefined;
+      return {
+        asset: asset
+          ? {
+              contentBase64: asset.content_base64,
+              mimeType: asset.mime_type,
+              sizeBytes: asset.size_bytes,
+              width: asset.width,
+              height: asset.height,
+              sha256: asset.sha256,
+            }
+          : null,
+      };
+    },
+    reviewFileDiff({ reviewId, filePath }) {
+      const review = read(reviewId);
+      if (!review) throw new Error("Review revision was not found.");
+      const file = review.files.find(
+        (candidate) => candidate.path === filePath,
+      );
+      if (!file)
+        throw new Error("The file is not part of this review revision.");
+      const row = db
+        .prepare(
+          "SELECT patch FROM review_files WHERE review_id = ? AND path = ?",
+        )
+        .get(reviewId, filePath) as { patch: string } | undefined;
+      if (!row) throw new Error("The file diff was not found.");
+      return { patch: row.patch, deferredReason: file.deferredReason };
     },
     reviewFileContents({ reviewId, filePath }) {
       const review = read(reviewId);
@@ -1328,6 +1885,43 @@ export default async function plugin(bb: BbPluginApi) {
           },
         ],
       };
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "review_workspace_tour",
+    description:
+      "Author or replace the tour for one immutable Review Workspace revision. Provide ordered steps with any number of exact file/side/line anchors across files. Cards are agent-authored explanations, not verified graph or risk facts. The result keeps invalid anchors visible with reasons and reports uncovered raw changed lines; fix invalid anchors and gaps intentionally. Tours are not carried forward to new revisions.",
+    parameters: z
+      .object({
+        reviewId: z.string().uuid().optional(),
+        ...tourInputShape.shape,
+      })
+      .strict(),
+    async execute(input, { threadId }) {
+      const review = input.reviewId ? read(input.reviewId) : latest(threadId);
+      if (!review || review.threadId !== threadId)
+        throw new Error("No matching review revision exists in this thread.");
+      const tour = saveTour(review, input);
+      const invalid = tour.steps.flatMap((step) =>
+        step.anchors
+          .filter((anchor) => !anchor.valid)
+          .map((anchor) => ({ step: step.id, ...anchor })),
+      );
+      const text = JSON.stringify({
+        reviewId: tour.reviewId,
+        title: tour.title,
+        invalidAnchors: invalid,
+        coverage: {
+          totalChangedLines: tour.coverage.totalChangedLines,
+          coveredChangedLines: tour.coverage.coveredChangedLines,
+          uncoveredCount: tour.coverage.uncovered.length,
+          uncovered: tour.coverage.uncovered.slice(0, 200),
+          omittedAfterLimit: Math.max(0, tour.coverage.uncovered.length - 200),
+        },
+        note: "The tour is saved only on this immutable revision.",
+      });
+      return { content: [{ type: "text", text }] };
     },
   });
 

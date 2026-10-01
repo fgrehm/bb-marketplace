@@ -60,6 +60,7 @@ describe("Review Workspace server", () => {
       harness.registrations.agentTools.map((tool: any) => tool.name),
     ).toEqual([
       "review_workspace_refresh",
+      "review_workspace_tour",
       "review_workspace_status",
       "review_workspace_comment",
       "review_workspace_resolve",
@@ -248,6 +249,100 @@ describe("Review Workspace server", () => {
     ).toEqual([]);
   });
 
+  it("uses each file's latest explicit viewed revision for multi-revision deltas", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+    });
+    await plugin(bb);
+    const r1 = randomUUID();
+    const r2 = randomUUID();
+    const r3 = randomUUID();
+    const db = bb.storage.database();
+    const insertRevision = db.prepare(
+      "INSERT INTO review_revisions (id, thread_id, snapshot, created_at, target, base_identity) VALUES (?, 'thread-delta', ?, ?, 'all:main', 'base-1')",
+    );
+    const insertFile = db.prepare(
+      "INSERT INTO review_files (review_id, path, previous_path, status, additions, deletions, binary, patch, truncated, old_content, new_content, old_identity, new_identity) VALUES (?, ?, ?, 'M', 1, 1, 0, '', ?, ?, ?, ?, ?)",
+    );
+    insertRevision.run(r1, "s1", 1);
+    insertRevision.run(r2, "s2", 2);
+    insertRevision.run(r3, "s3", 3);
+    insertFile.run(r1, "src/a.ts", null, 0, "base", "a1", "base", "a1");
+    insertFile.run(
+      r1,
+      "src/revert.ts",
+      null,
+      0,
+      "base",
+      "changed",
+      "base-r",
+      "changed-r",
+    );
+    insertFile.run(r2, "src/a.ts", null, 0, "base", "a2", "base", "a2");
+    insertFile.run(r2, "src/b.ts", null, 0, "base", "b2", "base-b", "b2");
+    insertFile.run(
+      r2,
+      "src/revert.ts",
+      null,
+      0,
+      "base",
+      "changed",
+      "base-r",
+      "changed-r",
+    );
+    insertFile.run(r3, "src/a.ts", null, 0, "base", "a2", "base", "a2");
+    insertFile.run(r3, "src/b.ts", null, 0, "base", "b2", "base-b", "b2");
+    insertFile.run(r3, "src/new.ts", null, 0, "", "new", "absent", "new-file");
+    insertFile.run(r3, "src/unknown.ts", null, 1, null, null, null, null);
+    await harness.behavior.callRpc("markFileViewed", {
+      reviewId: r1,
+      filePath: "src/a.ts",
+      viewed: true,
+    });
+    await harness.behavior.callRpc("markFileViewed", {
+      reviewId: r1,
+      filePath: "src/revert.ts",
+      viewed: true,
+    });
+    await harness.behavior.callRpc("markFileViewed", {
+      reviewId: r2,
+      filePath: "src/a.ts",
+      viewed: true,
+    });
+    await harness.behavior.callRpc("markFileViewed", {
+      reviewId: r2,
+      filePath: "src/b.ts",
+      viewed: true,
+    });
+    db.prepare(
+      "UPDATE review_viewed_files SET viewed_at = 500 WHERE path = 'src/a.ts'",
+    ).run();
+
+    const delta = (await harness.behavior.callRpc("revisionDelta", {
+      reviewId: r3,
+    })) as {
+      status: string;
+      changedPaths: string[];
+      unchangedPaths: string[];
+      unknownPaths: string[];
+      revertedPaths: string[];
+      baselines: Array<{ path: string; reviewId: string; viewedAt: number }>;
+    };
+    expect(delta).toMatchObject({
+      status: "unknown",
+      changedPaths: ["src/new.ts", "src/revert.ts"],
+      unchangedPaths: ["src/a.ts", "src/b.ts"],
+      unknownPaths: ["src/unknown.ts"],
+      revertedPaths: ["src/revert.ts"],
+    });
+    expect(delta.baselines).toEqual(
+      expect.arrayContaining([
+        { path: "src/a.ts", reviewId: r2, viewedAt: 500 },
+        { path: "src/b.ts", reviewId: r2, viewedAt: expect.any(Number) },
+      ]),
+    );
+  });
+
   it("counts files, comments, unresolved comments, and viewed rows without join multiplication", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "review-workspace",
@@ -364,6 +459,149 @@ describe("Review Workspace server", () => {
     ).toEqual({ review_id: currentRevision });
   });
 
+  it("stores revision-scoped multi-anchor tours, validates raw coverage, and never carries them", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+    });
+    await plugin(bb);
+    const reviewId = randomUUID();
+    const newerId = randomUUID();
+    const db = seedReview(bb, {
+      id: reviewId,
+      threadId: "thread-tour",
+      createdAt: 1,
+    });
+    db.prepare(
+      "UPDATE review_files SET patch = ? WHERE review_id = ? AND path = ?",
+    ).run("@@ -1 +1 @@\n-old\n+new", reviewId, "src/example.ts");
+    db.prepare(
+      "INSERT INTO review_files (review_id, path, previous_path, status, additions, deletions, binary, patch, truncated) VALUES (?, 'src/other.ts', NULL, 'M', 1, 1, 0, ?, 0)",
+    ).run(reviewId, "@@ -1 +1 @@\n-before\n+after");
+
+    const authored = await harness.behavior.callAgentTool(
+      "review_workspace_tour",
+      {
+        title: "Trace the change",
+        overview: "Two related files.",
+        steps: [
+          {
+            id: "step-1",
+            title: "Update both call sites",
+            body: "Read both replacements.",
+            anchors: [
+              {
+                filePath: "src/example.ts",
+                side: "new",
+                startLine: 1,
+                endLine: 1,
+              },
+              {
+                filePath: "src/other.ts",
+                side: "new",
+                startLine: 1,
+                endLine: 1,
+              },
+              {
+                filePath: "src/missing.ts",
+                side: "new",
+                startLine: 1,
+                endLine: 1,
+              },
+            ],
+            card: {
+              kind: "before-after",
+              before: "old contract",
+              after: "new contract",
+              note: "Agent-authored explanation",
+            },
+          },
+        ],
+      },
+      { threadId: "thread-tour" },
+    );
+    const report = parseToolResult(authored);
+    expect(report.invalidAnchors).toHaveLength(1);
+    expect(report.coverage).toMatchObject({
+      totalChangedLines: 4,
+      coveredChangedLines: 2,
+      uncoveredCount: 2,
+    });
+    const loaded = (await harness.behavior.callRpc("review", {
+      threadId: "thread-tour",
+      reviewId,
+    })) as any;
+    expect(loaded.review.tour).toMatchObject({
+      reviewId,
+      title: "Trace the change",
+      steps: [
+        {
+          anchors: [
+            { filePath: "src/example.ts", valid: true },
+            { filePath: "src/other.ts", valid: true },
+            {
+              filePath: "src/missing.ts",
+              valid: false,
+              reason: "file-not-in-revision",
+            },
+          ],
+        },
+      ],
+    });
+
+    seedReview(bb, { id: newerId, threadId: "thread-tour", createdAt: 2 });
+    const latest = (await harness.behavior.callRpc("review", {
+      threadId: "thread-tour",
+      reviewId: newerId,
+    })) as any;
+    expect(latest.review.tour).toBeNull();
+    await harness.behavior.callRpc("clearPreviousReviews", {
+      threadId: "thread-tour",
+      keepReviewId: newerId,
+    });
+    expect(
+      db
+        .prepare("SELECT review_id FROM review_tours WHERE review_id = ?")
+        .get(reviewId),
+    ).toBeUndefined();
+  });
+
+  it("defers generated diffs in the initial review response and loads their immutable patch on demand", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+    });
+    await plugin(bb);
+    const reviewId = randomUUID();
+    const db = seedReview(bb, {
+      id: reviewId,
+      threadId: "thread-deferred",
+      createdAt: 1,
+    });
+    const generatedPatch = "@@ -1 +1 @@\n-old\n+new";
+    db.prepare(
+      "INSERT INTO review_files (review_id, path, previous_path, status, additions, deletions, binary, patch, truncated) VALUES (?, 'pnpm-lock.yaml', NULL, 'M', 1, 1, 0, ?, 0)",
+    ).run(reviewId, generatedPatch);
+
+    const initial = (await harness.behavior.callRpc("review", {
+      threadId: "thread-deferred",
+      reviewId,
+    })) as any;
+    const file = initial.review.files.find(
+      (item: any) => item.path === "pnpm-lock.yaml",
+    );
+    expect(file).toMatchObject({
+      patch: "",
+      deferredReason: "Generated dependency lockfile",
+    });
+    const loaded = await harness.behavior.callRpc("reviewFileDiff", {
+      reviewId,
+      filePath: "pnpm-lock.yaml",
+    });
+    expect(loaded).toEqual({
+      patch: generatedPatch,
+      deferredReason: "Generated dependency lockfile",
+    });
+  });
+
   it("creates immutable revisions, avoids duplicate snapshots, and stores expandable file contents", async () => {
     const listing = {
       outcome: "available" as const,
@@ -433,10 +671,15 @@ describe("Review Workspace server", () => {
       }),
     ).toMatchObject({ revisions: [{ id: first.review.id }] });
 
-    diffFiles.mockResolvedValueOnce({
-      ...listing,
-      files: [{ ...listing.files[0], additions: 2 }],
-    });
+    diffFiles
+      .mockResolvedValueOnce({
+        ...listing,
+        files: [{ ...listing.files[0], additions: 2 }],
+      })
+      .mockResolvedValueOnce({
+        ...listing,
+        files: [{ ...listing.files[0], additions: 2 }],
+      });
     diffFile.mockImplementation(async ({ side }: { side: "old" | "new" }) => ({
       path: "src/example.ts",
       content:
@@ -486,6 +729,104 @@ describe("Review Workspace server", () => {
     expect(diffFile).toHaveBeenCalledTimes(6);
   });
 
+  it("captures immutable bounded image-side assets and removes them with their revision", async () => {
+    const pngBytes = (shade: number) => {
+      const bytes = Buffer.alloc(25);
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes);
+      bytes.writeUInt32BE(13, 8);
+      Buffer.from("IHDR").copy(bytes, 12);
+      bytes.writeUInt32BE(12, 16);
+      bytes.writeUInt32BE(8, 20);
+      bytes[24] = shade;
+      return bytes;
+    };
+    const listing = {
+      outcome: "available" as const,
+      files: [
+        {
+          path: "image.png",
+          previousPath: null,
+          changeKind: "added" as const,
+          additions: 0,
+          deletions: 0,
+          binary: true,
+          loadMode: "auto" as const,
+          origin: "untracked" as const,
+        },
+      ],
+      initialPatches: [],
+      mergeBaseRef: null,
+      shortstat: "1 file changed",
+      truncated: false,
+    };
+    let current = pngBytes(1);
+    const diffFile = vi.fn(async () => ({
+      path: "image.png",
+      content: current.toString("base64"),
+      contentEncoding: "base64" as const,
+      mimeType: "image/png",
+      sizeBytes: current.byteLength,
+    }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+      sdk: {
+        threads: { get: async () => ({ environmentId: "env-image" }) },
+        environments: {
+          diffFiles: async () => listing,
+          diffPatch: async () => ({
+            outcome: "available" as const,
+            patches: [],
+          }),
+          diffFile,
+        },
+      },
+    });
+    await plugin(bb);
+    const capture = async () =>
+      (await harness.behavior.callRpc("refreshReview", {
+        threadId: "thread-image",
+      })) as {
+        review: {
+          id: string;
+          files: Array<{
+            imageSides: { new: { sha256: string; width: number } | null };
+          }>;
+        };
+      };
+    const first = await capture();
+    expect(first.review.files[0]?.imageSides.new).toMatchObject({
+      width: 12,
+      height: 8,
+    });
+    const original = current.toString("base64");
+    current = pngBytes(2);
+    const second = await capture();
+    expect(second.review.id).not.toBe(first.review.id);
+    expect(
+      await harness.behavior.callRpc("reviewImageAsset", {
+        reviewId: first.review.id,
+        filePath: "image.png",
+        side: "new",
+      }),
+    ).toMatchObject({ asset: { contentBase64: original } });
+
+    const db = bb.storage.database();
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS n FROM review_assets WHERE review_id = ?")
+        .get(first.review.id),
+    ).toEqual({ n: 1 });
+    await harness.behavior.callRpc("clearPreviousReviews", {
+      threadId: "thread-image",
+      keepReviewId: second.review.id,
+    });
+    expect(
+      db
+        .prepare("SELECT review_id FROM review_assets WHERE review_id = ?")
+        .get(first.review.id),
+    ).toBeUndefined();
+  });
+
   it("refreshes against committed targets and exposes review_workspace_refresh", async () => {
     const listing = {
       outcome: "available" as const,
@@ -502,7 +843,7 @@ describe("Review Workspace server", () => {
         },
       ],
       initialPatches: [],
-      mergeBaseRef: null,
+      mergeBaseRef: "abc1234",
       shortstat: "1 insertion, 1 deletion",
       truncated: false,
     };
@@ -560,13 +901,28 @@ describe("Review Workspace server", () => {
     expect(diffFile).toHaveBeenLastCalledWith(
       expect.objectContaining({
         target: "branch_committed",
-        mergeBaseRef: "main",
+        mergeBaseRef: "abc1234",
       }),
+    );
+
+    await call("review_workspace_refresh", {
+      target: { type: "all", mergeBaseBranch: "main" },
+    });
+    expect(diffFiles).toHaveBeenLastCalledWith(
+      expect.objectContaining({ target: "all", mergeBaseBranch: "main" }),
+    );
+    expect(diffPatch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: { type: "all", mergeBaseBranch: "main" },
+      }),
+    );
+    expect(diffFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({ target: "all", mergeBaseRef: "abc1234" }),
     );
 
     // The stored revision keeps its target and the agent can annotate it.
     const status = await call("review_workspace_status", {});
-    expect(JSON.stringify(status)).toContain("committed vs main");
+    expect(JSON.stringify(status)).toContain("everything vs main");
     await call("review_workspace_comment", {
       filePath: "src/example.ts",
       side: "new",
@@ -655,7 +1011,15 @@ describe("Review Workspace server", () => {
     });
     expect(
       diffFailure.harness.inspection.sdk.callsTo("environments.diffFile"),
-    ).toEqual([]);
+    ).toEqual([
+      [
+        expect.objectContaining({
+          path: "image.png",
+          side: "new",
+          target: "uncommitted",
+        }),
+      ],
+    ]);
 
     diffFiles.mockResolvedValueOnce({
       outcome: "unavailable" as const,

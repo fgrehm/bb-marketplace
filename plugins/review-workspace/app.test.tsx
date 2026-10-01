@@ -157,6 +157,163 @@ describe("Review Workspace app", () => {
     slot.lifecycle.unmount();
   });
 
+  it("shows immutable old/new image sides and keeps file-level comments available", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = {
+      ...reviewFixture(),
+      files: [
+        {
+          ...reviewFixture().files[0]!,
+          status: "modified",
+          binary: true,
+          patch: "",
+          oldIdentity: "old-hash",
+          newIdentity: "new-hash",
+          imageSides: {
+            old: {
+              path: "assets/old.png",
+              mimeType: "image/png",
+              sizeBytes: 12,
+              width: 2,
+              height: 2,
+              sha256: "old-hash",
+            },
+            new: {
+              path: "assets/new.png",
+              mimeType: "image/png",
+              sizeBytes: 14,
+              width: 3,
+              height: 3,
+              sha256: "new-hash",
+            },
+          },
+        },
+      ],
+    };
+    const assetCalls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          reviewImageAsset: async (input: any) => {
+            assetCalls.push(input);
+            return {
+              asset: {
+                contentBase64: "aGVsbG8=",
+                mimeType: "image/png",
+                sizeBytes: 12,
+                width: 2,
+                height: 2,
+                sha256: input.side === "old" ? "old-hash" : "new-hash",
+              },
+            };
+          },
+        } as any,
+      },
+    );
+    expect(
+      await slot.findByRole("img", { name: "Old snapshot of assets/old.png" }),
+    ).toBeTruthy();
+    expect(
+      await slot.findByRole("img", { name: "New snapshot of assets/new.png" }),
+    ).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Comment on file" })).toBeTruthy();
+    expect(assetCalls.map((call) => call.side).sort()).toEqual(["new", "old"]);
+    slot.lifecycle.unmount();
+  });
+
+  it("navigates a keyboard-only old-side multiline range and saves its exact anchor", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const review = reviewFixture();
+    const addCalls: any[] = [];
+    const viewedCalls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review }),
+          revisions: async () => ({ revisions: [] }),
+          revisionDelta: async () => ({
+            currentReviewId: review.id,
+            status: "comparable",
+            changedPaths: [],
+            unchangedPaths: [],
+            unknownPaths: [],
+            revertedPaths: [],
+            baselines: [],
+            reason: null,
+          }),
+          markFileViewed: async (input: any) => {
+            viewedCalls.push(input);
+            return { viewedCount: 1 };
+          },
+          addAnnotation: async (input: any) => {
+            addCalls.push(input);
+            return {
+              annotation: {
+                id: "comment-1",
+                filePath: input.filePath,
+                side: input.side,
+                startLine: input.startLine,
+                endLine: input.endLine,
+                body: input.body,
+                createdAt: 1,
+                sentAt: null,
+                resolvedAt: null,
+                author: "human",
+                parentId: null,
+                fileLevel: false,
+                carriedFromAnnotationId: null,
+                resolutionSuggestion: null,
+              },
+            };
+          },
+        } as any,
+      },
+    );
+    const diff = await slot.findByRole("region", { name: "File diff" });
+    diff.focus();
+    expect(document.activeElement).toBe(diff);
+    fireEvent.keyDown(diff, { key: "h" });
+    fireEvent.keyDown(diff, { key: "j" });
+    fireEvent.keyDown(diff, { key: "V" });
+    expect(slot.queryAllByLabelText("Comment", { exact: true })).toHaveLength(
+      0,
+    );
+    fireEvent.keyDown(diff, { key: "j" });
+    fireEvent.keyDown(diff, { key: "c" });
+    const boxes = await slot.findAllByLabelText("Comment", { exact: true });
+    const box =
+      boxes.find((candidate) => candidate === document.activeElement) ??
+      boxes[0]!;
+    fireEvent.change(box, { target: { value: "Check this deletion" } });
+    fireEvent.click(
+      slot.getAllByRole("button", { name: "Add comment" }).at(-1)!,
+    );
+    await vi.waitFor(() => expect(addCalls).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(slot.queryAllByLabelText("Comment", { exact: true })).toHaveLength(
+        0,
+      ),
+    );
+    await vi.waitFor(() => expect(document.activeElement).toBe(diff));
+    expect(addCalls[0]).toMatchObject({
+      filePath: "src/example.ts",
+      side: "old",
+      startLine: 2,
+      endLine: 3,
+      body: "Check this deletion",
+    });
+    expect(viewedCalls).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
   it.each(["file", "line"])(
     "focuses a new %s comment, guards keyboard submission, and preserves a failed draft",
     async (kind) => {
@@ -1308,8 +1465,33 @@ describe("Review Workspace app", () => {
       expect((fileSelect as HTMLSelectElement).value).toBe("");
       expect((fileSelect as HTMLSelectElement).disabled).toBe(true);
     });
-    expect(slot.getByText("No changed files.")).toBeTruthy();
+    expect(slot.getByText("No files match this scope or filter.")).toBeTruthy();
     expect(slot.queryByRole("dialog")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps mobile tour operations in a bounded scrollable disclosure", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        context: { projectId: "project-ui", threadId: "thread-ui" },
+        rpc: {
+          review: async () => ({ review: reviewFixture() }),
+          revisions: async () => ({ revisions: [] }),
+        } as any,
+      },
+    );
+
+    const summary = await slot.findByText("Tour · none authored");
+    const disclosure = summary.closest("details");
+    expect(disclosure?.className).toContain("max-h-[min(25dvh,22rem)]");
+    expect(disclosure?.className).toContain("overflow-y-auto");
+    expect(summary.className).toContain("sticky");
+    expect(
+      within(disclosure!).getByText("Operations and raw changes (1 files)"),
+    ).toBeTruthy();
     slot.lifecycle.unmount();
   });
 
@@ -1385,7 +1567,7 @@ describe("Review Workspace app", () => {
     const fileSelect = await slot.findByLabelText("Changed file", {
       exact: true,
     });
-    fireEvent.change(slot.getByLabelText("Changed file filter"), {
+    fireEvent.change(slot.getAllByLabelText("Changed file filter")[0]!, {
       target: { value: "with-open-comments" },
     });
     await vi.waitFor(() => {
@@ -1404,7 +1586,7 @@ describe("Review Workspace app", () => {
       expect((fileSelect as HTMLSelectElement).value).toBe("");
       expect((fileSelect as HTMLSelectElement).disabled).toBe(true);
     });
-    expect(slot.getByText("No changed files.")).toBeTruthy();
+    expect(slot.getByText("No files match this scope or filter.")).toBeTruthy();
 
     fireEvent.change(slot.getByLabelText("Search files on mobile"), {
       target: { value: "src" },
@@ -1661,7 +1843,7 @@ describe("comment locate flow", () => {
     Element.prototype.scrollIntoView = vi.fn();
     await slot.findByRole("status", { name: "Stale review revision" });
     expect(slot.queryByRole("dialog")).toBeNull();
-    fireEvent.change(slot.getByLabelText("Changed file filter"), {
+    fireEvent.change(slot.getAllByLabelText("Changed file filter")[0]!, {
       target: { value: "unviewed" },
     });
     fireEvent.change(slot.getByLabelText("Search files on mobile"), {
@@ -1692,7 +1874,8 @@ describe("comment locate flow", () => {
       (slot.getByLabelText("Search files on mobile") as HTMLInputElement).value,
     ).toBe("");
     expect(
-      (slot.getByLabelText("Changed file filter") as HTMLSelectElement).value,
+      (slot.getAllByLabelText("Changed file filter")[0] as HTMLSelectElement)
+        .value,
     ).toBe("all");
     expect(
       slot.getByRole("status", { name: "Stale review revision" }),
@@ -1773,9 +1956,7 @@ describe("review target picker (specific commit)", () => {
       },
     );
 
-    const select = await slot.findByRole("combobox", {
-      name: "Review target",
-    });
+    const select = slot.getAllByRole("combobox", { name: "Review target" })[0]!;
     fireEvent.change(select, { target: { value: "commit" } });
     const reviewButton = slot.getByRole("button", { name: "Review commit" });
     // no sha yet -> the button must not silently fall back to uncommitted
