@@ -681,28 +681,27 @@ function TourRail({
   tour,
   activeStepId,
   scopePaths,
-  files,
+  annotations,
   onStep,
   onAnchor,
-  onFile,
+  onLocate,
   mobile = false,
+  mobileOpen = false,
+  onMobileOpenChange,
 }: {
   tour: ReviewTour | null;
-  files: Array<
-    Pick<
-      File,
-      "path" | "additions" | "deletions" | "patch" | "deferredReason" | "binary"
-    >
-  >;
+  annotations: Annotation[];
   activeStepId: string | null;
   scopePaths: Set<string> | null;
   onStep: (step: ReviewTour["steps"][number]) => void;
   onAnchor: (stepId: string, anchor: ReviewTourAnchor) => void;
-  onFile: (path: string) => void;
+  onLocate: (annotation: Annotation) => void;
   mobile?: boolean;
+  mobileOpen?: boolean;
+  onMobileOpenChange?: (open: boolean) => void;
 }) {
   const content = (
-    <div className="space-y-3 p-3">
+    <div className={mobile ? "space-y-2 p-2" : "space-y-3 p-3"}>
       {tour ? (
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -716,61 +715,11 @@ function TourRail({
           ) : null}
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground">
-          No tour is authored for this immutable revision.
+        <p className="rounded-lg border bg-card p-2 text-xs text-muted-foreground">
+          No tour is authored for this immutable revision. Navigate changed
+          files from the file list and review their diffs directly.
         </p>
       )}
-      <details open className="rounded-lg border bg-card p-2">
-        <summary className="cursor-pointer text-xs font-semibold">
-          Operations and raw changes ({files.length} files)
-        </summary>
-        <ul className="mt-2 space-y-2">
-          {files.map((file) => {
-            const side = file.additions > 0 || !file.deletions ? "new" : "old";
-            const hunks = file.patch ? patchHunkStarts(file.patch, side) : [];
-            return (
-              <li key={file.path} className="rounded border p-2">
-                <button
-                  className="w-full text-left font-mono text-[11px] underline"
-                  onClick={() => onFile(file.path)}
-                >
-                  {file.path}
-                </button>
-                <p className="mt-1 text-[10px] text-muted-foreground">
-                  +{file.additions} / -{file.deletions}
-                  {file.binary ? " · binary" : ""}
-                  {file.deferredReason
-                    ? ` · deferred: ${file.deferredReason}`
-                    : ""}
-                </p>
-                {hunks.map((line, index) => (
-                  <button
-                    key={`${side}-${line}-${index}`}
-                    className="mt-1 block rounded px-1 py-0.5 text-[10px] hover:bg-muted"
-                    onClick={() =>
-                      onAnchor("", {
-                        filePath: file.path,
-                        side,
-                        startLine: line,
-                        endLine: line,
-                        valid: true,
-                        reason: null,
-                      })
-                    }
-                  >
-                    Hunk {index + 1} · {side}:{line}
-                  </button>
-                ))}
-                {!file.patch && !file.binary ? (
-                  <p className="mt-1 text-[10px] text-muted-foreground">
-                    Hunks load only when requested in the main pane.
-                  </p>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      </details>
       {tour ? (
         <>
           {tour.steps.map((step, index) => {
@@ -778,6 +727,25 @@ function TourRail({
             const anchors = step.anchors.filter(
               (anchor) => !scopePaths || scopePaths.has(anchor.filePath),
             );
+            const matchingAnchors = anchors.filter((anchor) => anchor.valid);
+            const threads = annotations
+              .filter((annotation) => !annotation.parentId)
+              .filter((annotation) =>
+                matchingAnchors.some(
+                  (anchor) =>
+                    anchor.filePath === annotation.filePath &&
+                    (annotation.fileLevel ||
+                      (anchor.side === annotation.side &&
+                        annotation.startLine <= anchor.endLine &&
+                        anchor.startLine <= annotation.endLine)),
+                ),
+              )
+              .map((root) => ({
+                root,
+                replies: annotations.filter(
+                  (annotation) => annotation.parentId === root.id,
+                ),
+              }));
             return (
               <section
                 key={step.id}
@@ -793,6 +761,66 @@ function TourRail({
                 <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
                   {step.body}
                 </p>
+                <div
+                  aria-label={`Comments on ${step.title}`}
+                  className="mt-2 space-y-1.5"
+                >
+                  <p className="text-[10px] font-semibold text-muted-foreground">
+                    {threads.length
+                      ? `Comments (${threads.length})`
+                      : "No comments on this step yet."}
+                  </p>
+                  {threads.map(({ root, replies }) => (
+                    <article
+                      key={root.id}
+                      className="rounded border bg-background p-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-mono text-[10px] text-muted-foreground [overflow-wrap:anywhere]">
+                            {annotationLabel(root)}
+                          </p>
+                          <AnnotationMeta annotation={root} />
+                        </div>
+                        <button
+                          type="button"
+                          className="shrink-0 text-[10px] text-muted-foreground underline"
+                          aria-label={`Show ${annotationLabel(root)} in diff`}
+                          onClick={() => {
+                            onStep(step);
+                            onLocate(root);
+                          }}
+                        >
+                          Show in diff
+                        </button>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap text-[11px] [overflow-wrap:anywhere]">
+                        {root.body}
+                      </p>
+                      {replies.length ? (
+                        <details className="mt-1 border-l pl-2">
+                          <summary className="cursor-pointer text-[10px] text-muted-foreground">
+                            {replies.length}{" "}
+                            {replies.length === 1 ? "reply" : "replies"}
+                          </summary>
+                          <div className="mt-1 space-y-1">
+                            {replies.map((reply) => (
+                              <div
+                                key={reply.id}
+                                className="rounded bg-muted/50 p-1.5"
+                              >
+                                <AnnotationMeta annotation={reply} />
+                                <p className="mt-1 whitespace-pre-wrap text-[11px] [overflow-wrap:anywhere]">
+                                  {reply.body}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
                 {step.card ? (
                   <details className="mt-2 rounded border p-2">
                     <summary className="cursor-pointer text-[11px] font-semibold">
@@ -805,7 +833,7 @@ function TourRail({
                 ) : null}
                 <details className="mt-2 rounded border p-2" open={selected}>
                   <summary className="cursor-pointer text-[11px] font-semibold">
-                    Hunks and exact anchors ({anchors.length})
+                    Anchors ({anchors.length})
                   </summary>
                   <ul className="mt-1 space-y-1">
                     {anchors.map((anchor, anchorIndex) => (
@@ -846,31 +874,11 @@ function TourRail({
               {tour.coverage.totalChangedLines} added/deleted lines have tour
               anchors.
             </p>
-            <ul className="mt-2 space-y-1">
-              {tour.coverage.uncovered
-                .filter((item) => !scopePaths || scopePaths.has(item.filePath))
-                .slice(0, 100)
-                .map((item, index) => (
-                  <li
-                    key={`${item.filePath}-${item.side}-${item.line}-${index}`}
-                  >
-                    <button
-                      className="font-mono text-[10px] text-amber-700 underline dark:text-amber-300"
-                      onClick={() =>
-                        onAnchor(activeStepId ?? "", {
-                          ...item,
-                          startLine: item.line,
-                          endLine: item.line,
-                          valid: true,
-                          reason: null,
-                        })
-                      }
-                    >
-                      {item.filePath} · {item.side}:{item.line}
-                    </button>
-                  </li>
-                ))}
-            </ul>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {tour.coverage.uncovered.length} raw changed lines remain
+              unanchored. Coverage is informational; inspect the full diff in
+              the center pane.
+            </p>
           </details>
           <p className="text-[10px] text-muted-foreground">
             The full immutable diff remains available in the center pane. Step
@@ -882,7 +890,11 @@ function TourRail({
     </div>
   );
   return mobile ? (
-    <details className="shrink-0 max-h-[min(25dvh,22rem)] overflow-y-auto overscroll-contain border-b bg-card lg:hidden">
+    <details
+      open={mobileOpen}
+      onToggle={(event) => onMobileOpenChange?.(event.currentTarget.open)}
+      className="shrink-0 max-h-[min(25dvh,22rem)] overflow-y-auto overscroll-contain border-b bg-card lg:hidden"
+    >
       <summary className="sticky top-0 z-10 cursor-pointer bg-card px-3 py-2 text-xs font-semibold">
         Tour · {tour?.title ?? "none authored"}
       </summary>
@@ -890,7 +902,7 @@ function TourRail({
     </details>
   ) : (
     <aside
-      aria-label="Review tour and operations"
+      aria-label="Review tour"
       className="hidden min-h-0 overflow-auto border-l bg-muted/30 lg:block"
     >
       {content}
@@ -1498,6 +1510,7 @@ function FileCommentsBar({
   editDrafts: Map<string, string>;
 }) {
   const roots = annotations.filter((annotation) => !annotation.parentId);
+  const compactEmpty = roots.length === 0 && !composerOpen;
   const repliesByRoot = new Map<string, Annotation[]>();
   for (const annotation of annotations) {
     if (!annotation.parentId) continue;
@@ -1506,9 +1519,17 @@ function FileCommentsBar({
     repliesByRoot.set(annotation.parentId, list);
   }
   return (
-    <div className="mb-3 rounded-lg border bg-card px-3 py-2 shadow-sm">
+    <div
+      className={
+        compactEmpty
+          ? "hidden lg:mb-3 lg:block lg:rounded-lg lg:border lg:bg-card lg:px-3 lg:py-2 lg:shadow-sm"
+          : "mb-3 rounded-lg border bg-card px-3 py-2 shadow-sm"
+      }
+    >
       <div className="flex items-center justify-between gap-2">
-        <p className="flex items-center gap-2 text-xs font-medium">
+        <p
+          className={`flex items-center gap-2 text-xs font-medium ${compactEmpty ? "sr-only lg:not-sr-only" : ""}`}
+        >
           <Icon
             name="MessageSquare"
             className="size-3.5 text-muted-foreground"
@@ -1897,6 +1918,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const feedbackOpenerRef = useRef<HTMLElement | null>(null);
+  const mobileMoreRef = useRef<HTMLDetailsElement | null>(null);
+  const [mobileTourOpen, setMobileTourOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"compose" | null>(null);
   const [fileQuery, setFileQuery] = useState("");
   const [fileFilterMode, setFileFilterMode] = useState<FileFilterMode>("all");
@@ -2254,7 +2277,11 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   );
   const activateTourAnchor = useCallback(
     (anchor: ReviewTourAnchor) => {
-      if (!anchor.valid || !review || review.tour?.reviewId !== review.id)
+      if (
+        !anchor.valid ||
+        !review ||
+        (review.tour && review.tour.reviewId !== review.id)
+      )
         return;
       setActiveTourAnchor(anchor);
       chooseFile(anchor.filePath);
@@ -2516,6 +2543,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       } else if (key === "?") {
         event.preventDefault();
         setKeyboardHelpOpen((open) => !open);
+        if (mobileMoreRef.current) mobileMoreRef.current.open = true;
       }
     },
     [
@@ -2971,6 +2999,86 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     }
   }
 
+  const keyboardShortcutContent = (
+    <>
+      <p>
+        Focus this diff surface, then use j/k for lines, h/l for old/new side, V
+        to start a range, c to comment, [/] for hunks, ,/. for files, m to mark
+        viewed, and ? for help. Navigation never sends feedback.
+      </p>
+      {keyboardHelpOpen ? (
+        <p className="mt-1">
+          Ranges stay on one file and one side. Escape clears a range. Use the
+          Exact range controls for direct multiline line numbers. Tab continues
+          through native controls and out of this surface.
+        </p>
+      ) : null}
+    </>
+  );
+  const renderExactRangeControl = (mobile: boolean) => (
+    <details className={mobile ? "rounded border p-2" : "relative"}>
+      <summary
+        className={`cursor-pointer rounded text-[11px] ${mobile ? "font-medium" : "border px-2 py-1"}`}
+      >
+        Exact range
+      </summary>
+      <div
+        className={
+          mobile
+            ? "mt-2 border-t pt-2"
+            : "absolute right-0 z-30 mt-1 w-64 rounded-md border bg-popover p-3 shadow-lg"
+        }
+      >
+        <label className="block text-xs">
+          Side
+          <select
+            aria-label="Exact range side"
+            value={rangeSide}
+            onChange={(event) =>
+              setRangeSide(event.target.value as "old" | "new")
+            }
+            className="mt-1 w-full rounded border bg-background p-1"
+          >
+            <option value="old">Old</option>
+            <option value="new">New</option>
+          </select>
+        </label>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <label className="text-xs">
+            Start line
+            <input
+              aria-label="Exact range start line"
+              type="number"
+              min="1"
+              value={rangeStartInput}
+              onChange={(event) => setRangeStartInput(event.target.value)}
+              className="mt-1 w-full rounded border bg-background p-1"
+            />
+          </label>
+          <label className="text-xs">
+            End line
+            <input
+              aria-label="Exact range end line"
+              type="number"
+              min="1"
+              value={rangeEndInput}
+              onChange={(event) => setRangeEndInput(event.target.value)}
+              className="mt-1 w-full rounded border bg-background p-1"
+            />
+          </label>
+        </div>
+        {rangeInputError ? (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            {rangeInputError}
+          </p>
+        ) : null}
+        <Button className="mt-2 w-full" size="sm" onClick={selectExactRange}>
+          Comment on exact range
+        </Button>
+      </div>
+    </details>
+  );
+
   const fileCommentsBar =
     file && review ? (
       <FileCommentsBar
@@ -3009,7 +3117,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     <main
       className={`flex min-h-0 flex-col overflow-hidden bg-background text-foreground ${fullscreen ? "fixed inset-0 z-50" : "h-full"}`}
     >
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-3 py-3 lg:gap-3 lg:px-4">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-2 py-2 sm:px-3 sm:py-3 lg:gap-3 lg:px-4">
         <Button
           size="sm"
           variant="ghost"
@@ -3088,14 +3196,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         >
           <Icon name={fullscreen ? "Minimize2" : "Maximize2"} />
         </Button>
-        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-1.5 max-sm:w-full">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1 p-1 rounded-lg border bg-muted/40 sm:gap-2 sm:p-1.5 max-sm:w-full">
           <select
             aria-label="Review target"
             value={targetKind}
             onChange={(event) =>
               setTargetKind(event.target.value as typeof targetKind)
             }
-            className="h-8 max-w-48 rounded-md border bg-background px-1 text-xs"
+            className="h-8 max-w-48 rounded-md border bg-background px-1 text-xs max-sm:w-44 sm:w-auto"
           >
             <option value="uncommitted">Uncommitted changes</option>
             <option value="commit">Specific commit</option>
@@ -3119,7 +3227,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     : ""
                 }
                 onChange={(event) => setTargetValue(event.target.value)}
-                className="h-8 min-w-0 max-w-64 flex-1 basis-44 rounded-md border bg-background px-1 text-xs"
+                className="h-8 min-w-0 max-w-64 flex-1 basis-44 rounded-md border bg-background px-1 text-xs max-sm:basis-24"
               >
                 <option value="">Pick a commit...</option>
                 {recentCommits.commits.map((commit) => (
@@ -3144,7 +3252,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               aria-label={
                 targetKind === "commit" ? "Commit sha" : "Base branch"
               }
-              className="h-8 w-44 rounded-md border bg-background px-2 font-mono text-xs"
+              className="h-8 w-44 rounded-md border bg-background px-2 font-mono text-xs max-sm:min-w-0 max-sm:w-auto max-sm:flex-1 max-sm:basis-24"
             />
           ) : null}
           <Button
@@ -3193,8 +3301,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       ) : (
         <>
           <Dialog.Root open={feedbackOpen} onOpenChange={setFeedbackOpen}>
-            <div className="shrink-0 space-y-2 border-b bg-muted/40 p-2 lg:hidden">
-              <div className="flex gap-2">
+            <div className="shrink-0 border-b bg-muted/40 p-1.5 lg:hidden">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <select
                   aria-label="Review revision"
                   value={review.id}
@@ -3230,25 +3338,25 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     </option>
                   ))}
                 </select>
+                <details className="relative shrink-0">
+                  <summary
+                    aria-label="File filters"
+                    className="flex h-9 cursor-pointer list-none items-center rounded-md border bg-background px-2 text-xs"
+                  >
+                    Filters
+                  </summary>
+                  <div className="absolute right-0 z-30 mt-1 w-[min(22rem,calc(100vw-1rem))] rounded-md border bg-popover p-2 shadow-lg">
+                    <FileFilterControls
+                      compact
+                      query={fileQuery}
+                      onQuery={setFileQuery}
+                      mode={fileFilterMode}
+                      onModeChange={setFileFilterMode}
+                    />
+                  </div>
+                </details>
               </div>
-              <FileFilterControls
-                compact
-                query={fileQuery}
-                onQuery={setFileQuery}
-                mode={fileFilterMode}
-                onModeChange={setFileFilterMode}
-              />
             </div>
-            <TourRail
-              tour={review.tour}
-              activeStepId={activeTourStepId}
-              scopePaths={tourScopePaths}
-              files={scopedFiles}
-              onStep={activateTourStep}
-              onAnchor={selectTourAnchor}
-              onFile={chooseFile}
-              mobile
-            />
             <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)_18rem]">
               <aside className="hidden min-h-0 overflow-auto border-r bg-muted/30 lg:block">
                 <div className="border-b p-3">
@@ -3368,8 +3476,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 onKeyDown={handleDiffKeyDown}
                 className="min-h-0 overflow-auto bg-muted/60 pb-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary lg:pb-3"
               >
-                <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b bg-card px-3 py-2 shadow-sm lg:px-4">
-                  <div className="flex min-w-0 flex-1 basis-40 items-center gap-1">
+                <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1 border-b bg-card px-2 py-1 shadow-sm sm:gap-2 sm:px-3 sm:py-2 lg:px-4">
+                  <div className="relative flex min-w-0 flex-1 basis-full items-center gap-1 lg:basis-40">
                     <Button
                       size="sm"
                       variant="ghost"
@@ -3406,79 +3514,174 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     >
                       {file?.path ?? "No changed files"}
                     </span>
+                    <Button
+                      className="lg:hidden max-sm:px-2 max-sm:text-[11px]"
+                      size="sm"
+                      variant={mobileTourOpen ? "secondary" : "outline"}
+                      aria-controls="mobile-tour-panel"
+                      aria-expanded={mobileTourOpen}
+                      aria-label={mobileTourOpen ? "Close tour" : "Open tour"}
+                      onClick={() => {
+                        setMobileTourOpen((open) => !open);
+                        if (mobileMoreRef.current)
+                          mobileMoreRef.current.open = false;
+                      }}
+                    >
+                      Tour
+                      <Icon
+                        name={mobileTourOpen ? "ChevronUp" : "ChevronDown"}
+                      />
+                    </Button>
+                    <details ref={mobileMoreRef} className="shrink-0 lg:hidden">
+                      <summary
+                        onClick={() => setMobileTourOpen(false)}
+                        aria-label="More diff controls"
+                        className="flex h-8 cursor-pointer list-none items-center rounded-md border px-2 text-[11px]"
+                      >
+                        More
+                      </summary>
+                      <div className="absolute right-0 z-30 mt-1 max-h-[min(60dvh,24rem)] w-[min(18rem,calc(100vw-1rem))] overflow-auto rounded-md border bg-popover p-2 text-popover-foreground shadow-lg">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mb-2 w-full justify-start"
+                          onClick={() => {
+                            setFileCommentBody("");
+                            setFileComposerOpen(true);
+                            if (mobileMoreRef.current)
+                              mobileMoreRef.current.open = false;
+                          }}
+                        >
+                          <Icon name="MessageSquare" />
+                          Comment on file
+                        </Button>
+                        <select
+                          aria-label="Review scope"
+                          value={reviewScope}
+                          onChange={(event) =>
+                            setReviewScope(
+                              event.target.value as "all" | "since-viewed",
+                            )
+                          }
+                          className="h-9 w-full rounded-md border bg-background px-2 text-xs"
+                        >
+                          <option value="all">All {review.files.length}</option>
+                          <option value="since-viewed">
+                            Since viewed{" "}
+                            {(revisionDelta?.changedPaths.length ?? 0) +
+                              (revisionDelta?.unknownPaths.length ?? 0)}
+                          </option>
+                        </select>
+                        <div className="mt-2">
+                          {renderExactRangeControl(true)}
+                        </div>
+                        <details className="rounded border px-2 py-1.5">
+                          <summary className="cursor-pointer text-xs font-medium">
+                            Baseline
+                          </summary>
+                          <div className="mt-2 max-h-48 overflow-auto text-[11px]">
+                            <p className="mb-2 text-muted-foreground">
+                              Each path uses its latest explicitly marked viewed
+                              revision. Opening a review does not advance this
+                              baseline.
+                            </p>
+                            {revisionDelta?.baselines.length ? (
+                              <ul className="space-y-1">
+                                {revisionDelta.baselines
+                                  .slice(0, 30)
+                                  .map((entry) => (
+                                    <li key={entry.path} className="font-mono">
+                                      {entry.path}
+                                      <span className="ml-1 text-muted-foreground">
+                                        · {entry.reviewId.slice(0, 8)}
+                                      </span>
+                                    </li>
+                                  ))}
+                              </ul>
+                            ) : (
+                              <p>
+                                No file has a saved viewed baseline yet; current
+                                changes remain in scope.
+                              </p>
+                            )}
+                            {revisionDelta?.revertedPaths.length ? (
+                              <p className="mt-2">
+                                {revisionDelta.revertedPaths.length} path(s)
+                                returned to the verified base; no current patch
+                                row exists.
+                              </p>
+                            ) : null}
+                            {revisionDelta?.unknownPaths.length ? (
+                              <p className="mt-2">
+                                {revisionDelta.unknownPaths.length} path(s) have
+                                unknown deltas.
+                              </p>
+                            ) : null}
+                            {revisionDelta?.reason ? (
+                              <p className="mt-2 text-amber-700 dark:text-amber-300">
+                                {revisionDelta.reason}
+                              </p>
+                            ) : null}
+                          </div>
+                        </details>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="mt-1 w-full justify-start"
+                          onClick={() => setWrapLines((current) => !current)}
+                          aria-pressed={wrapLines}
+                        >
+                          <Icon name="TextWrap" />
+                          {wrapLines
+                            ? "Disable line wrapping"
+                            : "Wrap diff lines"}
+                        </Button>
+                        <button
+                          type="button"
+                          aria-controls="mobile-keyboard-shortcuts"
+                          aria-expanded={keyboardHelpOpen}
+                          className="mt-1 flex min-h-9 w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+                          onClick={() => setKeyboardHelpOpen((open) => !open)}
+                        >
+                          {keyboardHelpOpen
+                            ? "Hide keyboard shortcuts"
+                            : "Keyboard shortcuts"}
+                          <span aria-hidden="true">
+                            {keyboardHelpOpen ? "−" : "+"}
+                          </span>
+                        </button>
+                        <div
+                          id="mobile-keyboard-shortcuts"
+                          hidden={!keyboardHelpOpen}
+                          className="px-2 pb-2 text-[11px] text-muted-foreground"
+                        >
+                          {keyboardShortcutContent}
+                        </div>
+                      </div>
+                    </details>
+                    <Button
+                      className="lg:hidden max-sm:px-2 max-sm:text-[11px]"
+                      size="sm"
+                      variant={isViewed ? "secondary" : "default"}
+                      onClick={() =>
+                        void (isViewed
+                          ? markViewed(false)
+                          : markViewedAndNext(true))
+                      }
+                      disabled={!file}
+                    >
+                      {isViewed ? "Viewed ✓" : "Viewed & next"}
+                    </Button>
                     <span className="hidden text-[11px] text-muted-foreground sm:inline">
                       {currentIndex} / {review.files.length}
                     </span>
                   </div>
-                  <div className="ml-auto flex shrink-0 items-center gap-2">
-                    <details className="relative">
-                      <summary className="cursor-pointer rounded border px-2 py-1 text-[11px]">
-                        Exact range
-                      </summary>
-                      <div className="absolute right-0 z-30 mt-1 w-64 rounded-md border bg-popover p-3 shadow-lg">
-                        <label className="block text-xs">
-                          Side
-                          <select
-                            aria-label="Exact range side"
-                            value={rangeSide}
-                            onChange={(event) =>
-                              setRangeSide(event.target.value as "old" | "new")
-                            }
-                            className="mt-1 w-full rounded border bg-background p-1"
-                          >
-                            <option value="old">Old</option>
-                            <option value="new">New</option>
-                          </select>
-                        </label>
-                        <div className="mt-2 grid grid-cols-2 gap-2">
-                          <label className="text-xs">
-                            Start line
-                            <input
-                              aria-label="Exact range start line"
-                              type="number"
-                              min="1"
-                              value={rangeStartInput}
-                              onChange={(event) =>
-                                setRangeStartInput(event.target.value)
-                              }
-                              className="mt-1 w-full rounded border bg-background p-1"
-                            />
-                          </label>
-                          <label className="text-xs">
-                            End line
-                            <input
-                              aria-label="Exact range end line"
-                              type="number"
-                              min="1"
-                              value={rangeEndInput}
-                              onChange={(event) =>
-                                setRangeEndInput(event.target.value)
-                              }
-                              className="mt-1 w-full rounded border bg-background p-1"
-                            />
-                          </label>
-                        </div>
-                        {rangeInputError ? (
-                          <p
-                            role="alert"
-                            className="mt-2 text-xs text-destructive"
-                          >
-                            {rangeInputError}
-                          </p>
-                        ) : null}
-                        <Button
-                          className="mt-2 w-full"
-                          size="sm"
-                          onClick={selectExactRange}
-                        >
-                          Comment on exact range
-                        </Button>
-                      </div>
-                    </details>
+                  <div className="hidden min-w-0 max-w-full flex-1 basis-full items-center gap-1 lg:ml-auto lg:flex lg:basis-auto lg:flex-nowrap lg:shrink-0">
+                    {renderExactRangeControl(false)}
                     <div
                       role="group"
                       aria-label="Review scope"
-                      className="flex items-center gap-1 rounded-md border p-0.5"
+                      className="hidden items-center gap-1 rounded-md border p-0.5 lg:flex"
                     >
                       <Button
                         size="sm"
@@ -3501,7 +3704,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                           (revisionDelta?.unknownPaths.length ?? 0)}
                       </Button>
                     </div>
-                    <details className="relative">
+                    <details className="relative hidden lg:block">
                       <summary className="cursor-pointer rounded px-1 text-[11px] text-muted-foreground">
                         Baseline
                       </summary>
@@ -3574,7 +3777,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     <Button
                       size="sm"
                       variant="ghost"
-                      className={`${COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS} text-muted-foreground`}
+                      className={`hidden lg:inline-flex ${COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS} text-muted-foreground`}
                       onClick={() => setWrapLines((current) => !current)}
                       aria-pressed={wrapLines}
                       aria-label={
@@ -3618,35 +3821,48 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     >
                       {isViewed ? "Viewed ✓" : "Mark viewed"}
                     </Button>
-                    <Button
-                      className="lg:hidden"
-                      size="sm"
-                      variant={isViewed ? "secondary" : "default"}
-                      onClick={() =>
-                        void (isViewed
-                          ? markViewed(false)
-                          : markViewedAndNext(true))
-                      }
-                      disabled={!file}
-                    >
-                      {isViewed ? "Viewed ✓" : "Viewed & next"}
-                    </Button>
                   </div>
                 </div>
-                <div className="p-2 lg:p-4">
-                  <div className="mb-3 rounded border bg-background px-3 py-2 text-[11px] text-muted-foreground">
-                    Focus this diff surface, then use j/k for lines, h/l for
-                    old/new side, V to start a range, c to comment, [/] for
-                    hunks, ,/. for files, m to mark viewed, and ? for help.
-                    Navigation never sends feedback.
-                    {keyboardHelpOpen ? (
-                      <p className="mt-1">
-                        Ranges stay on one file and one side. Escape clears a
-                        range. Use the Exact range controls for direct multiline
-                        line numbers. Tab continues through native controls and
-                        out of this surface.
-                      </p>
-                    ) : null}
+                <div
+                  id="mobile-tour-panel"
+                  hidden={!mobileTourOpen}
+                  className="lg:hidden"
+                >
+                  {mobileTourOpen ? (
+                    <TourRail
+                      tour={review.tour}
+                      annotations={review.annotations}
+                      activeStepId={activeTourStepId}
+                      scopePaths={tourScopePaths}
+                      onStep={(step) => {
+                        activateTourStep(step);
+                        if (
+                          step.anchors.some(
+                            (anchor) =>
+                              anchor.valid &&
+                              (!tourScopePaths ||
+                                tourScopePaths.has(anchor.filePath)),
+                          )
+                        )
+                          setMobileTourOpen(false);
+                      }}
+                      onAnchor={(stepId, anchor) => {
+                        selectTourAnchor(stepId, anchor);
+                        setMobileTourOpen(false);
+                      }}
+                      onLocate={(annotation) => {
+                        locateComment(annotation);
+                        setMobileTourOpen(false);
+                      }}
+                      mobile
+                      mobileOpen
+                      onMobileOpenChange={setMobileTourOpen}
+                    />
+                  ) : null}
+                </div>
+                <div className="p-1.5 sm:p-2 lg:p-4">
+                  <div className="mb-3 hidden rounded border bg-background px-3 py-2 text-[11px] text-muted-foreground lg:block">
+                    {keyboardShortcutContent}
                   </div>
                   {draftNotice ? (
                     <p
@@ -3819,12 +4035,12 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               </section>
               <TourRail
                 tour={review.tour}
+                annotations={review.annotations}
                 activeStepId={activeTourStepId}
                 scopePaths={tourScopePaths}
-                files={scopedFiles}
                 onStep={activateTourStep}
                 onAnchor={selectTourAnchor}
-                onFile={chooseFile}
+                onLocate={locateComment}
               />
             </div>
             <Dialog.Portal>

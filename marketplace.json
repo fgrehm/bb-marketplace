@@ -9,7 +9,7 @@
       "id": "review-workspace",
       "displayName": "Review Workspace",
       "description": "Diff-first asynchronous review workspaces inside BB threads.",
-      "overview": "Review Workspace opens an integrated review panel in a BB thread with a changed-file list, operation summaries, full diffs, and revision-scoped walkthroughs. Create immutable snapshots of uncommitted changes, a selected commit, committed changes against a base branch, or all changes against a base branch. Navigate with Vim-style keys or enter any exact visible old/new line range. Compare against each file's latest explicitly viewed revision, add file-level feedback or an overall review note, and send unsent unresolved comments only when requested. Unresolved comment threads and the review note carry forward when you refresh; tours and their exact anchors stay with their original revision.\n\nResume existing reviews from the sidebar's Recent reviews page, with the latest saved snapshot per thread, pending-comment counts, and viewed-file progress. Opening a review or reloading this list does not refresh the diff or send feedback.\n\n## Requirements and limits\n\nThe review uses Git changes available in the thread environment. Large and generated diffs load on demand. Safe raster previews use immutable captured image bytes; other binary files remain file-level only. Agent-authored tour cards are explanatory and are labeled as unverified where appropriate. Review feedback is sent to the agent in the thread only after explicit confirmation.\n\nReview data, including unsent feedback, is automatically and irreversibly purged after seven days continuously archived or when its BB thread is deleted. Existing archives are included. Cleanup runs on load and hourly while enabled, in bounded batches; active reviews and comments already imported into other threads are retained.",
+      "overview": "Review Workspace opens an integrated review panel in a BB thread with a changed-file list, full diffs, and revision-scoped tours with step navigation and related comments. Create immutable snapshots of uncommitted changes, a selected commit, committed changes against a base branch, or all changes against a base branch. Navigate with Vim-style keys or enter any exact visible old/new line range. Compare against each file's latest explicitly viewed revision, add file-level feedback or an overall review note, and send unsent unresolved comments only when requested. Unresolved comment threads and the review note carry forward when you refresh; tours and their exact anchors stay with their original revision.\n\nResume existing reviews from the sidebar's Recent reviews page, with the latest saved snapshot per thread, pending-comment counts, and viewed-file progress. Opening a review or reloading this list does not refresh the diff or send feedback.\n\n## Requirements and limits\n\nThe review uses Git changes available in the thread environment. Large and generated diffs load on demand. Safe raster previews use immutable captured image bytes; other binary files remain file-level only. Agent-authored tour cards are explanatory and are labeled as unverified where appropriate. Review feedback is sent to the agent in the thread only after explicit confirmation.\n\nReview data, including unsent feedback, is automatically and irreversibly purged after seven days continuously archived or when its BB thread is deleted. Existing archives are included. Cleanup runs on load and hourly while enabled, in bounded batches; active reviews and comments already imported into other threads are retained.",
       "icon": "GitPullRequest",
       "screenshots": [
         "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/review-diff.png",
@@ -17,7 +17,12 @@
         "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/review-feedback.png",
         "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/recent-reviews.png"
       ],
-      "tags": ["review", "diff", "async", "workspace"],
+      "tags": [
+        "review",
+        "diff",
+        "async",
+        "workspace"
+      ],
       "author": {
         "name": "Fabio Rehm",
         "github": "fgrehm",
@@ -46,7 +51,11 @@
         "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/runtime-settings.webp",
         "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/text-services.webp"
       ],
-      "tags": ["usage", "provider", "credentials"],
+      "tags": [
+        "usage",
+        "provider",
+        "credentials"
+      ],
       "author": {
         "name": "Fabio Rehm",
         "github": "fgrehm",
@@ -70,7 +79,11 @@
       "screenshots": [
         "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/favicon/docs/settings.webp"
       ],
-      "tags": ["favicon", "ui", "branding"],
+      "tags": [
+        "favicon",
+        "ui",
+        "branding"
+      ],
       "author": {
         "name": "Fabio Rehm",
         "github": "fgrehm",
