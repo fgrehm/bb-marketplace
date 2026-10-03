@@ -102,7 +102,7 @@ The **Thread titles** section of Pi settings lets you choose available `provider
 
 ## Design decisions
 
-Checked against pi 0.87.1 and bb 0.44.0 on 2026-09-26. Nothing here is settled: each entry says what would change the answer. It is written down so that reopening any of these questions starts from the evidence rather than re-deriving it, and so the next reader can tell a deliberate decision from an oversight.
+Rechecked against Pi 1.0.0 on 2026-10-02. BB's `provider-pi` requires a user-installed Pi 0.84.0 or newer and launches `pi` from the host's `PATH` (or `BB_PI_BRIDGE_COMMAND`); its 0.84.0 package pin is a development dependency, not the runtime version. Settings supported by the installed Pi can therefore affect BB threads unless BB overrides them. Nothing here is settled: each entry says what would change the answer. It is written down so that reopening any of these questions starts from the evidence rather than re-deriving it, and so the next reader can tell a deliberate decision from an oversight.
 
 Prefer Pi's own documentation as the durable reference (`packages/coding-agent/docs/settings.md` and `packages/coding-agent/docs/security.md` in the [earendil-works/pi](https://github.com/earendil-works/pi) repository). The line-level references below into the Pi binary and the BB sources are evidence, not an API, and they drift.
 
@@ -143,20 +143,32 @@ Readiness asks Pi for available models with a short timeout, and caches only pos
 | `compaction.enabled`, `reserveTokens`, `keepRecentTokens` | BB only compacts when asked, so Pi's own thresholds decide what happens once a thread gets long | BB grows a compaction policy of its own |
 | `httpIdleTimeoutMs` | A big prompt on a slow reasoning model can sit silent for minutes; this is the most likely cause of a long turn dying | It stops being the cause of any observed failure |
 | `shellPath`, `shellCommandPrefix` | Pi passes both straight into its `bash` tool definition at startup, and that tool runs every command in a BB thread | Pi stops building its tool definitions from settings |
-| `enableInstallTelemetry`, `enableAnalytics` | The only privacy-relevant switches in the settings file, and a reader should be able to confirm their state | None; two switches are cheap |
+| `enableInstallTelemetry`, `enableAnalytics` | Install telemetry affects update reports and provider attribution; the analytics preference is retained for Pi's experimental first-run setup, even though it has no ongoing analytics effect | Pi changes what either setting controls |
 
 ### Not exposed
 
 | Setting | Why not | Reconsider if |
 |---|---|---|
 | `steeringMode`, `followUpMode` | BB does its own queueing. A steer cancels the running turn via `session/cancel` and the bridge drains its queue one prompt at a time, so Pi's internal queue stays empty and the setting has nothing to decide. See `turn/steer` and the queue drain in `packages/provider-bridge-acp/src/bridge/bridge.ts` | BB switches to Pi's native steering instead of cancel-and-re-prompt |
-| `cacheWarming` | It only runs for a model that declares a `promptCache` lifetime. None of the 57 models in the catalog did at the time of writing, so it could not fire | A model gains a `promptCache` entry after a catalog refresh, visible by re-querying `get_available_models` |
+| `cacheWarming` | It only runs for a model that declares a `promptCache` lifetime. No built-in model in Pi 1.0.0's catalog declares one, so the setting still cannot fire with the built-in catalog | A built-in model gains a `promptCache` entry after a catalog refresh, visible by re-querying `get_available_models` |
 | `images.blockImages`, `images.autoResize` | Real, and `blockImages` is a genuine footgun: Pi replaces every image in a user message with the text "Image reading is disabled." before it reaches the model. Left out as settings the user does not attach images with. Note `autoResize` only reaches images the agent reads through Pi's own tools, not images attached to a prompt | Screenshots become a routine part of the workflow here |
 | `defaultProjectTrust` | The most consequential key in the file, and deliberately left to Pi. See below | The user asks for a way to manage per-directory trust |
 | `hideThinkingBlock` | BB renders Pi's reasoning behind its own `TimelineReasoning` component, so a Pi-side switch adds little | BB stops rendering reasoning blocks |
 | `thinkingBudgets` | Reaches BB and works, but is per-level token ceilings that Pi already tunes per model. Left out as not worth the surface | Reasoning cost needs tuning per level |
 | `retry.*` | Reaches BB. Left out because Pi's defaults are reasonable and it layers on top of whatever BB does with a failed turn, which was not verified and is a reason for caution | BB documents its own turn-level retry behavior, making the interaction predictable |
 | `compaction.modelOverrides`, `retry.provider.*` | Per-model objects and provider-level retries. `compaction.modelOverrides` is preserved untouched on every write, and Pi's reference warns against provider retries | A specific override becomes necessary |
+
+### Settings under evaluation
+
+Pi Extras edits the settings file used by the Pi executable on the host. BB launches the host's installed Pi (minimum 0.84.0), so newer settings may affect BB threads unless BB overrides them. These candidates are not exposed yet; see the [Pi 1.0.0 settings reference](https://github.com/earendil-works/pi/blob/v1.0.0/packages/coding-agent/docs/settings.md).
+
+| Setting | Why evaluate it | What to verify before adding it |
+|---|---|---|
+| `defaultTools`, `codemode.mode`, `codemode.inlineBudget` | Codemode is registered inactive; `defaultTools` can activate it, and its mode changes whether tools are directly exposed or reached through Codemode. The inline budget trades prompt size against how many tool declarations the model sees. | Test activation and both modes with BB's injected tools. BB reactivates those tools on session start, so confirm the resulting tool exposure and behavior before offering an advanced tools section. |
+| `retry.enabled`, `retry.maxRetries`, `retry.baseDelayMs`, `retry.maxAgentDelayMs` | They tune automatic retries when a provider fails. | Verify cancellation, steering, surfaced errors, and retry timing through BB's bridge before exposing controls. Keep provider-level retry settings separate. |
+| `websocketConnectTimeoutMs` | It controls WebSocket connection setup, distinct from the existing HTTP idle timeout. | Confirm which supported provider paths use it and whether connection timeouts have been a practical issue; otherwise Pi's default is sufficient. |
+
+`cacheWarming` remains out of scope for the built-in catalog because none of its Pi 1.0.0 models declares a `promptCache` lifetime. `quietStartup` and the TUI settings remain irrelevant to BB threads.
 
 ### Project trust, and why it stays in Pi
 
@@ -176,7 +188,7 @@ If that changes, the useful shape is not a select. It is a read-only list of whi
 
 - **The model list is read from Pi, not configured here.** The panel never writes `models.json` or the catalog, and never touches `auth.json` beyond the credential-free fields the Subscriptions tab reads.
 - **Extensions and packages are not managed here.** They are read and updated through Pi's own commands by the existing maintenance actions. Extension-provided providers only appear in the model list because those extensions are loaded, which is why the list is read with extensions enabled.
-- **TUI-only settings are out of scope by design**: theme, terminal, markdown rendering, fullscreen, editor, autocomplete, tree filters, `doubleEscapeAction`, `externalEditor`. They never affect a BB thread, and listing them would bury the settings that do.
+- **TUI-only settings are out of scope by design**: theme, terminal, markdown rendering, fullscreen (including the Pi 1.0.0 default change), `quietStartup`, editor, autocomplete, tree filters, `doubleEscapeAction`, and `externalEditor`. They do not affect BB threads, and listing them would bury the settings that do.
 
 </details>
 
