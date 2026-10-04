@@ -82,6 +82,31 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
+      - id: lazy-chat-typecheck
+        name: lazy-chat typecheck
+        entry: bash -c 'cd plugins/lazy-chat && pnpm run typecheck'
+        language: system
+        files: ^plugins/lazy-chat/
+        groups: [lazy-chat, typecheck]
+        pass_filenames: false
+
+      - id: lazy-chat-format
+        name: lazy-chat format
+        entry: bash -c 'cd plugins/lazy-chat && pnpm run lint'
+        language: system
+        files: ^plugins/lazy-chat/
+        groups: [lazy-chat, format]
+        pass_filenames: false
+
+      - id: lazy-chat-tests
+        name: lazy-chat tests
+        entry: bash -c 'cd plugins/lazy-chat && pnpm test'
+        language: system
+        files: ^plugins/lazy-chat/
+        groups: [lazy-chat, test]
+        stages: [pre-push]
+        pass_filenames: false
+
       - id: pi-extras-tests
         name: pi-extras tests
         entry: bash -c 'cd plugins/pi-extras && pnpm test && pnpm run test:components'

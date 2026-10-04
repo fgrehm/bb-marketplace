@@ -1,0 +1,46 @@
+{
+  "name": "bb-plugin-lazy-chat",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.44",
+    "bbPluginSdk": ">=0.5.29"
+  },
+  "bb": {
+    "name": "Lazy Chat",
+    "description": "A shared inline reply draft in BB threads.",
+    "branding": {
+      "icon": "MessageSquare"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "bb plugin build",
+    "format": "prettier --write \"*.ts\" \"*.tsx\" \"*.mjs\" \"*.md\" \"*.json\" \"tests/**/*.{ts,tsx,mjs}\"",
+    "lint": "prettier --check \"*.ts\" \"*.tsx\" \"*.mjs\" \"*.md\" \"*.json\" \"tests/**/*.{ts,tsx,mjs}\"",
+    "live-test": "node live-test.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.5.29",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.20.2",
+    "better-sqlite3": "^13.0.3",
+    "cron-parser": "^5.10.0",
+    "hono": "^4.13.7",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.9.6",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

@@ -65,6 +65,8 @@ jobs:
             command: pnpm run typecheck && pnpm run lint && pnpm test
           - plugin: rate-your-chat
             command: pnpm run typecheck && pnpm run lint && pnpm test
+          - plugin: lazy-chat
+            command: pnpm run typecheck && pnpm run lint && pnpm test
     defaults:
       run:
         working-directory: plugins/${{ matrix.plugin }}
