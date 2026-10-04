@@ -363,19 +363,26 @@ async function runLiveProof(state, prepared) {
           window.getSelection()?.removeAllRanges();
           window.getSelection()?.addRange(range);
         });
-      await page
-        .getByRole("button", { name: "Add to chat", exact: true })
-        .last()
-        .click();
+      const addSelectionToChat = page
+        .getByRole("dialog")
+        .getByRole("button", { name: "Add to chat", exact: true });
+      await addSelectionToChat.waitFor({ state: "visible" });
+      assert.equal(
+        await addSelectionToChat.count(),
+        1,
+        "selection menu must expose exactly one Add to chat action",
+      );
+      await addSelectionToChat.click();
       const native = page.locator('[contenteditable="true"][role="textbox"]');
-      const quoted = `> ${seed}`;
+      const quoted = `> ${seed}\n`;
       await waitForDraftSync(page, {
-        inlineIncludes: [quoted],
-        nativeIncludes: [quoted],
+        inlineExact: quoted,
+        nativeIncludes: [seed],
       });
-      assert.ok(
-        (await editor.inputValue()).includes(quoted),
-        "BB selection quote did not reach inline editor",
+      assert.equal(
+        await editor.inputValue(),
+        quoted,
+        "BB selection quote did not reach inline editor as the exact selected text",
       );
 
       await native.press("End");
