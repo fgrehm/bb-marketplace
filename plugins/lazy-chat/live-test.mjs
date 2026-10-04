@@ -8,6 +8,7 @@ import {
   assertExactlyOneNewRequest,
   assertNoUnexpectedRequests,
   assertUniqueActiveSuggestion,
+  attributedSeedPrompt,
   captureRequestIds,
   correlateAcceptedCompletion,
   newRequests,
@@ -16,7 +17,7 @@ import {
 const MODEL = "openai-codex/gpt-6-luna";
 const SEED_TEXT = process.env.LAZY_CHAT_SEED_TEXT ?? "ACK Phase 0 final gate.";
 const SEED_DIRECTIVE = "::lazy-reply{}";
-const SEED_PROMPT = `Reply exactly with these two lines and no other text:\n${SEED_TEXT}\n${SEED_DIRECTIVE}\nDo not call tools or do any implementation work.`;
+const SEED_BODY = `Reply exactly with these two lines and no other text:\n${SEED_TEXT}\n${SEED_DIRECTIVE}\nDo not call tools or do any implementation work.`;
 const INLINE_PROMPT =
   "Phase 0 inline send proof. Reply exactly ACK and use no tools.";
 const threadId = process.env.LAZY_CHAT_FIXTURE_THREAD ?? "thr_gfv38msr82";
@@ -165,14 +166,14 @@ async function waitForCompletion(
   );
 }
 
-function assertSeedResult(events, request, turnId) {
+function assertSeedResult(events, request, turnId, seedPrompt) {
   assert.equal(
     request.data.input.length,
     1,
     "seed request must contain only one text input",
   );
   assert.equal(request.data.input[0].type, "text");
-  assert.equal(request.data.input[0].text, SEED_PROMPT, "seed prompt changed");
+  assert.equal(request.data.input[0].text, seedPrompt, "seed prompt changed");
   assert.equal(request.data.execution.model, MODEL);
   assert.equal(request.data.execution.serviceTier, "default");
   assert.equal(request.data.execution.reasoningLevel, "low");
@@ -217,7 +218,7 @@ function assertSeedResult(events, request, turnId) {
   return rootMessages[0].data.item;
 }
 
-async function prepareFixture(thread, state) {
+async function prepareFixture(thread, state, seedPrompt) {
   assertIdle(thread, "before its one explicit seed");
   const originalEvents = readEvents();
   const originalRequestIds = captureRequestIds(originalEvents);
@@ -262,13 +263,13 @@ async function prepareFixture(thread, state) {
       "--permission-mode",
       permissionMode,
     ],
-    { input: SEED_PROMPT, encoding: "utf8", timeout: 30_000 },
+    { input: SEED_BODY, encoding: "utf8", timeout: 30_000 },
   );
   const { request } = await waitForNewRequest(originalRequestIds, "agent");
   state.seedRequestId = request.data.requestId;
   const completion = await waitForCompletion(request.data.requestId, "agent");
   const seedRequest = completion.request;
-  assert.equal(seedRequest.data.input[0].text, SEED_PROMPT);
+  assert.equal(seedRequest.data.input[0].text, seedPrompt);
   assert.equal(seedRequest.data.execution.model, MODEL);
   assert.equal(seedRequest.data.execution.serviceTier, "default");
   assert.equal(seedRequest.data.execution.reasoningLevel, "low");
@@ -277,6 +278,7 @@ async function prepareFixture(thread, state) {
     completion.events,
     seedRequest,
     completion.turnId,
+    seedPrompt,
   );
   const after = readThread();
   assertSameIdentity(thread, after);
@@ -631,6 +633,7 @@ async function main() {
       "Live acceptance sends nothing by default. Explicitly opt into exactly one seed and one inline send with: pnpm run live-test -- --prepare --send",
     );
   }
+  const seedPrompt = attributedSeedPrompt(process.env.BB_THREAD_ID, SEED_BODY);
   const state = {
     stage: "preflight",
     seedDispatchAttempted: false,
@@ -650,7 +653,7 @@ async function main() {
     const initialThread = readThread();
     assertIdle(initialThread, "before preparation");
     state.stage = "one-time-seed-preparation";
-    const prepared = await prepareFixture(initialThread, state);
+    const prepared = await prepareFixture(initialThread, state, seedPrompt);
     state.inlineBaselineIds = prepared.inlineBaselineIds;
     browserResult = await runLiveProof(state, prepared);
     await writeFile(

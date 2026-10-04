@@ -1,3 +1,16 @@
+export function attributedSeedPrompt(senderThreadId, body) {
+  if (
+    typeof senderThreadId !== "string" ||
+    !/^thr_[a-z0-9]+$/.test(senderThreadId)
+  )
+    throw new Error(
+      "BB_THREAD_ID is missing or invalid for attributed seed input",
+    );
+  if (typeof body !== "string" || body.length === 0)
+    throw new Error("Seed body must be a non-empty string");
+  return `[bb message from thread:${senderThreadId}]\n\n${body}`;
+}
+
 function isOutboundRequest(event) {
   return (
     event?.type === "client/turn/requested" &&

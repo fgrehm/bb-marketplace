@@ -3,6 +3,7 @@ import {
   assertExactlyOneNewRequest,
   assertNoUnexpectedRequests,
   assertUniqueActiveSuggestion,
+  attributedSeedPrompt,
   captureRequestIds,
   correlateAcceptedCompletion,
 } from "../live-guards.mjs";
@@ -50,6 +51,23 @@ const agentCompleted = {
 };
 
 describe("live acceptance guards", () => {
+  it("builds the exact BB-attributed seed prompt from the current agent thread", () => {
+    expect(
+      attributedSeedPrompt("thr_agent123", "Reply exactly with two lines."),
+    ).toBe(
+      "[bb message from thread:thr_agent123]\n\nReply exactly with two lines.",
+    );
+  });
+
+  it.each([undefined, "", "not-a-thread", "thr_invalid/extra"])(
+    "rejects absent or invalid BB_THREAD_ID %s",
+    (senderThreadId) => {
+      expect(() =>
+        attributedSeedPrompt(senderThreadId, "bounded seed body"),
+      ).toThrow(/BB_THREAD_ID is missing or invalid/);
+    },
+  );
+
   it("rejects an active mention highlight that is not the exact target title", () => {
     expect(() =>
       assertUniqueActiveSuggestion(
