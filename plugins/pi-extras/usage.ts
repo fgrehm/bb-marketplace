@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type UsageStatus = "ok" | "not_configured" | "expired" | "error";
+export type UsageStatus = "ok" | "not_configured" | "unavailable" | "expired" | "error";
 
 export interface UsageWindow {
   label: string;
@@ -29,6 +29,7 @@ type ReadFile = (path: string, encoding: BufferEncoding) => Promise<string>;
 
 interface Credentials {
   codex: { access: string; accountId: string } | null;
+  openaiOAuthConfigured: boolean;
   opencodeGo: string | null;
   ollamaCloud: string | null;
 }
@@ -82,6 +83,9 @@ function authFilePath(): string {
 
 export function parseCredentials(payload: unknown): Credentials {
   const root = asRecord(payload);
+  // The `openai` provider's SIWC token authorizes Responses API inference, not
+  // ChatGPT backend usage requests. Only the legacy Codex credential supports this endpoint.
+  const openaiEntry = asRecord(root?.openai);
   const codexEntry = asRecord(root?.["openai-codex"]);
   const codexAccess = stringValue(codexEntry?.access);
   const codexAccountId = stringValue(codexEntry?.accountId);
@@ -92,6 +96,7 @@ export function parseCredentials(payload: unknown): Credentials {
     codex: codexAccess !== null && codexAccountId !== null
       ? { access: codexAccess, accountId: codexAccountId }
       : null,
+    openaiOAuthConfigured: stringValue(openaiEntry?.access) !== null,
     opencodeGo: stringValue(openCodeEntry?.key),
     ollamaCloud: stringValue(ollamaEntry?.key),
   };
@@ -143,6 +148,10 @@ const SOURCES = [
 
 function unconfigured(id: UsageSource["id"], label: string): UsageSource {
   return { id, label, status: "not_configured", message: "No credential is configured.", windows: [] };
+}
+
+function unavailableSource(id: UsageSource["id"], label: string, message: string): UsageSource {
+  return { id, label, status: "unavailable", message, windows: [] };
 }
 
 function errorSource(id: UsageSource["id"], label: string, message: string): UsageSource {
@@ -200,11 +209,13 @@ export async function readPiUsage(deps: UsageReaderDependencies = {}): Promise<P
     if (!isMissingFile(error)) {
       return unavailablePiUsage("Unable to read credentials.");
     }
-    credentials = { codex: null, opencodeGo: null, ollamaCloud: null };
+    credentials = { codex: null, openaiOAuthConfigured: false, opencodeGo: null, ollamaCloud: null };
   }
 
   const codex = credentials.codex === null
-    ? Promise.resolve(unconfigured("codex", "Codex"))
+    ? Promise.resolve(credentials.openaiOAuthConfigured
+      ? unavailableSource("codex", "Codex", "Pi's openai sign-in can authorize Responses API requests, but OpenAI does not document an API for reading Codex usage. View usage in ChatGPT settings.")
+      : unconfigured("codex", "Codex"))
     : fetchSource("codex", "Codex", CODEX_USAGE_URL, credentials.codex.access, parseCodexUsage, fetcher, {
       "ChatGPT-Account-Id": credentials.codex.accountId,
       "User-Agent": "pi-extras-bb-plugin",

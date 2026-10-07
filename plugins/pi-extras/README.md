@@ -3,7 +3,7 @@
 A BB plugin for Pi usage, global Pi settings, and Pi-powered thread titles and commit messages.
 
 - **Sessions:** estimated token usage and cost from local Pi transcripts (`~/.pi/agent/sessions`, `~/.bb/pi-bridge-sessions`, and helper traces in `~/.bb/pi-extras-sessions`), broken down by backend, model, project, and day. Adapted from [iamEvanYT/bb-usage-page](https://github.com/iamEvanYT/bb-usage-page) (MIT), vendored under `usage-page/` and scoped to Pi.
-- **Subscriptions:** live usage for Pi-managed Codex, OpenCode Go, and Ollama Cloud credentials, with a short-lived cache.
+- **Subscriptions:** live usage for Pi-managed legacy Codex, OpenCode Go, and Ollama Cloud credentials, with a short-lived cache.
 - **Pi settings:** choose standalone Pi defaults and model scope, adjust runtime settings relevant to BB threads, refresh model catalogs, and update Pi extensions.
 - **AI services:** to activate Pi-powered thread titles or commit messages, select Pi for each task in BB Settings > AI services. These BB-level selections are separate from the per-task model choices in Pi Extras settings; BB's Automatic setting does not select third-party services.
 
@@ -19,6 +19,8 @@ The Pi Extras plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Set
 ### Subscriptions
 
 <img src="docs/subscriptions.webp" alt="Pi Usage subscriptions" width="640">
+
+> The Codex usage shown here requires Pi's legacy `openai-codex` credential. Pi's newer `openai` Sign in with ChatGPT credential supports eligible Responses API inference, but OpenAI does not document a way to read Codex usage totals with it. See [Subscription details](#subscriptions-tab).
 
 ### Pi settings
 
@@ -47,9 +49,9 @@ The Pi Extras plugin adds **Pi Usage** to BB's main sidebar and **Pi** to BB Set
 
 The host worker reads Pi's `auth.json` from `$PI_CODING_AGENT_DIR/auth.json`, or `~/.pi/agent/auth.json` when that variable is unset. It reads credentials only and never logs, displays, refreshes, or modifies them.
 
-Missing credentials are shown as "not configured", so the plugin remains usable when only some providers are set up. An unreadable or malformed auth file is reported as an error. Codex authentication failures are shown as expired and should be refreshed through Pi.
+Pi's `openai` sign-in uses Sign in with ChatGPT (SIWC) to authorize eligible Responses API inference. OpenAI's public SIWC docs do not provide an API for reading Codex usage totals or reset times, and the SIWC access token is not accepted by the ChatGPT backend usage endpoint. When this credential is present without a usable legacy Codex credential, the Codex card explains that usage is unavailable and links users to ChatGPT settings. The plugin does not send the SIWC token to the Codex usage endpoint.
 
-The Codex and Ollama usage endpoints are undocumented and may change.
+Codex usage polling therefore requires Pi's legacy `openai-codex` OAuth credential, including its account ID. If Pi no longer supports obtaining that credential, Codex's live usage card cannot be populated by this plugin until OpenAI or Pi provides a supported usage API. The Codex and Ollama usage endpoints are undocumented and may change. Missing credentials are shown as "not configured"; unreadable or malformed auth data is reported as an error. Codex authentication failures from its legacy endpoint are shown as expired.
 
 </details>
 

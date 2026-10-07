@@ -33,9 +33,18 @@ function UsageCard({ source }: { source: UsageSource }) {
           <ProviderMark provider={source.id} className="size-5 shrink-0" />
           {source.label}
         </h2>
-        <span className="text-xs text-muted-foreground">{source.status === "ok" ? "Connected" : source.status.replace("_", " ")}</span>
+        <span className="text-xs text-muted-foreground">{source.status === "ok" ? "Connected" : source.status === "unavailable" ? "Not available" : source.status.replace("_", " ")}</span>
       </div>
-      {source.status !== "ok" ? <p className="mt-3 text-sm text-muted-foreground">{source.message}</p> : (
+      {source.status !== "ok" ? (
+        <div className="mt-3 space-y-2">
+          <p className="text-sm text-muted-foreground">{source.message}</p>
+          {source.id === "codex" && source.status === "unavailable" ? (
+            <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer" className="inline-block text-sm font-medium text-primary underline underline-offset-4">
+              Open ChatGPT usage settings
+            </a>
+          ) : null}
+        </div>
+      ) : (
         <div className="mt-4 space-y-4">
           {source.windows.map((window) => (
             <div key={window.label}>

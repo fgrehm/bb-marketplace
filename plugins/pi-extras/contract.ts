@@ -61,7 +61,7 @@ const updateSchema = z.object({ target: z.enum(["models", "plugins", "pinned"]) 
 const usageSourceSchema = z.object({
   id: z.enum(["codex", "opencode-go", "ollama-cloud"]),
   label: z.string(),
-  status: z.enum(["ok", "not_configured", "expired", "error"]),
+  status: z.enum(["ok", "not_configured", "unavailable", "expired", "error"]),
   message: z.string().nullable(),
   windows: z.array(usageWindowSchema),
 }).strict();

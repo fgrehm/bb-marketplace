@@ -8,17 +8,35 @@ import {
   readPiUsage,
 } from "./usage.ts";
 
-test("parses Pi's three credential types without exposing unrelated entries", () => {
+test("parses legacy Codex credentials separately from Pi's OpenAI SIWC credential", () => {
   assert.deepEqual(parseCredentials({
     "openai-codex": { type: "oauth", access: "codex-token", accountId: "account-1" },
+    openai: { type: "oauth", access: "siwc-token" },
     "opencode-go": { type: "api_key", key: "go-token" },
     "ollama-cloud": { type: "api_key", key: "ollama-token" },
-    openai: { type: "api_key", key: "not-used" },
   }), {
     codex: { access: "codex-token", accountId: "account-1" },
+    openaiOAuthConfigured: true,
     opencodeGo: "go-token",
     ollamaCloud: "ollama-token",
   });
+});
+
+test("does not treat Pi's OpenAI SIWC credential as a Codex usage credential", () => {
+  assert.deepEqual(parseCredentials({
+    openai: { type: "oauth", access: "siwc-token" },
+  }), {
+    codex: null,
+    openaiOAuthConfigured: true,
+    opencodeGo: null,
+    ollamaCloud: null,
+  });
+});
+
+test("requires the account ID used by the legacy Codex usage endpoint", () => {
+  assert.equal(parseCredentials({
+    "openai-codex": { type: "oauth", access: "codex-token" },
+  }).codex, null);
 });
 
 test("parses Codex primary and secondary quota windows", () => {
@@ -82,6 +100,25 @@ test("shows a credential error when Pi auth data is malformed", async () => {
     { status: "error", message: "Unable to read credentials." },
     { status: "error", message: "Unable to read credentials." },
   ]);
+});
+
+test("explains that Pi's OpenAI SIWC sign-in cannot provide Codex usage", async () => {
+  let requested = false;
+  const usage = await readPiUsage({
+    readFile: async () => JSON.stringify({ openai: { type: "oauth", access: "siwc-token" } }),
+    fetch: async () => {
+      requested = true;
+      throw new Error("OpenAI SIWC tokens must not be sent to the Codex usage endpoint");
+    },
+  });
+  assert.equal(requested, false);
+  assert.deepEqual(usage.sources[0], {
+    id: "codex",
+    label: "Codex",
+    status: "unavailable",
+    message: "Pi's openai sign-in can authorize Responses API requests, but OpenAI does not document an API for reading Codex usage. View usage in ChatGPT settings.",
+    windows: [],
+  });
 });
 
 test("uses fake HTTP responses and marks only rejected credentials as expired", async () => {
