@@ -12,8 +12,10 @@ import {
   useRealtimeConnectionState,
   useRpc,
 } from "@get-bb/plugin-sdk/app";
-import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
-import { replaceComposerText } from "./composer-draft";
+import type {
+  ComposerDraftSnapshot,
+  PluginMessageDirectiveProps,
+} from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./rpc";
 
 type Ownership = { messageId: string; threadId: string; turnId: string | null };
@@ -37,6 +39,14 @@ function roundKey(identity: Ownership): string {
     identity.messageId,
   ]);
 }
+
+function isComposerDraftEmpty(draft: ComposerDraftSnapshot): boolean {
+  return (
+    draft.text.trim() === "" &&
+    draft.mentions.length === 0 &&
+    draft.attachments.length === 0
+  );
+}
 async function waitForRoundFlush(key: string): Promise<void> {
   for (;;) {
     const pending = pendingReplyFlushes.get(key);
@@ -59,7 +69,15 @@ function isThreadActivity(payload: unknown): payload is {
   );
 }
 
-function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
+function LazyReplyRound({
+  message,
+  source,
+  context,
+}: {
+  message: PluginMessageDirectiveProps["message"];
+  source: string;
+  context: string;
+}) {
   const composer = useComposer();
   const rpc = useRpc<typeof rpcContract>();
   const connection = useRealtimeConnectionState();
@@ -67,15 +85,15 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     composer.scope.kind === "thread" &&
     composer.scope.threadId === message.threadId;
   const [eligible, setEligible] = useState(false);
-  const [text, setText] = useState(scopeMatches ? composer.text : "");
+  const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [activityRevision, setActivityRevision] = useState(0);
   const [draftStatus, setDraftStatus] = useState<DraftStatus>("loading");
   const [draftLoaded, setDraftLoaded] = useState(false);
-  const [requiresAdoption, setRequiresAdoption] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [savedDraft, setSavedDraft] = useState<string | null>(null);
+  const [contributionBody, setContributionBody] = useState("");
   const savedDraftRef = useRef<string | null>(null);
   const [draftConflict, setDraftConflict] = useState<DraftConflict | null>(
     null,
@@ -94,13 +112,6 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
   scopeRef.current = composer.scope;
   const composerRef = useRef(composer);
   composerRef.current = composer;
-  const roundInitialNativeTextRef = useRef(composer.text);
-  const observedDraftRef = useRef(composer.text);
-  const draftRevisionRef = useRef(0);
-  if (observedDraftRef.current !== composer.text) {
-    observedDraftRef.current = composer.text;
-    draftRevisionRef.current += 1;
-  }
   const connectionRef = useRef(connection);
   connectionRef.current = connection;
   const mountedRef = useRef(false);
@@ -119,12 +130,10 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
   const draftDirtyRef = useRef(false);
   const saveInFlightRef = useRef(false);
   const saveBlockedRef = useRef(false);
-  const adoptionRequiredRef = useRef(false);
   const submittedRef = useRef(false);
+  const lazySubmitRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadGenerationRef = useRef(0);
-  const loadNativeTextRef = useRef(composer.text);
-  const loadDraftRevisionRef = useRef(draftRevisionRef.current);
   const loadReplyRevisionRef = useRef(replyRevisionRef.current);
   const reconciledRef = useRef(false);
   const conflictRef = useRef<DraftConflict | null>(null);
@@ -140,10 +149,6 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
   const setConflict = useCallback((value: DraftConflict | null) => {
     conflictRef.current = value;
     setDraftConflict(value);
-  }, []);
-  const setAdoptionRequired = useCallback((value: boolean) => {
-    adoptionRequiredRef.current = value;
-    setRequiresAdoption(value);
   }, []);
   const flushSaveRef = useRef<() => Promise<void>>(async () => {});
   const scheduleSaveRef = useRef<() => void>(() => {});
@@ -270,18 +275,16 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     }
     const generation = ++loadGenerationRef.current;
     const ownership = { ...ownershipRef.current, turnId: message.turnId };
-    loadNativeTextRef.current = composerRef.current.text;
-    loadDraftRevisionRef.current = draftRevisionRef.current;
     loadReplyRevisionRef.current = replyRevisionRef.current;
     reconciledRef.current = false;
     draftHashRef.current = null;
     savedDraftRef.current = null;
     setSavedDraft(null);
+    setContributionBody("");
     draftLoadedRef.current = false;
     setDraftLoaded(false);
     setDraftStatusValue("loading");
     setConflict(null);
-    setAdoptionRequired(false);
     void waitForRoundFlush(roundKey(ownership))
       .then(() => {
         if (
@@ -305,20 +308,12 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
         )
           return;
         if (result.status === "loaded") {
+          setContributionBody(result.contributionBody);
           draftHashRef.current = result.draftSha256;
           savedDraftRef.current = result.draftBody;
           setSavedDraft(result.draftBody);
           draftLoadedRef.current = true;
           setDraftLoaded(true);
-          if (
-            result.draftBody === null &&
-            roundInitialNativeTextRef.current !== ""
-          ) {
-            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-            saveTimerRef.current = null;
-            draftDirtyRef.current = false;
-            setAdoptionRequired(true);
-          }
           setDraftStatusValue(
             result.draftBody === null
               ? "unsaved"
@@ -351,13 +346,13 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     loadAttempt,
     scopeIsCurrent,
     scopeMatches,
-    setAdoptionRequired,
     setConflict,
     setDraftStatusValue,
   ]);
   useEffect(() => {
     if (!scopeMatches) return;
     const dispose = composer.onSubmitted(() => {
+      if (!lazySubmitRef.current) return;
       submittedRef.current = true;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
@@ -372,37 +367,10 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
         void flushSaveRef.current();
     };
   }, [composer.onSubmitted, scopeMatches, setDraftStatusValue]);
-  useEffect(() => {
-    if (!scopeMatches || !eligibleRef.current) return;
-    if (submittedRef.current) {
-      if (composer.text === "") return;
-      submittedRef.current = false;
-    }
-    if (latestTextRef.current === composer.text) return;
-    setDraftStatusValue("unsaved");
-    draftRevisionRef.current += 1;
-    replyRevisionRef.current += 1;
-    setReplyText(composer.text);
-    if (draftLoadedRef.current) {
-      draftDirtyRef.current = true;
-      if (eligibleRef.current && !saveBlockedRef.current) {
-        setDraftStatusValue("unsaved");
-        scheduleSaveRef.current();
-      }
-    }
-  }, [
-    composer.text,
-    eligible,
-    scopeMatches,
-    setDraftStatusValue,
-    setReplyText,
-  ]);
-
   const flushSave = useCallback(async () => {
     if (
       !draftDirtyRef.current ||
       !draftLoadedRef.current ||
-      adoptionRequiredRef.current ||
       submittedRef.current ||
       saveBlockedRef.current
     )
@@ -424,7 +392,6 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       while (
         draftDirtyRef.current &&
         draftLoadedRef.current &&
-        !adoptionRequiredRef.current &&
         !submittedRef.current &&
         !saveBlockedRef.current
       ) {
@@ -520,7 +487,6 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     reconciledRef.current = true;
     const body = savedDraftRef.current;
     if (body === null) {
-      if (roundInitialNativeTextRef.current !== "") return;
       if (latestTextRef.current !== "") {
         draftDirtyRef.current = true;
         setDraftStatusValue("unsaved");
@@ -533,10 +499,7 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       return;
     }
     const canRestore =
-      loadNativeTextRef.current === "" &&
-      composerRef.current.text === "" &&
       latestTextRef.current === "" &&
-      draftRevisionRef.current === loadDraftRevisionRef.current &&
       replyRevisionRef.current === loadReplyRevisionRef.current;
     if (!canRestore) {
       const conflict = { body, sha256: draftHashRef.current };
@@ -545,63 +508,24 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       setDraftStatusValue("conflict");
       return;
     }
-    const ownership = { ...ownershipRef.current };
-    const activity = activityRef.current;
-    const mutation = ++mutationRef.current;
-    const baseline = composerRef.current.text;
-    const nativeRevision = draftRevisionRef.current;
-    const replyRevision = replyRevisionRef.current;
-    void checkEligibility().then((isEligible) => {
-      if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
-        return;
-      let applied = false;
-      composerRef.current.replace((current) => {
-        if (
-          current.text !== baseline ||
-          draftRevisionRef.current !== nativeRevision ||
-          replyRevisionRef.current !== replyRevision ||
-          !scopeIsCurrent(ownership)
-        )
-          return current;
-        applied = true;
-        return replaceComposerText(current, body);
-      });
-      if (applied) {
-        replyRevisionRef.current += 1;
-        setReplyText(body);
-        setDraftStatusValue("saved");
-      } else {
-        saveBlockedRef.current = true;
-        setConflict({ body, sha256: draftHashRef.current });
-        setDraftStatusValue("conflict");
-      }
-    });
+    replyRevisionRef.current += 1;
+    setReplyText(body);
+    setDraftStatusValue("saved");
   }, [
-    checkEligibility,
     draftLoaded,
     eligible,
     message.turnId,
-    operationIsCurrent,
-    scopeIsCurrent,
     scopeMatches,
     setConflict,
     setDraftStatusValue,
     setReplyText,
   ]);
 
-  const setSharedText = useCallback(
+  const updateReply = useCallback(
     (next: string) => {
       if (!eligibleRef.current || sendingRef.current) return;
-      if (submittedRef.current) {
-        submittedRef.current = false;
-        setDraftStatusValue("unsaved");
-      }
-      const ownership = { ...ownershipRef.current };
-      const activity = activityRef.current;
-      const mutation = ++mutationRef.current;
-      const observedDraft = composerRef.current.text;
-      const draftRevision = draftRevisionRef.current;
-      if (!scopeIsCurrent(ownership)) return;
+      if (submittedRef.current) submittedRef.current = false;
+      if (!scopeIsCurrent(ownershipRef.current)) return;
       setReplyText(next);
       replyRevisionRef.current += 1;
       draftDirtyRef.current = true;
@@ -609,32 +533,8 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
         setDraftStatusValue("unsaved");
         scheduleSaveRef.current();
       }
-      void checkEligibility().then((isEligible) => {
-        if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
-          return;
-        if (
-          draftRevisionRef.current !== draftRevision ||
-          composerRef.current.text !== observedDraft
-        ) {
-          setReplyText(composerRef.current.text);
-          return;
-        }
-        composerRef.current.replace((current) => {
-          if (current.text !== observedDraft) {
-            setReplyText(current.text);
-            return current;
-          }
-          return replaceComposerText(current, next);
-        });
-      });
     },
-    [
-      checkEligibility,
-      operationIsCurrent,
-      scopeIsCurrent,
-      setDraftStatusValue,
-      setReplyText,
-    ],
+    [scopeIsCurrent, setDraftStatusValue, setReplyText],
   );
   const insertQuote = useCallback(() => {
     if (!eligibleRef.current || sendingRef.current || submittedRef.current)
@@ -646,12 +546,12 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     void checkEligibility().then((isEligible) => {
       if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
         return;
-      composerRef.current.insert("> Lazy Chat quote probe", {
-        block: true,
-        at: "end",
-      });
+      const quote = "> Lazy Chat quote probe";
+      updateReply(
+        latestTextRef.current ? `${latestTextRef.current}\n\n${quote}` : quote,
+      );
     });
-  }, [checkEligibility, operationIsCurrent, scopeIsCurrent]);
+  }, [checkEligibility, operationIsCurrent, scopeIsCurrent, updateReply]);
   const submit = async () => {
     if (!eligibleRef.current || sendingRef.current || submittedRef.current)
       return;
@@ -659,36 +559,93 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     const activity = activityRef.current;
     const mutation = ++mutationRef.current;
     if (!scopeIsCurrent(ownership)) return;
+    const reply = latestTextRef.current;
+    if (!reply.trim()) {
+      setError("Add a reply before sending.");
+      return;
+    }
+    if (!composerRef.current.isEmpty) {
+      setError(
+        "Clear the main composer before sending. Its draft and attachments were left untouched.",
+      );
+      return;
+    }
     sendingRef.current = true;
     setSending(true);
     setError(null);
+    let lockedComposer: typeof composer | null = null;
+    let staged = false;
     try {
       const isEligible = await checkEligibility();
       if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
         return;
-      await composerRef.current.submit({
-        experimental_data: null,
+
+      if (
+        draftDirtyRef.current ||
+        savedDraftRef.current !== reply ||
+        draftStatusRef.current !== "saved"
+      ) {
+        await flushSaveRef.current();
+        if (
+          latestTextRef.current !== reply ||
+          savedDraftRef.current !== reply ||
+          draftStatusRef.current !== "saved"
+        ) {
+          setError("Save the Lazy Chat reply before sending it.");
+          return;
+        }
+      }
+
+      if (!operationIsCurrent(ownership, activity, mutation)) return;
+      lockedComposer = composerRef.current;
+      if (!lockedComposer.isEmpty) {
+        setError(
+          "Clear the main composer before sending. Its draft and attachments were left untouched.",
+        );
+        return;
+      }
+      lockedComposer.setInputLock(true);
+      lockedComposer.replace((current) => {
+        if (!isComposerDraftEmpty(current)) return current;
+        staged = true;
+        return { text: reply, mentions: [] };
       });
+      if (!staged) {
+        setError(
+          "Clear the main composer before sending. Its draft and attachments were left untouched.",
+        );
+        return;
+      }
+      lazySubmitRef.current = true;
+      await lockedComposer.submit({ experimental_data: null });
     } catch (cause) {
+      if (staged && lockedComposer && !submittedRef.current) {
+        try {
+          lockedComposer.replace((current) =>
+            current.text === reply &&
+            current.mentions.length === 0 &&
+            current.attachments.length === 0
+              ? { text: "", mentions: [] }
+              : current,
+          );
+        } catch {
+          // Keep the durable inline reply if the composer scope disappeared.
+        }
+      }
       if (mountedRef.current && scopeIsCurrent(ownership))
         setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
+      lazySubmitRef.current = false;
+      if (lockedComposer) {
+        try {
+          lockedComposer.setInputLock(false);
+        } catch {
+          // The host may have already disposed this composer scope.
+        }
+      }
       sendingRef.current = false;
       if (mountedRef.current) setSending(false);
     }
-  };
-
-  const adoptCurrentDraft = () => {
-    if (
-      !eligibleRef.current ||
-      !draftLoadedRef.current ||
-      savedDraftRef.current !== null
-    )
-      return;
-    setAdoptionRequired(false);
-    draftDirtyRef.current = true;
-    setDraftStatusValue("unsaved");
-    scheduleSaveRef.current();
   };
   const keepLocalReply = () => {
     const conflict = conflictRef.current;
@@ -706,24 +663,11 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     const ownership = { ...ownershipRef.current };
     const activity = activityRef.current;
     const mutation = ++mutationRef.current;
-    const observedNative = composerRef.current.text;
-    const observedRevision = draftRevisionRef.current;
     const observedReplyRevision = replyRevisionRef.current;
     const isEligible = await checkEligibility();
     if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
       return;
-    let applied = false;
-    composerRef.current.replace((current) => {
-      if (
-        current.text !== observedNative ||
-        draftRevisionRef.current !== observedRevision ||
-        replyRevisionRef.current !== observedReplyRevision
-      )
-        return current;
-      applied = true;
-      return replaceComposerText(current, conflict.body!);
-    });
-    if (!applied) return;
+    if (replyRevisionRef.current !== observedReplyRevision) return;
     draftHashRef.current = conflict.sha256;
     savedDraftRef.current = conflict.body;
     setSavedDraft(conflict.body);
@@ -757,13 +701,17 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
   if (!eligible) {
     if (draftLoaded && savedDraft !== null)
       return (
-        <section aria-label="Saved reply (read only)">
+        <section
+          aria-label="Saved reply (read only)"
+          className="grid w-full max-w-[720px] gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
+        >
           <label>
             Saved reply (read only)
             <textarea
               aria-label="Saved reply (read only)"
               readOnly
               value={savedDraft}
+              className="mt-1.5 block w-full min-w-0 resize-y rounded-md border border-border bg-background p-2.5 text-foreground"
             />
           </label>
           <p role="status">Saved reply for this earlier contribution.</p>
@@ -774,11 +722,11 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
         <div>
           <p role="status">
             {draftStatus === "unavailable"
-              ? "Workspace storage is unavailable; this reply is not persisted."
+              ? "Thread storage is unavailable; this reply is not persisted."
               : "The saved reply could not be loaded."}
           </p>
           <button type="button" onClick={retryLoad}>
-            Retry workspace load
+            Retry thread-storage load
           </button>
         </div>
       );
@@ -790,15 +738,20 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       </p>
     );
   }
+  const fallbackContext = source
+    ? contributionBody.replaceAll(source, "").trim()
+    : contributionBody.trim();
+  const rawContext = context.trim() || fallbackContext;
+  const contextTruncated = rawContext.length > 4000;
+  const displayContext = rawContext.slice(0, 4000);
   const statusText = {
     loading: "Loading saved reply…",
     unsaved: "Reply changes are not yet saved.",
-    saving: "Saving reply to workspace Markdown…",
-    saved: "Saved to workspace Markdown.",
+    saving: "Saving reply to thread storage…",
+    saved: "Saved to thread storage.",
     error: "Reply save failed. Your text is preserved here.",
     conflict: "A different saved reply exists. Choose which version to keep.",
-    unavailable:
-      "Workspace storage is unavailable. This reply is not persisted.",
+    unavailable: "Thread storage is unavailable. This reply is not persisted.",
     invalid: "This contribution cannot own a reply draft.",
     paused:
       "Autosave paused after local submission. Provider delivery is not confirmed.",
@@ -808,68 +761,49 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       aria-label="Lazy Chat reply"
       data-thread-id={message.threadId}
       data-message-id={message.id}
-      style={{
-        display: "grid",
-        width: "min(100%, 720px)",
-        boxSizing: "border-box",
-        gap: 12,
-        maxWidth: 720,
-        padding: 16,
-        border: "1px solid #888",
-        borderRadius: 8,
-        background: "#fff",
-        color: "#222",
-      }}
+      className="grid w-full max-w-[720px] gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
     >
+      {displayContext ? (
+        <div
+          aria-label="Reply context"
+          className="rounded-md border border-border bg-muted p-3"
+        >
+          <p className="mb-1 text-xs font-medium text-muted-foreground">
+            Context
+          </p>
+          <p className="m-0 whitespace-pre-wrap break-words text-sm text-foreground">
+            {displayContext}
+          </p>
+          {contextTruncated ? (
+            <p className="mb-0 mt-2 text-xs text-muted-foreground">
+              Context was truncated to 4,000 characters.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <label>
         Reply draft
         <textarea
           aria-label="Reply draft"
           rows={6}
           disabled={sending}
-          style={{
-            display: "block",
-            boxSizing: "border-box",
-            width: "100%",
-            minWidth: 0,
-            minHeight: 140,
-            marginTop: 6,
-            padding: 10,
-            resize: "vertical",
-            font: "inherit",
-            color: "inherit",
-            background: "#fff",
-            border: "1px solid #777",
-            borderRadius: 4,
-          }}
+          className="mt-1.5 block min-h-[140px] w-full min-w-0 resize-y rounded-md border border-border bg-background p-2.5 font-[inherit] text-foreground"
           value={text}
-          onChange={(event) => setSharedText(event.target.value)}
+          onChange={(event) => updateReply(event.target.value)}
         />
       </label>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
           disabled={sending || submittedRef.current}
-          style={{
-            padding: "6px 10px",
-            border: "1px solid #666",
-            borderRadius: 4,
-            background: "#f5f5f5",
-            color: "#222",
-          }}
+          className="rounded-md border border-border bg-secondary px-2.5 py-1.5 text-secondary-foreground hover:bg-accent"
           onClick={insertQuote}
         >
           Insert quote
         </button>
         <button
           type="button"
-          style={{
-            padding: "7px 12px",
-            border: "1px solid #222",
-            borderRadius: 4,
-            background: "#222",
-            color: "#fff",
-          }}
+          className="rounded-md border border-primary bg-primary px-3 py-2 text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => void submit()}
           disabled={sending || submittedRef.current}
         >
@@ -877,17 +811,7 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
         </button>
       </div>
       <p role="status">{statusText}</p>
-      {requiresAdoption ? (
-        <div>
-          <p role="status">
-            The current composer text predates this reply. It will not be saved
-            for this round unless you adopt it.
-          </p>
-          <button type="button" onClick={adoptCurrentDraft}>
-            Use current draft for this reply
-          </button>
-        </div>
-      ) : null}
+
       {draftStatus === "conflict" && draftConflict ? (
         <div>
           <p role="alert">
@@ -907,18 +831,30 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       ) : null}
       {draftStatus === "error" || draftStatus === "unavailable" ? (
         <button type="button" onClick={draftLoaded ? retrySave : retryLoad}>
-          {draftLoaded ? "Retry save" : "Retry workspace load"}
+          {draftLoaded ? "Retry save" : "Retry thread-storage load"}
         </button>
       ) : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="m-0 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
     </section>
   );
 }
 
 export function LazyReply(props: PluginMessageDirectiveProps) {
   const { message } = props;
+  const context = props.attributes.context ?? "";
   const key = JSON.stringify([message.threadId, message.turnId, message.id]);
-  return <LazyReplyRound key={key} {...props} />;
+  return (
+    <LazyReplyRound
+      key={key}
+      message={message}
+      source={props.source}
+      context={context}
+    />
+  );
 }
 
 export default definePluginApp((app) => {

@@ -45,12 +45,16 @@ const eligible: ReplyRpcHandlers = {
     sha256: "a".repeat(64),
   }),
 };
-async function renderReply(options: ReplyRenderOptions) {
+async function renderReply(
+  options: ReplyRenderOptions,
+  attributes: Readonly<Record<string, string>> = {},
+  source = "",
+) {
   const app = await loadPluginApp(() => import("../app"));
   const handlers: ReplyRpcHandlers = { ...eligible, ...options.rpc };
   return renderSlot<PluginMessageDirectiveProps, typeof rpcContract>(
     app.messageDirectives[0]!,
-    props,
+    { ...props, attributes, source },
     { ...options, rpc: handlers },
   );
 }
@@ -184,6 +188,59 @@ function deferred<T>() {
 }
 
 describe("Lazy Chat reply directive", () => {
+  it("renders directive context inside a card with BB theme classes", async () => {
+    const slot = await renderReply(
+      {
+        rpc: eligible,
+        context: { threadId: message.threadId },
+        composer: {
+          text: "",
+          scope: { kind: "thread", threadId: message.threadId },
+        },
+      },
+      { context: "What should we prioritize next?" },
+    );
+
+    expect(
+      await screen.findByText("What should we prioritize next?"),
+    ).toBeTruthy();
+    const card = screen.getByRole("region", { name: "Lazy Chat reply" });
+    expect(card.className).toContain("bg-card");
+    expect(card.className).toContain("text-card-foreground");
+    expect(card.className).toContain("border-border");
+    slot.lifecycle.unmount();
+  });
+
+  it("falls back to the assistant message context and omits the directive", async () => {
+    const slot = await renderReply(
+      {
+        rpc: {
+          ...eligible,
+          lazy_reply_load: async () => ({
+            status: "loaded" as const,
+            contributionBody:
+              "Could you outline the next steps?\n\n::lazy-reply{}",
+            draftBody: null,
+            draftSha256: null,
+          }),
+        },
+        context: { threadId: message.threadId },
+        composer: {
+          text: "",
+          scope: { kind: "thread", threadId: message.threadId },
+        },
+      },
+      {},
+      "::lazy-reply{}",
+    );
+
+    expect(
+      await screen.findByText("Could you outline the next steps?"),
+    ).toBeTruthy();
+    expect(screen.queryByText("::lazy-reply{}")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
   it("autosaves and restores the same reply round after unmount and reopen", async () => {
     const rpc = createStoreBackedRpc();
     const first = await renderReply({
@@ -217,11 +274,52 @@ describe("Lazy Chat reply directive", () => {
         "unfinished reply",
       ),
     );
-    expect(reopened.inspection.composer.text).toBe("unfinished reply");
+    expect(reopened.inspection.composer.text).toBe("");
     expect([...rpc.entries.keys()]).toContain(
       "/workspace/project/.lazyai/bb/thr_thread1/turn-1/draft.md",
     );
     reopened.lifecycle.unmount();
+  });
+
+  it("keeps inline edits in Lazy Chat without syncing the main composer", async () => {
+    const slot = await renderReply({
+      rpc: eligible,
+      context: { threadId: message.threadId },
+      composer: {
+        text: "",
+        scope: { kind: "thread", threadId: message.threadId },
+      },
+    });
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    fireEvent.change(editor, { target: { value: "private lazy reply" } });
+    await screen.findByText("Saved to thread storage.");
+
+    expect(slot.inspection.composer.text).toBe("");
+    expect((editor as HTMLTextAreaElement).value).toBe("private lazy reply");
+    slot.lifecycle.unmount();
+  });
+
+  it("blocks sending without changing a populated main composer", async () => {
+    const slot = await renderReply({
+      rpc: eligible,
+      context: { threadId: message.threadId },
+      composer: {
+        text: "native draft that must survive",
+        scope: { kind: "thread", threadId: message.threadId },
+      },
+    });
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    fireEvent.change(editor, { target: { value: "lazy reply" } });
+    await screen.findByText("Saved to thread storage.");
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
+
+    expect(screen.getByRole("alert").textContent).toMatch(/main composer/i);
+    expect(slot.inspection.composer.text).toBe(
+      "native draft that must survive",
+    );
+    expect(slot.inspection.composer.submits).toEqual([]);
+    expect((editor as HTMLTextAreaElement).value).toBe("lazy reply");
+    slot.lifecycle.unmount();
   });
 
   it("autosaves a new inline edit made while an empty round is loading", async () => {
@@ -260,7 +358,7 @@ describe("Lazy Chat reply directive", () => {
       });
       await Promise.resolve();
     });
-    await screen.findByText("Saved to workspace Markdown.");
+    await screen.findByText("Saved to thread storage.");
     expect(
       screen.queryByRole("button", {
         name: "Use current draft for this reply",
@@ -376,7 +474,7 @@ describe("Lazy Chat reply directive", () => {
       saves[1]!.resolve({ status: "saved", sha256: "b".repeat(64) });
       await Promise.resolve();
     });
-    await screen.findByText("Saved to workspace Markdown.");
+    await screen.findByText("Saved to thread storage.");
     expect((editor as HTMLTextAreaElement).value).toBe("latest revision");
     slot.lifecycle.unmount();
   });
@@ -403,7 +501,7 @@ describe("Lazy Chat reply directive", () => {
     await screen.findByText("Reply save failed. Your text is preserved here.");
     expect((editor as HTMLTextAreaElement).value).toBe("keep this text");
     fireEvent.click(screen.getByRole("button", { name: "Retry save" }));
-    await screen.findByText("Saved to workspace Markdown.");
+    await screen.findByText("Saved to thread storage.");
     expect(attempts).toBe(2);
     slot.lifecycle.unmount();
   });
@@ -442,12 +540,12 @@ describe("Lazy Chat reply directive", () => {
     expect((editor as HTMLTextAreaElement).value).toBe("local version");
     expect(screen.getByRole("alert").textContent).toContain("disk version");
     fireEvent.click(screen.getByRole("button", { name: "Keep local reply" }));
-    await screen.findByText("Saved to workspace Markdown.");
+    await screen.findByText("Saved to thread storage.");
     expect((editor as HTMLTextAreaElement).value).toBe("local version");
     slot.lifecycle.unmount();
   });
 
-  it("does not let a delayed saved load overwrite newer native typing", async () => {
+  it("restores a saved local reply without changing newer native typing", async () => {
     const pending = deferred<{
       status: "loaded";
       contributionBody: string;
@@ -476,16 +574,10 @@ describe("Lazy Chat reply directive", () => {
       });
       await Promise.resolve();
     });
-    await screen.findByText(
-      "A different saved reply exists. Choose which version to keep.",
-    );
-    expect((editor as HTMLTextAreaElement).value).toBe("newer native typing");
-    expect(slot.inspection.composer.text).toBe("newer native typing");
-    fireEvent.click(screen.getByRole("button", { name: "Use saved reply" }));
     await waitFor(() =>
-      expect(slot.inspection.composer.text).toBe("older saved reply"),
+      expect((editor as HTMLTextAreaElement).value).toBe("older saved reply"),
     );
-    expect((editor as HTMLTextAreaElement).value).toBe("older saved reply");
+    expect(slot.inspection.composer.text).toBe("newer native typing");
     slot.lifecycle.unmount();
   });
 
@@ -549,12 +641,12 @@ describe("Lazy Chat reply directive", () => {
       },
       context: { threadId: message.threadId },
       composer: {
-        text: "reply before send",
+        text: "",
         scope: { kind: "thread", threadId: message.threadId },
       },
     });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
-    await screen.findByText("Saved to workspace Markdown.");
+    await screen.findByText("Saved to thread storage.");
     fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
     await screen.findByText(/autosave paused after local submission/i);
     expect(slot.inspection.composer.text).toBe("");
@@ -575,20 +667,16 @@ describe("Lazy Chat reply directive", () => {
       },
       context: { threadId: message.threadId },
       composer: {
-        text: "draft to clear",
+        text: "",
         scope: { kind: "thread", threadId: message.threadId },
       },
     });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Use current draft for this reply",
-      }),
-    );
+    fireEvent.change(editor, { target: { value: "draft to clear" } });
     await waitFor(() => expect(savedBody).toBe("draft to clear"));
     fireEvent.change(editor, { target: { value: "" } });
     await waitFor(() => expect(savedBody).toBe(""));
-    await screen.findByText("Saved to workspace Markdown.");
+    await screen.findByText("Saved to thread storage.");
     slot.lifecycle.unmount();
   });
 
@@ -615,9 +703,8 @@ describe("Lazy Chat reply directive", () => {
     });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
     fireEvent.change(editor, { target: { value: "old round edit" } });
-    await waitFor(() =>
-      expect(slot.inspection.composer.text).toBe("old round edit"),
-    );
+    await waitFor(() => expect(savedInputs).toHaveLength(1));
+    expect(slot.inspection.composer.text).toBe("");
     await slot.behavior.setComposerScope({
       kind: "thread",
       threadId: "thr_otherthread",
@@ -634,7 +721,7 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
-  it("replaces text while preserving untouched mentions and attachments", async () => {
+  it("leaves native mentions and attachments unchanged while editing", async () => {
     const attachment = {
       name: "notes.txt",
       type: "localFile" as const,
@@ -672,7 +759,7 @@ describe("Lazy Chat reply directive", () => {
       target: { value: "@before new longer @after" },
     });
     await waitFor(() =>
-      expect(slot.inspection.composer.text).toBe("@before new longer @after"),
+      expect(slot.inspection.composer.text).toBe("@before old @after"),
     );
     expect(slot.inspection.composer.draft.mentions).toEqual([
       {
@@ -684,17 +771,23 @@ describe("Lazy Chat reply directive", () => {
       },
       {
         kind: "thread",
-        from: 19,
-        to: 25,
+        from: 12,
+        to: 18,
         label: "@after",
         threadId: "after",
       },
     ]);
     expect(slot.inspection.composer.draft.attachments).toEqual([attachment]);
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /clear the main composer/i,
+    );
+    expect(slot.inspection.composer.submits).toHaveLength(0);
+    expect(slot.inspection.composer.draft.attachments).toEqual([attachment]);
     slot.lifecycle.unmount();
   });
 
-  it("shares edits with the matching native thread composer and refuses queued scope", async () => {
+  it("keeps the inline reply separate from native composer text", async () => {
     const slot = await renderReply({
       rpc: eligible,
       context: { threadId: message.threadId },
@@ -704,11 +797,10 @@ describe("Lazy Chat reply directive", () => {
       },
     });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
-    expect((editor as HTMLTextAreaElement).value).toBe("native draft");
+    expect((editor as HTMLTextAreaElement).value).toBe("");
     fireEvent.change(editor, { target: { value: "inline edit" } });
-    await waitFor(() =>
-      expect(slot.inspection.composer.text).toBe("inline edit"),
-    );
+    await screen.findByText("Saved to thread storage.");
+    expect(slot.inspection.composer.text).toBe("native draft");
     await slot.behavior.setComposerScope({
       kind: "queued-message",
       threadId: message.threadId,
@@ -717,7 +809,7 @@ describe("Lazy Chat reply directive", () => {
     expect((await screen.findByRole("status")).textContent).toMatch(
       /unavailable/i,
     );
-    expect(slot.inspection.composer.text).toBe("inline edit");
+    expect(slot.inspection.composer.text).toBe("native draft");
     slot.lifecycle.unmount();
   });
 
@@ -726,17 +818,19 @@ describe("Lazy Chat reply directive", () => {
       rpc: eligible,
       context: { threadId: message.threadId },
       composer: {
-        text: "draft",
+        text: "",
         scope: { kind: "thread", threadId: message.threadId },
       },
     });
-    await screen.findByRole("textbox", { name: "Reply draft" });
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    fireEvent.change(editor, { target: { value: "draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
     await waitFor(() =>
-      expect(slot.inspection.composer.text).toContain(
+      expect((editor as HTMLTextAreaElement).value).toContain(
         "> Lazy Chat quote probe",
       ),
     );
+    expect(slot.inspection.composer.text).toBe("");
     fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
     await waitFor(() =>
       expect(slot.inspection.composer.submits).toEqual([
@@ -746,7 +840,7 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
-  it.each(["edit", "quote", "submit"] as const)(
+  it.each(["quote", "submit"] as const)(
     "cancels a pending %s when newer thread activity arrives",
     async (action) => {
       let activityOccurred = false;
@@ -767,15 +861,15 @@ describe("Lazy Chat reply directive", () => {
         },
         context: { threadId: message.threadId },
         composer: {
-          text: "known shared draft",
+          text: "",
           scope: { kind: "thread", threadId: message.threadId },
         },
       });
       const editor = await screen.findByRole("textbox", {
         name: "Reply draft",
       });
-      if (action === "edit")
-        fireEvent.change(editor, { target: { value: "stale edit" } });
+      if (action === "submit")
+        fireEvent.change(editor, { target: { value: "reply for submit" } });
       if (action === "quote")
         fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
       if (action === "submit")
@@ -796,7 +890,7 @@ describe("Lazy Chat reply directive", () => {
       });
       await screen.findByRole("status");
 
-      expect(slot.inspection.composer.text).toBe("known shared draft");
+      expect(slot.inspection.composer.text).toBe("");
       expect(slot.inspection.composer.submits).toHaveLength(0);
       slot.lifecycle.unmount();
     },
@@ -810,38 +904,40 @@ describe("Lazy Chat reply directive", () => {
       },
       context: { threadId: message.threadId },
       composer: {
-        text: "draft",
+        text: "",
         scope: { kind: "thread", threadId: message.threadId },
       },
     });
-    await screen.findByRole("textbox", { name: "Reply draft" });
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    fireEvent.change(editor, { target: { value: "draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
     await screen.findByRole("status");
     expect(slot.inspection.composer.submits).toHaveLength(0);
     slot.lifecycle.unmount();
   });
 
-  it("does not apply a pending edit after the composer switches threads", async () => {
-    const checks: ReturnType<typeof deferred<{ eligible: boolean }>>[] = [];
+  it("does not submit a Lazy Chat reply after the composer switches threads", async () => {
+    const pendingSendCheck = deferred<{ eligible: boolean }>();
+    let checks = 0;
     const slot = await renderReply({
       rpc: {
-        lazy_reply_eligible: () => {
-          const check = deferred<{ eligible: boolean }>();
-          checks.push(check);
-          return check.promise;
-        },
+        ...eligible,
+        lazy_reply_eligible: () =>
+          ++checks === 1
+            ? Promise.resolve({ eligible: true })
+            : pendingSendCheck.promise,
       },
       context: { threadId: message.threadId },
       composer: {
-        text: "original draft",
+        text: "",
         scope: { kind: "thread", threadId: message.threadId },
       },
     });
-    await waitFor(() => expect(checks).toHaveLength(1));
-    checks[0]!.resolve({ eligible: true });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
-    fireEvent.change(editor, { target: { value: "pending old-thread edit" } });
-    await waitFor(() => expect(checks).toHaveLength(2));
+    fireEvent.change(editor, { target: { value: "reply for old thread" } });
+    await screen.findByText("Saved to thread storage.");
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
+    await waitFor(() => expect(checks).toBe(2));
 
     await slot.behavior.setComposerScope({
       kind: "thread",
@@ -849,8 +945,7 @@ describe("Lazy Chat reply directive", () => {
     });
     await slot.behavior.setComposerText("new thread draft");
     await act(async () => {
-      checks[1]!.resolve({ eligible: true });
-      await checks[1]!.promise;
+      pendingSendCheck.resolve({ eligible: true });
       await Promise.resolve();
     });
     expect(screen.getByRole("status").textContent).toMatch(/unavailable/i);
@@ -859,99 +954,47 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
-  it("preserves a newer native composer edit while inline authorization is pending", async () => {
-    const pending = deferred<{ eligible: boolean }>();
-    let calls = 0;
+  it("keeps native composer changes separate from the Lazy Chat reply", async () => {
     const slot = await renderReply({
-      rpc: {
-        lazy_reply_eligible: () =>
-          ++calls === 1 ? Promise.resolve({ eligible: true }) : pending.promise,
-      },
+      rpc: eligible,
       context: { threadId: message.threadId },
       composer: {
-        text: "original draft",
+        text: "original native draft",
         scope: { kind: "thread", threadId: message.threadId },
       },
     });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
-    fireEvent.change(editor, { target: { value: "pending inline edit" } });
-    await waitFor(() => expect(calls).toBe(2));
+    fireEvent.change(editor, { target: { value: "private lazy reply" } });
+    await screen.findByText("Saved to thread storage.");
 
     await slot.behavior.setComposerText("newer native text");
-    await waitFor(() =>
-      expect((editor as HTMLTextAreaElement).value).toBe("newer native text"),
-    );
-    await act(async () => {
-      pending.resolve({ eligible: true });
-      await Promise.resolve();
-    });
-    await waitFor(() =>
-      expect(slot.inspection.composer.text).toBe("newer native text"),
-    );
-    expect((editor as HTMLTextAreaElement).value).toBe("newer native text");
+    expect((editor as HTMLTextAreaElement).value).toBe("private lazy reply");
+    expect(slot.inspection.composer.text).toBe("newer native text");
     slot.lifecycle.unmount();
   });
 
-  it("does not write a pending inline edit after unmount", async () => {
-    const pending = deferred<{ eligible: boolean }>();
-    let calls = 0;
+  it("flushes the private reply on unmount without changing native text", async () => {
+    let savedBody: string | null = null;
     const slot = await renderReply({
       rpc: {
-        lazy_reply_eligible: () =>
-          ++calls === 1 ? Promise.resolve({ eligible: true }) : pending.promise,
-      },
-      context: { threadId: message.threadId },
-      composer: {
-        text: "original draft",
-        scope: { kind: "thread", threadId: message.threadId },
-      },
-    });
-    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
-    fireEvent.change(editor, { target: { value: "pending inline edit" } });
-    await waitFor(() => expect(calls).toBe(2));
-
-    slot.lifecycle.unmount();
-    await act(async () => {
-      pending.resolve({ eligible: true });
-      await Promise.resolve();
-    });
-    expect(slot.inspection.composer.text).toBe("original draft");
-  });
-
-  it("does not let an older eligibility result overwrite a newer valid edit", async () => {
-    const checks: ReturnType<typeof deferred<{ eligible: boolean }>>[] = [];
-    const slot = await renderReply({
-      rpc: {
-        lazy_reply_eligible: () => {
-          const check = deferred<{ eligible: boolean }>();
-          checks.push(check);
-          return check.promise;
+        ...eligible,
+        lazy_reply_save: async (input) => {
+          savedBody = input.body;
+          return { status: "saved" as const, sha256: "c".repeat(64) };
         },
       },
       context: { threadId: message.threadId },
       composer: {
-        text: "original draft",
+        text: "original native draft",
         scope: { kind: "thread", threadId: message.threadId },
       },
     });
-    await waitFor(() => expect(checks).toHaveLength(1));
-    checks[0]!.resolve({ eligible: true });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
-    fireEvent.change(editor, { target: { value: "older edit" } });
-    fireEvent.change(editor, { target: { value: "latest edit" } });
-    await waitFor(() => expect(checks).toHaveLength(3));
+    fireEvent.change(editor, { target: { value: "private reply on unmount" } });
 
-    checks[2]!.resolve({ eligible: true });
-    await waitFor(() =>
-      expect(slot.inspection.composer.text).toBe("latest edit"),
-    );
-    await act(async () => {
-      checks[1]!.resolve({ eligible: true });
-      await Promise.resolve();
-    });
-    expect(slot.inspection.composer.text).toBe("latest edit");
-    expect((editor as HTMLTextAreaElement).value).toBe("latest edit");
     slot.lifecycle.unmount();
+    await waitFor(() => expect(savedBody).toBe("private reply on unmount"));
+    expect(slot.inspection.composer.text).toBe("original native draft");
   });
 
   it("does not mirror a newer native reply into an inactive older round", async () => {
@@ -986,87 +1029,30 @@ describe("Lazy Chat reply directive", () => {
     expect(saves).toEqual([]);
   });
 
-  it("requires adoption before saving pre-existing text into a new reply round", async () => {
-    const persisted = new Map<string, string>();
-    const saves: { turnId: string; body: string }[] = [];
-    const rpc = {
-      ...eligible,
-      lazy_reply_load: async (input: { turnId: string }) => {
-        const draftBody = persisted.get(input.turnId) ?? null;
-        return {
-          status: "loaded" as const,
-          contributionBody: `Contribution ${input.turnId}`,
-          draftBody,
-          draftSha256: draftBody === null ? null : "a".repeat(64),
-        };
-      },
-      lazy_reply_save: async (input: { turnId: string; body: string }) => {
-        saves.push(input);
-        persisted.set(input.turnId, input.body);
-        return { status: "saved" as const, sha256: "b".repeat(64) };
-      },
-    };
-    const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot<PluginMessageDirectiveProps, typeof rpcContract>(
-      app.messageDirectives[0]!,
-      props,
-      {
-        rpc: { ...eligible, ...rpc },
-        context: { threadId: message.threadId },
-        composer: {
-          text: "pre-existing native text",
-          scope: { kind: "thread", threadId: message.threadId },
+  it("does not adopt a pre-existing native draft into Lazy Chat", async () => {
+    const saves: unknown[] = [];
+    const slot = await renderReply({
+      rpc: {
+        ...eligible,
+        lazy_reply_save: async (input) => {
+          saves.push(input);
+          return { status: "saved" as const, sha256: "b".repeat(64) };
         },
       },
-    );
-    const oldEditor = await screen.findByRole("textbox", {
-      name: "Reply draft",
+      context: { threadId: message.threadId },
+      composer: {
+        text: "pre-existing native text",
+        scope: { kind: "thread", threadId: message.threadId },
+      },
     });
-    const oldAdopt = await screen.findByRole("button", {
-      name: "Use current draft for this reply",
-    });
-    expect((oldEditor as HTMLTextAreaElement).value).toBe(
-      "pre-existing native text",
-    );
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    expect((editor as HTMLTextAreaElement).value).toBe("");
     expect(saves).toEqual([]);
-    fireEvent.click(oldAdopt);
-    await waitFor(() => expect(saves).toHaveLength(1));
-    expect(saves[0]).toMatchObject({
-      turnId: message.turnId,
-      body: "pre-existing native text",
-    });
-
-    const nextMessage = { ...message, id: "msg-next", turnId: "turn-2" };
-    slot.lifecycle.rerender(
-      createElement(app.messageDirectives[0]!.component, {
-        ...props,
-        message: nextMessage,
-      }),
-    );
-    const nextEditor = await screen.findByRole("textbox", {
-      name: "Reply draft",
-    });
-    await screen.findByRole("button", {
-      name: "Use current draft for this reply",
-    });
-    expect((nextEditor as HTMLTextAreaElement).value).toBe(
-      "pre-existing native text",
-    );
-    expect(saves).toHaveLength(1);
-    expect(persisted.get(message.turnId!)).toBe("pre-existing native text");
-
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Use current draft for this reply",
-      }),
-    );
-    await waitFor(() => expect(saves).toHaveLength(2));
-    expect(saves[1]).toMatchObject({
-      turnId: "turn-2",
-      body: "pre-existing native text",
-    });
-    expect(persisted.get(message.turnId!)).toBe("pre-existing native text");
-    expect(persisted.get("turn-2")).toBe("pre-existing native text");
+    fireEvent.change(editor, { target: { value: "private reply" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
+    expect(screen.getByRole("alert").textContent).toMatch(/main composer/i);
+    expect(slot.inspection.composer.text).toBe("pre-existing native text");
+    expect(slot.inspection.composer.submits).toHaveLength(0);
     slot.lifecycle.unmount();
   });
 
@@ -1126,9 +1112,7 @@ describe("Lazy Chat reply directive", () => {
     const newEditor = await screen.findByRole("textbox", {
       name: "Reply draft",
     });
-    expect((newEditor as HTMLTextAreaElement).value).toBe(
-      "old round pending reply",
-    );
+    expect((newEditor as HTMLTextAreaElement).value).toBe("");
     await act(async () => {
       pendingSave.resolve({ status: "saved", sha256: "9".repeat(64) });
       await Promise.resolve();
@@ -1136,7 +1120,7 @@ describe("Lazy Chat reply directive", () => {
     expect(screen.getByRole("status").textContent).toMatch(
       /loading saved reply/i,
     );
-    expect(slot.inspection.composer.text).toBe("old round pending reply");
+    expect(slot.inspection.composer.text).toBe("");
     expect(saves).toHaveLength(1);
     slot.lifecycle.unmount();
   });

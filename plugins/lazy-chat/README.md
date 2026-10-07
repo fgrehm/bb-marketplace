@@ -1,16 +1,16 @@
 # Lazy Chat
 
-A BB plugin that renders a multiline reply editor inside an assistant message directive. It shares BB's thread composer and native submit pipeline, and stores reply history in BB-managed per-thread storage.
+A BB plugin that renders an isolated multiline reply editor inside an assistant message directive. It stores reply history in BB-managed per-thread storage and stages text in BB's native composer only when the user explicitly sends.
 
 ## Use
 
-The assistant must include a completed directive in its message:
+The assistant must include a completed directive in its message. Lazy Chat displays the assistant message text without the directive as reply context. Supply a concise `context` attribute to override that fallback:
 
 ```text
-::lazy-reply{}
+::lazy-reply{context="What should we prioritize next?"}
 ```
 
-The editor is enabled only when the composer scope matches the directive's thread and a server-side check confirms the message is the current completed top-level assistant contribution. The native composer remains visible. Displaced completed rounds can show their own saved reply read-only. The quote button inserts a Markdown blockquote into the native composer.
+The editor is enabled only when the composer scope matches the directive's thread and a server-side check confirms the message is the current completed top-level assistant contribution. Typing and autosaving stay inside Lazy Chat. The quote button inserts a Markdown blockquote into the inline reply. On explicit send, Lazy Chat uses BB's native submit pipeline. If the main composer contains text, mentions, or attachments, send is blocked and the user must clear the composer first; its contents are left untouched. Displaced completed rounds can show their own saved reply read-only.
 
 ## Draft persistence
 
@@ -18,9 +18,9 @@ Each thread has one durable Markdown journal at `.lazyai/bb/conversation.md` and
 
 Legacy `.lazyai/bb/<thread-id>/<turn-id>/{contribution.md,draft.md}` project-workspace files are discovered only under that thread's old directory, merged into the journal and verified, then removed individually only after a matching-hash CAS tombstone. Conflicting, malformed, truncated-list, or partially migrated records are retained. Other thread directories are not migrated or removed.
 
-Edits autosave after a short debounce, newer edits queue behind in-flight saves, and a flush of the captured round text is started when the card unmounts or its composer scope changes. Reopening a round loads its current or journaled reply. If a reply conflicts with different native composer text or a concurrent storage update, both versions are preserved and the user chooses which to keep. A successful local composer submission pauses autosave so native clearing does not erase the saved reply. As timeline rows are observed, the journal also stores exact BB user-message text independently, keyed by BB message ID with source sequence bounds and the observed turn-request status. It does not correlate that message to a plugin draft from matching text or timing. The journal labels preserved reply text as unfinished; BB transcript/history remains authoritative for what was actually sent or delivered, and this persistence does not provide exactly-once recovery.
+Edits autosave after a short debounce, newer edits queue behind in-flight saves, and a flush of the captured round text is started when the card unmounts or its composer scope changes. Reopening a round loads its current or journaled reply. If a reply conflicts with a concurrent storage update, both versions are preserved and the user chooses which to keep. A successful local composer submission pauses autosave so native clearing does not erase the saved reply. As timeline rows are observed, the journal also stores exact BB user-message text independently, keyed by BB message ID with source sequence bounds and the observed turn-request status. It does not correlate that message to a plugin draft from matching text or timing. The journal labels preserved reply text as unfinished; BB transcript/history remains authoritative for what was actually sent or delivered, and this persistence does not provide exactly-once recovery.
 
-Markdown restores plain text only. It does not restore structured native mentions or attachments. Ordinary text replacements use the public composer draft API. Mentions outside the edited text span retain or rebase their ranges; mentions whose text is edited are removed. Uploaded attachments are preserved. Earlier root assistant rows within one turn cannot own separate current records because the temporary file is per thread; only the validated final root contribution can be actively edited. Historical rounds do not mutate the current composer.
+Markdown restores plain text only. It does not restore structured native mentions or attachments. The inline reply remains independent of native mentions and attachments until explicit send; the send guard prevents staging while the native composer contains any content. Earlier root assistant rows within one turn cannot own separate current records because the temporary file is per thread; only the validated final root contribution can be actively edited. Historical rounds do not mutate the current composer.
 
 ## Development
 
