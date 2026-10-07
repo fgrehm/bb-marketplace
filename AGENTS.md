@@ -4,7 +4,7 @@
 
 This repository contains independently installable BB plugins under `plugins/<id>/`. The root `marketplace.json` is the published v2 catalog. Each catalogued plugin's `PLUGIN_OVERVIEW.md` is the source of truth for its store overview, inlined into the catalog by `scripts/sync-marketplace-overviews.mjs`; other catalog fields remain hand-authored. Each plugin's `package.json` is its manifest and source of truth for its plugin ID, version, BB entry points, and engine requirements.
 
-The repository is MIT licensed. Preserve `THIRD_PARTY_NOTICES.md` and vendored license files when adapting code or artwork.
+The repository is MIT licensed and maintained as personal software, shared in case it is useful to others. Preserve the maintainer's needs and explicit direction over generic product conventions. Discussions are open for questions, ideas, and feedback; issues and pull requests are reserved for the maintainer's tracking and development workflow. Do not assume broader community contributions or support are part of the project. Preserve `THIRD_PARTY_NOTICES.md` and vendored license files when adapting code or artwork.
 
 ## Before changing a plugin
 
@@ -49,13 +49,13 @@ After that, `git commit` runs the pre-commit checks automatically, including the
 Plugins are pre-release and are not currently published to npm. Install one directly from a local checkout:
 
 ```sh
-bb plugin install path:/path/to/bb-marketplace/plugins/<id>
+bb plugin install path:/path/to/bb-plugins/plugins/<id>
 ```
 
 Or install from the public Git repository and select a plugin subdirectory:
 
 ```sh
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/<id>
+bb plugin install git:github.com/fgrehm/bb-plugins@main --subdirectory plugins/<id>
 ```
 
 BB plugins are full-trust code. Review a plugin's source before installing it.

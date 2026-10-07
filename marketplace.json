@@ -12,10 +12,10 @@
       "overview": "Review Workspace opens an integrated review panel in a BB thread with a changed-file list, full diffs, and revision-scoped tours with step navigation and related comments. Create immutable snapshots of uncommitted changes, a selected commit, committed changes against a base branch, or all changes against a base branch. Navigate with Vim-style keys or enter any exact visible old/new line range. Compare against each file's latest explicitly viewed revision, add file-level feedback or an overall review note, and send unsent unresolved comments only when requested. Unresolved comment threads and the review note carry forward when you refresh; tours and their exact anchors stay with their original revision.\n\nResume existing reviews from the sidebar's Recent reviews page, with the latest saved snapshot per thread, pending-comment counts, and viewed-file progress. Opening a review or reloading this list does not refresh the diff or send feedback.\n\n## Requirements and limits\n\nThe review uses Git changes available in the thread environment. Large and generated diffs load on demand. Safe raster previews use immutable captured image bytes; other binary files remain file-level only. Agent-authored tour cards are explanatory and are labeled as unverified where appropriate. Review feedback is sent to the agent in the thread only after explicit confirmation.\n\nReview data, including unsent feedback, is automatically and irreversibly purged after seven days continuously archived or when its BB thread is deleted. Existing archives are included. Cleanup runs on load and hourly while enabled, in bounded batches; active reviews and comments already imported into other threads are retained.",
       "icon": "GitPullRequest",
       "screenshots": [
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/review-diff.png",
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/review-comment.png",
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/review-feedback.png",
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/review-workspace/assets/screenshots/recent-reviews.png"
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/review-workspace/assets/screenshots/review-diff.png",
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/review-workspace/assets/screenshots/review-comment.png",
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/review-workspace/assets/screenshots/review-feedback.png",
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/review-workspace/assets/screenshots/recent-reviews.png"
       ],
       "tags": [
         "review",
@@ -30,7 +30,7 @@
       },
       "source": {
         "git": {
-          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "url": "https://github.com/fgrehm/bb-plugins.git",
           "subdir": "plugins/review-workspace",
           "range": "^0.1.0",
           "tagPrefix": "review-workspace/"
@@ -44,12 +44,12 @@
       "overview": "Pi Extras brings Pi usage and settings into BB. Its Sessions view estimates token use and cost from local Pi session transcripts, broken down by backend, model, project, and day. Subscriptions shows current usage for Pi-managed legacy Codex, OpenCode Go, and Ollama Cloud accounts. Pi's newer `openai` Sign in with ChatGPT credential can authorize eligible Responses API inference, but OpenAI does not document a way to read Codex usage totals with it; the plugin directs users to ChatGPT settings instead.\n\nThe settings panel edits Pi defaults, model scope, selected runtime settings, model catalogs, and extensions. For Pi to generate BB thread titles or commit messages, select Pi separately for each task under BB Settings > AI services. This does not change the model running the thread.\n\n## Requirements and privacy\n\nPi must be installed on BB's primary machine. Subscription usage requires the relevant credentials in Pi's auth.json. Legacy Codex usage requires Pi's `openai-codex` credential and account ID; Pi's newer `openai` SIWC credential does not provide access to Codex usage totals. The plugin reads credentials to request usage but never displays, logs, refreshes, or modifies them. Subscription endpoints are undocumented and may change.",
       "icon": "ChartNoAxesCombined",
       "screenshots": [
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/sessions.webp",
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/subscriptions.webp",
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/settings.webp",
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/model-scope.webp",
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/runtime-settings.webp",
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/pi-extras/docs/text-services.webp"
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/pi-extras/docs/sessions.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/pi-extras/docs/subscriptions.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/pi-extras/docs/settings.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/pi-extras/docs/model-scope.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/pi-extras/docs/runtime-settings.webp",
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/pi-extras/docs/text-services.webp"
       ],
       "tags": [
         "usage",
@@ -63,7 +63,7 @@
       },
       "source": {
         "git": {
-          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "url": "https://github.com/fgrehm/bb-plugins.git",
           "subdir": "plugins/pi-extras",
           "range": "^0.1.0",
           "tagPrefix": "pi-extras/"
@@ -77,7 +77,7 @@
       "overview": "Favicon replaces the BB browser tab icon with separate SVG artwork for light and dark themes. The settings panel previews the artwork with BB's fixed 55% color tint, preserving shading and detail while keeping the unread badge visible. Uploads and removals stay pending until you choose Save and apply, so you can review both previews before changing the active icon. Each theme can be updated independently.\n\n## Requirements and limits\n\nArtwork must be uploaded as SVG; remote URLs and filesystem paths are not supported. The favicon applies to the BB window, not individual projects. The plugin restores the previous favicon when disabled or reloaded. No external service or account is required.",
       "icon": "Image",
       "screenshots": [
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/plugins/favicon/docs/settings.webp"
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/plugins/favicon/docs/settings.webp"
       ],
       "tags": [
         "favicon",
@@ -91,7 +91,7 @@
       },
       "source": {
         "git": {
-          "url": "https://github.com/fgrehm/bb-marketplace.git",
+          "url": "https://github.com/fgrehm/bb-plugins.git",
           "subdir": "plugins/favicon",
           "range": "^0.1.0",
           "tagPrefix": "favicon/"

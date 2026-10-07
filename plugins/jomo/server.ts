@@ -29,7 +29,7 @@ const profileSchema = z.object({
 export type LibrarianProfile = z.infer<typeof profileSchema>;
 
 export const DEFAULT_CONTENT_ROOT = "/data/obsidian/Agent/Library";
-export const FEED_USER_AGENT = "JOMO/0.1 (+https://github.com/fgrehm/bb-marketplace)";
+export const FEED_USER_AGENT = "JOMO/0.1 (+https://github.com/fgrehm/bb-plugins)";
 
 // YouTube channel/handle pages are not feed URLs; resolve the channel's
 // stable ID from the page and use the channel_id feed instead.

@@ -43,13 +43,13 @@ The sidebar landing page lists the latest snapshot per thread, with pending comm
 Plugins are pre-release and not published to npm. Install this plugin from the repository:
 
 ```sh
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/review-workspace
+bb plugin install git:github.com/fgrehm/bb-plugins@main --subdirectory plugins/review-workspace
 ```
 
 For a local checkout:
 
 ```sh
-bb plugin install path:/path/to/bb-marketplace/plugins/review-workspace
+bb plugin install path:/path/to/bb-plugins/plugins/review-workspace
 ```
 
 BB plugins run with full trust. Review the source before installing. This plugin reads Git changes from thread environments, stores review data in its plugin database, reads BB thread metadata for discovery and cleanup, and sends feedback to the owning thread only when requested. It has no configuration settings.

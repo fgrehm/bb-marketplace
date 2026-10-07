@@ -288,7 +288,7 @@ test("catalog screenshots reference existing repository image assets", async () 
     assert.ok(Array.isArray(screenshots) && screenshots.length <= 6);
     for (const screenshot of screenshots) {
       const prefix =
-        "https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/";
+        "https://raw.githubusercontent.com/fgrehm/bb-plugins/main/";
       assert.ok(
         screenshot.startsWith(`${prefix}plugins/${plugin.id}/`),
         screenshot,

@@ -1,6 +1,10 @@
-# bb-marketplace
+# bb-plugins
 
 A collection of [BB](https://github.com/get-bb/bb) plugins I maintain, installable from bb's plugin marketplaces as a third-party catalog.
+
+## Project and contributions
+
+This is personal software: I build these plugins primarily for my own use and share them in case they are useful to others. The plugins are pre-release and may change as my needs evolve. Feel free to fork and adapt them under the MIT license. Questions, ideas, and feedback are welcome in GitHub Discussions; issues and pull requests are reserved for my own tracking and development workflow. I may consider a broader contribution model if interest grows.
 
 ## Install
 
@@ -9,9 +13,9 @@ A collection of [BB](https://github.com/get-bb/bb) plugins I maintain, installab
 Install a plugin from the latest `main` branch:
 
 ```sh
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/pi-extras
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/favicon
-bb plugin install git:github.com/fgrehm/bb-marketplace@main --subdirectory plugins/review-workspace
+bb plugin install git:github.com/fgrehm/bb-plugins@main --subdirectory plugins/pi-extras
+bb plugin install git:github.com/fgrehm/bb-plugins@main --subdirectory plugins/favicon
+bb plugin install git:github.com/fgrehm/bb-plugins@main --subdirectory plugins/review-workspace
 ```
 
 These are full-trust, pre-release plugins. Review the source before installing. BB records the Git source and plugin subdirectory so updates and removal continue to work normally.
@@ -19,13 +23,13 @@ These are full-trust, pre-release plugins. Review the source before installing. 
 For local development, clone the repository and install a plugin by path:
 
 ```sh
-bb plugin install path:/path/to/bb-marketplace/plugins/<id>
+bb plugin install path:/path/to/bb-plugins/plugins/<id>
 ```
 
 Once versioned releases exist, the marketplace can be added with:
 
 ```sh
-bb marketplace add https://raw.githubusercontent.com/fgrehm/bb-marketplace/main/marketplace.json
+bb marketplace add https://raw.githubusercontent.com/fgrehm/bb-plugins/main/marketplace.json
 ```
 
 The catalog uses marketplace schema v2, so BB versions that only support v1 catalogs cannot read it.
