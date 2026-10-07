@@ -634,6 +634,66 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
+  it("replaces text while preserving untouched mentions and attachments", async () => {
+    const attachment = {
+      name: "notes.txt",
+      type: "localFile" as const,
+      mimeType: "text/plain",
+      sizeBytes: 12,
+      path: "/thread-storage/notes.txt",
+    };
+    const slot = await renderReply({
+      rpc: eligible,
+      context: { threadId: message.threadId },
+      composer: {
+        text: "@before old @after",
+        mentions: [
+          {
+            kind: "thread",
+            from: 0,
+            to: 7,
+            label: "@before",
+            threadId: "before",
+          },
+          {
+            kind: "thread",
+            from: 12,
+            to: 18,
+            label: "@after",
+            threadId: "after",
+          },
+        ],
+        attachments: [attachment],
+        scope: { kind: "thread", threadId: message.threadId },
+      },
+    });
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    fireEvent.change(editor, {
+      target: { value: "@before new longer @after" },
+    });
+    await waitFor(() =>
+      expect(slot.inspection.composer.text).toBe("@before new longer @after"),
+    );
+    expect(slot.inspection.composer.draft.mentions).toEqual([
+      {
+        kind: "thread",
+        from: 0,
+        to: 7,
+        label: "@before",
+        threadId: "before",
+      },
+      {
+        kind: "thread",
+        from: 19,
+        to: 25,
+        label: "@after",
+        threadId: "after",
+      },
+    ]);
+    expect(slot.inspection.composer.draft.attachments).toEqual([attachment]);
+    slot.lifecycle.unmount();
+  });
+
   it("shares edits with the matching native thread composer and refuses queued scope", async () => {
     const slot = await renderReply({
       rpc: eligible,
@@ -671,15 +731,17 @@ describe("Lazy Chat reply directive", () => {
       },
     });
     await screen.findByRole("textbox", { name: "Reply draft" });
-    fireEvent.click(screen.getByRole("button", { name: "Insert quote probe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
     await waitFor(() =>
-      expect(slot.inspection.composer.quotes).toEqual([
-        "Lazy Chat quote probe",
-      ]),
+      expect(slot.inspection.composer.text).toContain(
+        "> Lazy Chat quote probe",
+      ),
     );
     fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
     await waitFor(() =>
-      expect(slot.inspection.composer.submits).toHaveLength(1),
+      expect(slot.inspection.composer.submits).toEqual([
+        { experimental_data: null },
+      ]),
     );
     slot.lifecycle.unmount();
   });
@@ -715,9 +777,7 @@ describe("Lazy Chat reply directive", () => {
       if (action === "edit")
         fireEvent.change(editor, { target: { value: "stale edit" } });
       if (action === "quote")
-        fireEvent.click(
-          screen.getByRole("button", { name: "Insert quote probe" }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
       if (action === "submit")
         fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
       await waitFor(() => expect(pending).toHaveLength(1));
@@ -728,9 +788,7 @@ describe("Lazy Chat reply directive", () => {
         sequence: 2,
       });
       expect(screen.queryByRole("textbox", { name: "Reply draft" })).toBeNull();
-      expect(
-        screen.queryByRole("button", { name: "Insert quote probe" }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "Insert quote" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Send reply" })).toBeNull();
       await act(async () => {
         pending[0]!.resolve({ eligible: true });
@@ -739,7 +797,6 @@ describe("Lazy Chat reply directive", () => {
       await screen.findByRole("status");
 
       expect(slot.inspection.composer.text).toBe("known shared draft");
-      expect(slot.inspection.composer.quotes).toEqual([]);
       expect(slot.inspection.composer.submits).toHaveLength(0);
       slot.lifecycle.unmount();
     },

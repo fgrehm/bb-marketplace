@@ -6,6 +6,7 @@ import {
   makeThreadResponse,
 } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server";
+import { serializeMarkdownRecord } from "../markdown-record";
 
 const threadId = "thr_thread1";
 const turnId = "turn-1";
@@ -23,6 +24,9 @@ function createHost({
   status = "idle",
   completionStatus = "completed",
   workspacePath = "/workspace/project",
+  storageRootPath = "/bb/thread-storage/thr_thread1",
+  legacyRecords = [] as { path: string; content: string }[],
+  badHashPath,
 }: {
   newerUser?: boolean;
   nested?: boolean;
@@ -30,8 +34,14 @@ function createHost({
   status?: string;
   completionStatus?: string;
   workspacePath?: string | null;
+  storageRootPath?: string;
+  legacyRecords?: { path: string; content: string }[];
+  badHashPath?: string;
 } = {}) {
-  const fileEntries = new Map<string, string>();
+  const fileEntries = new Map<string, string>(
+    legacyRecords.map(({ path, content }) => [path, content]),
+  );
+  const storageCalls: string[] = [];
   const sha256 = (content: string) =>
     createHash("sha256").update(content, "utf8").digest("hex");
   const events = [
@@ -108,6 +118,20 @@ function createHost({
           projectId: "project-1",
         }),
         events: { list: async () => events },
+        storageLocation: async ({
+          threadId: requestedThreadId,
+        }: {
+          threadId: string;
+        }) => {
+          storageCalls.push(requestedThreadId);
+          return {
+            hostId: "host-thread-storage",
+            storageRootPath:
+              requestedThreadId === threadId
+                ? storageRootPath
+                : `/bb/thread-storage/${requestedThreadId}`,
+          };
+        },
         timeline: async () => ({
           rows: [
             {
@@ -120,6 +144,27 @@ function createHost({
               sourceSeqStart: 2,
               sourceSeqEnd: 2,
             },
+            ...(newerUser
+              ? [
+                  {
+                    kind: "conversation" as const,
+                    role: "user" as const,
+                    id: "actual-user-message-id",
+                    threadId,
+                    text: "Actual BB reply differs from the plugin draft",
+                    turnId: "turn-2",
+                    sourceSeqStart: 4,
+                    sourceSeqEnd: 4,
+                    messageSeq: 4,
+                    attachments: null,
+                    turnRequest: {
+                      isGrouped: false,
+                      kind: "message" as const,
+                      status: "accepted" as const,
+                    },
+                  },
+                ]
+              : []),
             ...(secondRoot
               ? [
                   {
@@ -162,7 +207,7 @@ function createHost({
             content,
             contentEncoding: "utf8",
             sizeBytes: Buffer.byteLength(content),
-            sha256: sha256(content),
+            sha256: path === badHashPath ? "0".repeat(64) : sha256(content),
           };
         },
         write: async ({ path, content, expectedSha256 }: FileWriteArgs) => {
@@ -178,10 +223,23 @@ function createHost({
             sizeBytes: Buffer.byteLength(content),
           };
         },
+        remove: async ({ path }: { path: string }) => {
+          fileEntries.delete(path);
+          return { ok: true };
+        },
+        list: async ({ path }: { path: string }) => ({
+          files: [...fileEntries.keys()]
+            .filter((candidate) => candidate.startsWith(`${path}/`))
+            .map((candidate) => ({
+              path: candidate.slice(path.length + 1),
+              name: candidate.split("/").at(-1)!,
+            })),
+          truncated: false,
+        }),
       },
     } as never,
   });
-  return { ...host, fileEntries };
+  return { ...host, fileEntries, storageCalls };
 }
 
 describe("lazy reply ownership RPC", () => {
@@ -247,7 +305,7 @@ describe("lazy reply ownership RPC", () => {
     await host.harness.lifecycle.dispose();
   });
 
-  it("loads and saves through the thread environment using timeline source text", async () => {
+  it("loads and saves in thread storage using timeline source text", async () => {
     const host = createHost();
     await plugin(host.bb);
     const identity = { messageId, threadId, turnId };
@@ -272,10 +330,95 @@ describe("lazy reply ownership RPC", () => {
       contributionBody: "Original assistant text",
       draftBody: "A persisted reply",
     });
-    expect([...host.fileEntries.keys()]).toEqual([
-      "/workspace/project/.lazyai/bb/thr_thread1/turn-1/contribution.md",
-      "/workspace/project/.lazyai/bb/thr_thread1/turn-1/draft.md",
-    ]);
+    expect([...host.fileEntries.keys()]).toEqual([".lazyai/bb/current.md"]);
+    expect(host.storageCalls).toEqual([threadId, threadId, threadId]);
+    await host.harness.lifecycle.dispose();
+  });
+
+  it("merges and verifies this thread's legacy workspace records before cleanup", async () => {
+    const legacyRoot = `/workspace/project/.lazyai/bb/${threadId}/turn-1`;
+    const contribution = serializeMarkdownRecord({
+      version: 1,
+      kind: "contribution",
+      threadId,
+      turnId,
+      messageId,
+      attribution: "agent",
+      draftStatus: "immutable",
+      body: "Original assistant text",
+    });
+    const draft = serializeMarkdownRecord({
+      version: 1,
+      kind: "draft",
+      threadId,
+      turnId,
+      messageId,
+      attribution: "human",
+      draftStatus: "active",
+      body: "Legacy unfinished reply",
+    });
+    const host = createHost({
+      legacyRecords: [
+        { path: `${legacyRoot}/contribution.md`, content: contribution },
+        { path: `${legacyRoot}/draft.md`, content: draft },
+        {
+          path: `/workspace/project/.lazyai/bb/thr_other/turn-9/draft.md`,
+          content: draft,
+        },
+      ],
+    });
+    await plugin(host.bb);
+    await expect(
+      host.harness.behavior.callRpc("lazy_reply_load", {
+        messageId,
+        threadId,
+        turnId,
+      }),
+    ).resolves.toMatchObject({
+      status: "loaded",
+      contributionBody: "Original assistant text",
+      draftBody: "Legacy unfinished reply",
+    });
+    expect([...host.fileEntries.keys()]).toContain(
+      ".lazyai/bb/conversation.md",
+    );
+    expect(host.fileEntries.has(`${legacyRoot}/contribution.md`)).toBe(false);
+    expect(host.fileEntries.has(`${legacyRoot}/draft.md`)).toBe(false);
+    expect(
+      host.fileEntries.has(
+        "/workspace/project/.lazyai/bb/thr_other/turn-9/draft.md",
+      ),
+    ).toBe(true);
+    await host.harness.lifecycle.dispose();
+  });
+
+  it("retains legacy sources and imports nothing when the SDK read hash is wrong", async () => {
+    const legacyRoot = `/workspace/project/.lazyai/bb/${threadId}/turn-1`;
+    const contribution = serializeMarkdownRecord({
+      version: 1,
+      kind: "contribution",
+      threadId,
+      turnId,
+      messageId,
+      attribution: "agent",
+      draftStatus: "immutable",
+      body: "Original assistant text",
+    });
+    const path = `${legacyRoot}/contribution.md`;
+    const host = createHost({
+      legacyRecords: [{ path, content: contribution }],
+      badHashPath: path,
+    });
+    await plugin(host.bb);
+    await expect(
+      host.harness.behavior.callRpc("lazy_reply_load", {
+        messageId,
+        threadId,
+        turnId,
+      }),
+    ).resolves.toMatchObject({ status: "storage_error" });
+    expect(host.fileEntries.has(path)).toBe(true);
+    expect(host.fileEntries.has(".lazyai/bb/conversation.md")).toBe(false);
     await host.harness.lifecycle.dispose();
   });
 
@@ -292,13 +435,39 @@ describe("lazy reply ownership RPC", () => {
       contributionBody: "Original assistant text",
       draftBody: null,
     });
-    expect(
-      [...host.fileEntries.keys()].every((path) => path.includes(turnId)),
-    ).toBe(true);
+    expect([...host.fileEntries.keys()]).toEqual([
+      ".lazyai/bb/conversation.md",
+    ]);
+    expect(host.fileEntries.get(".lazyai/bb/conversation.md")).toContain(
+      "Actual BB reply differs from the plugin draft",
+    );
     await host.harness.lifecycle.dispose();
   });
 
-  it("reports non-workspace environments without falling back to server files", async () => {
+  it("journals a displaced round flush without claiming the shared current file", async () => {
+    const host = createHost({ newerUser: true });
+    await plugin(host.bb);
+    const saved = await host.harness.behavior.callRpc("lazy_reply_save", {
+      messageId,
+      threadId,
+      turnId,
+      body: "late captured old-round edit",
+      expectedSha256: null,
+    });
+    expect(saved).toMatchObject({ status: "saved" });
+    expect([...host.fileEntries.keys()]).toEqual([
+      ".lazyai/bb/conversation.md",
+    ]);
+    const journal = host.fileEntries.get(".lazyai/bb/conversation.md")!;
+    expect(journal).toContain("late captured old-round edit");
+    expect(journal).toContain("Actual BB reply differs from the plugin draft");
+    expect(journal).toContain('## User message "actual-user-message-id"');
+    expect(journal).toContain("sourceSeqStart: 4");
+    expect(journal).toContain("turnRequestStatus: accepted");
+    await host.harness.lifecycle.dispose();
+  });
+
+  it("uses thread storage even when no project workspace is available", async () => {
     const host = createHost({ workspacePath: null });
     await plugin(host.bb);
     await expect(
@@ -307,7 +476,7 @@ describe("lazy reply ownership RPC", () => {
         threadId,
         turnId,
       }),
-    ).resolves.toEqual({ status: "unavailable", reason: "not_workspace" });
+    ).resolves.toMatchObject({ status: "loaded" });
     expect(host.fileEntries.size).toBe(0);
     await host.harness.lifecycle.dispose();
   });

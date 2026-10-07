@@ -13,6 +13,7 @@ import {
   useRpc,
 } from "@get-bb/plugin-sdk/app";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
+import { replaceComposerText } from "./composer-draft";
 import type { rpcContract } from "./rpc";
 
 type Ownership = { messageId: string; threadId: string; turnId: string | null };
@@ -356,7 +357,7 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
   ]);
   useEffect(() => {
     if (!scopeMatches) return;
-    const dispose = composer.experimental_onSubmitted(() => {
+    const dispose = composer.onSubmitted(() => {
       submittedRef.current = true;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
@@ -370,7 +371,7 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       if (draftDirtyRef.current && !submittedRef.current)
         void flushSaveRef.current();
     };
-  }, [composer.experimental_onSubmitted, scopeMatches, setDraftStatusValue]);
+  }, [composer.onSubmitted, scopeMatches, setDraftStatusValue]);
   useEffect(() => {
     if (!scopeMatches || !eligibleRef.current) return;
     if (submittedRef.current) {
@@ -554,16 +555,16 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
         return;
       let applied = false;
-      composerRef.current.updateText((current) => {
+      composerRef.current.replace((current) => {
         if (
-          current !== baseline ||
+          current.text !== baseline ||
           draftRevisionRef.current !== nativeRevision ||
           replyRevisionRef.current !== replyRevision ||
           !scopeIsCurrent(ownership)
         )
           return current;
         applied = true;
-        return body;
+        return replaceComposerText(current, body);
       });
       if (applied) {
         replyRevisionRef.current += 1;
@@ -618,12 +619,12 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
           setReplyText(composerRef.current.text);
           return;
         }
-        composerRef.current.updateText((current) => {
-          if (current !== observedDraft) {
-            setReplyText(current);
+        composerRef.current.replace((current) => {
+          if (current.text !== observedDraft) {
+            setReplyText(current.text);
             return current;
           }
-          return next;
+          return replaceComposerText(current, next);
         });
       });
     },
@@ -645,7 +646,10 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     void checkEligibility().then((isEligible) => {
       if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
         return;
-      composerRef.current.addQuote("Lazy Chat quote probe");
+      composerRef.current.insert("> Lazy Chat quote probe", {
+        block: true,
+        at: "end",
+      });
     });
   }, [checkEligibility, operationIsCurrent, scopeIsCurrent]);
   const submit = async () => {
@@ -662,7 +666,7 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
       const isEligible = await checkEligibility();
       if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
         return;
-      await composerRef.current.experimental_submit({
+      await composerRef.current.submit({
         experimental_data: null,
       });
     } catch (cause) {
@@ -709,15 +713,15 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
     if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
       return;
     let applied = false;
-    composerRef.current.updateText((current) => {
+    composerRef.current.replace((current) => {
       if (
-        current !== observedNative ||
+        current.text !== observedNative ||
         draftRevisionRef.current !== observedRevision ||
         replyRevisionRef.current !== observedReplyRevision
       )
         return current;
       applied = true;
-      return conflict.body!;
+      return replaceComposerText(current, conflict.body!);
     });
     if (!applied) return;
     draftHashRef.current = conflict.sha256;
@@ -855,7 +859,7 @@ function LazyReplyRound({ message }: PluginMessageDirectiveProps) {
           }}
           onClick={insertQuote}
         >
-          Insert quote probe
+          Insert quote
         </button>
         <button
           type="button"
