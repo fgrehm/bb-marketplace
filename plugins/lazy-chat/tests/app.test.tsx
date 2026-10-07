@@ -623,6 +623,88 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
+  it("waits for the initial draft load before saving and sending", async () => {
+    const pendingLoad = deferred<{
+      status: "loaded";
+      contributionBody: string;
+      draftBody: string | null;
+      draftSha256: string | null;
+    }>();
+    let savedBody: string | null = null;
+    const slot = await renderReply({
+      rpc: {
+        ...eligible,
+        lazy_reply_load: () => pendingLoad.promise,
+        lazy_reply_save: async (input) => {
+          savedBody = input.body;
+          return { status: "saved" as const, sha256: "e".repeat(64) };
+        },
+      },
+      context: { threadId: message.threadId },
+      composer: {
+        text: "",
+        scope: { kind: "thread", threadId: message.threadId },
+      },
+    });
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    fireEvent.change(editor, { target: { value: "reply typed during load" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
+    expect(slot.inspection.composer.submits).toHaveLength(0);
+
+    await act(async () => {
+      pendingLoad.resolve({
+        status: "loaded",
+        contributionBody: "Agent contribution",
+        draftBody: null,
+        draftSha256: null,
+      });
+      await Promise.resolve();
+    });
+    await screen.findByText(/autosave paused after local submission/i);
+    expect(savedBody).toBe("reply typed during load");
+    expect(slot.inspection.composer.submits).toEqual([
+      { experimental_data: null },
+    ]);
+    slot.lifecycle.unmount();
+  });
+
+  it("waits for an in-flight autosave before sending", async () => {
+    let savedBody: string | null = null;
+    let resolveSave!: (result: { status: "saved"; sha256: string }) => void;
+    const slot = await renderReply({
+      rpc: {
+        ...eligible,
+        lazy_reply_save: (input) => {
+          savedBody = input.body;
+          return new Promise((resolve) => {
+            resolveSave = resolve;
+          });
+        },
+      },
+      context: { threadId: message.threadId },
+      composer: {
+        text: "",
+        scope: { kind: "thread", threadId: message.threadId },
+      },
+    });
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    fireEvent.change(editor, { target: { value: "reply saved before send" } });
+    await waitFor(() => expect(resolveSave).toBeTypeOf("function"));
+
+    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+    expect(screen.queryByRole("alert")).toBeNull();
+    await act(async () => {
+      resolveSave({ status: "saved", sha256: "d".repeat(64) });
+      await Promise.resolve();
+    });
+    await screen.findByText(/autosave paused after local submission/i);
+    expect(savedBody).toBe("reply saved before send");
+    expect(slot.inspection.composer.submits).toEqual([
+      { experimental_data: null },
+    ]);
+    slot.lifecycle.unmount();
+  });
+
   it("sends the reply with Ctrl+Enter through the native submit pipeline", async () => {
     let saveCount = 0;
     const slot = await renderReply({

@@ -134,6 +134,7 @@ function LazyReplyRound({
   const lazySubmitRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadGenerationRef = useRef(0);
+  const loadReadyRef = useRef<Promise<void>>(Promise.resolve());
   const loadReplyRevisionRef = useRef(replyRevisionRef.current);
   const reconciledRef = useRef(false);
   const conflictRef = useRef<DraftConflict | null>(null);
@@ -267,11 +268,23 @@ function LazyReplyRound({
     if (previous !== connection) invalidate();
   }, [connection, invalidate]);
   useEffect(() => {
+    let resolveLoad!: () => void;
+    let loadSettled = false;
+    const loadReady = new Promise<void>((resolve) => {
+      resolveLoad = resolve;
+    });
+    const finishLoad = () => {
+      if (loadSettled) return;
+      loadSettled = true;
+      resolveLoad();
+    };
+    loadReadyRef.current = loadReady;
     if (!scopeMatches || message.turnId === null) {
       draftLoadedRef.current = false;
       setDraftLoaded(false);
       setDraftStatusValue(scopeMatches ? "invalid" : "unavailable");
-      return;
+      finishLoad();
+      return finishLoad;
     }
     const generation = ++loadGenerationRef.current;
     const ownership = { ...ownershipRef.current, turnId: message.turnId };
@@ -335,9 +348,11 @@ function LazyReplyRound({
       .catch(() => {
         if (mountedRef.current && generation === loadGenerationRef.current)
           setDraftStatusValue("error");
-      });
+      })
+      .finally(finishLoad);
     return () => {
       loadGenerationRef.current += 1;
+      finishLoad();
     };
   }, [
     message.id,
@@ -368,6 +383,20 @@ function LazyReplyRound({
     };
   }, [composer.onSubmitted, scopeMatches, setDraftStatusValue]);
   const flushSave = useCallback(async () => {
+    const identity = ownershipRef.current;
+    if (identity.turnId === null) return;
+    const key = roundKey(identity);
+    if (saveInFlightRef.current) {
+      await waitForRoundFlush(key);
+      if (
+        draftDirtyRef.current &&
+        draftLoadedRef.current &&
+        !submittedRef.current &&
+        !saveBlockedRef.current
+      )
+        await flushSaveRef.current();
+      return;
+    }
     if (
       !draftDirtyRef.current ||
       !draftLoadedRef.current ||
@@ -375,10 +404,6 @@ function LazyReplyRound({
       saveBlockedRef.current
     )
       return;
-    if (saveInFlightRef.current) return;
-    const identity = ownershipRef.current;
-    if (identity.turnId === null) return;
-    const key = roundKey(identity);
     const previous = pendingReplyFlushes.get(key);
     let release!: () => void;
     const marker = new Promise<void>((resolve) => {
@@ -563,6 +588,12 @@ function LazyReplyRound({
       const isEligible = await checkEligibility();
       if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
         return;
+      if (!draftLoadedRef.current) await loadReadyRef.current;
+      if (!operationIsCurrent(ownership, activity, mutation)) return;
+      if (!draftLoadedRef.current) {
+        setError("The Lazy Chat reply has not loaded yet. Try sending again.");
+        return;
+      }
 
       if (
         draftDirtyRef.current ||
