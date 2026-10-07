@@ -536,22 +536,6 @@ function LazyReplyRound({
     },
     [scopeIsCurrent, setDraftStatusValue, setReplyText],
   );
-  const insertQuote = useCallback(() => {
-    if (!eligibleRef.current || sendingRef.current || submittedRef.current)
-      return;
-    const ownership = { ...ownershipRef.current };
-    const activity = activityRef.current;
-    const mutation = ++mutationRef.current;
-    if (!scopeIsCurrent(ownership)) return;
-    void checkEligibility().then((isEligible) => {
-      if (!isEligible || !operationIsCurrent(ownership, activity, mutation))
-        return;
-      const quote = "> Lazy Chat quote probe";
-      updateReply(
-        latestTextRef.current ? `${latestTextRef.current}\n\n${quote}` : quote,
-      );
-    });
-  }, [checkEligibility, operationIsCurrent, scopeIsCurrent, updateReply]);
   const submit = async () => {
     if (!eligibleRef.current || sendingRef.current || submittedRef.current)
       return;
@@ -790,17 +774,19 @@ function LazyReplyRound({
           className="mt-1.5 block min-h-[140px] w-full min-w-0 resize-y rounded-md border border-border bg-background p-2.5 font-[inherit] text-foreground"
           value={text}
           onChange={(event) => updateReply(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              event.ctrlKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
         />
       </label>
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={sending || submittedRef.current}
-          className="rounded-md border border-border bg-secondary px-2.5 py-1.5 text-secondary-foreground hover:bg-accent"
-          onClick={insertQuote}
-        >
-          Insert quote
-        </button>
         <button
           type="button"
           className="rounded-md border border-primary bg-primary px-3 py-2 text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"

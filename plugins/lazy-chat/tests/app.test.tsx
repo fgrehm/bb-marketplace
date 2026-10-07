@@ -623,7 +623,7 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
-  it("keeps a saved reply when successful native submission clears the composer", async () => {
+  it("sends the reply with Ctrl+Enter through the native submit pipeline", async () => {
     let saveCount = 0;
     const slot = await renderReply({
       rpc: {
@@ -647,7 +647,7 @@ describe("Lazy Chat reply directive", () => {
     });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
     await screen.findByText("Saved to thread storage.");
-    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
+    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
     await screen.findByText(/autosave paused after local submission/i);
     expect(slot.inspection.composer.text).toBe("");
     expect((editor as HTMLTextAreaElement).value).toBe("reply before send");
@@ -813,7 +813,7 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
-  it("inserts quotes and submits only after an eligibility recheck", async () => {
+  it("submits the private reply through the native composer", async () => {
     const slot = await renderReply({
       rpc: eligible,
       context: { threadId: message.threadId },
@@ -824,12 +824,7 @@ describe("Lazy Chat reply directive", () => {
     });
     const editor = await screen.findByRole("textbox", { name: "Reply draft" });
     fireEvent.change(editor, { target: { value: "draft" } });
-    fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
-    await waitFor(() =>
-      expect((editor as HTMLTextAreaElement).value).toContain(
-        "> Lazy Chat quote probe",
-      ),
-    );
+    await screen.findByText("Saved to thread storage.");
     expect(slot.inspection.composer.text).toBe("");
     fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
     await waitFor(() =>
@@ -840,61 +835,53 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
-  it.each(["quote", "submit"] as const)(
-    "cancels a pending %s when newer thread activity arrives",
-    async (action) => {
-      let activityOccurred = false;
-      let initialCheck = true;
-      const pending: ReturnType<typeof deferred<{ eligible: boolean }>>[] = [];
-      const slot = await renderReply({
-        rpc: {
-          lazy_reply_eligible: () => {
-            if (initialCheck) {
-              initialCheck = false;
-              return Promise.resolve({ eligible: true });
-            }
-            if (activityOccurred) return Promise.resolve({ eligible: false });
-            const check = deferred<{ eligible: boolean }>();
-            pending.push(check);
-            return check.promise;
-          },
+  it("cancels a pending submit when newer thread activity arrives", async (action) => {
+    let activityOccurred = false;
+    let initialCheck = true;
+    const pending: ReturnType<typeof deferred<{ eligible: boolean }>>[] = [];
+    const slot = await renderReply({
+      rpc: {
+        lazy_reply_eligible: () => {
+          if (initialCheck) {
+            initialCheck = false;
+            return Promise.resolve({ eligible: true });
+          }
+          if (activityOccurred) return Promise.resolve({ eligible: false });
+          const check = deferred<{ eligible: boolean }>();
+          pending.push(check);
+          return check.promise;
         },
-        context: { threadId: message.threadId },
-        composer: {
-          text: "",
-          scope: { kind: "thread", threadId: message.threadId },
-        },
-      });
-      const editor = await screen.findByRole("textbox", {
-        name: "Reply draft",
-      });
-      if (action === "submit")
-        fireEvent.change(editor, { target: { value: "reply for submit" } });
-      if (action === "quote")
-        fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
-      if (action === "submit")
-        fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
-      await waitFor(() => expect(pending).toHaveLength(1));
+      },
+      context: { threadId: message.threadId },
+      composer: {
+        text: "",
+        scope: { kind: "thread", threadId: message.threadId },
+      },
+    });
+    const editor = await screen.findByRole("textbox", {
+      name: "Reply draft",
+    });
+    fireEvent.change(editor, { target: { value: "reply for submit" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
+    await waitFor(() => expect(pending).toHaveLength(1));
 
-      activityOccurred = true;
-      await slot.behavior.emitRealtime("thread-activity", {
-        threadId: message.threadId,
-        sequence: 2,
-      });
-      expect(screen.queryByRole("textbox", { name: "Reply draft" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Insert quote" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Send reply" })).toBeNull();
-      await act(async () => {
-        pending[0]!.resolve({ eligible: true });
-        await Promise.resolve();
-      });
-      await screen.findByRole("status");
+    activityOccurred = true;
+    await slot.behavior.emitRealtime("thread-activity", {
+      threadId: message.threadId,
+      sequence: 2,
+    });
+    expect(screen.queryByRole("textbox", { name: "Reply draft" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send reply" })).toBeNull();
+    await act(async () => {
+      pending[0]!.resolve({ eligible: true });
+      await Promise.resolve();
+    });
+    await screen.findByRole("status");
 
-      expect(slot.inspection.composer.text).toBe("");
-      expect(slot.inspection.composer.submits).toHaveLength(0);
-      slot.lifecycle.unmount();
-    },
-  );
+    expect(slot.inspection.composer.text).toBe("");
+    expect(slot.inspection.composer.submits).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
 
   it("refuses submission if eligibility expires after rendering", async () => {
     let checks = 0;
