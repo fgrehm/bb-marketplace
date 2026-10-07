@@ -506,6 +506,56 @@ describe("Lazy Chat reply directive", () => {
     slot.lifecycle.unmount();
   });
 
+  it("keeps load failures distinct from unsaved edits and retries the load", async () => {
+    let loads = 0;
+    let saves = 0;
+    const slot = await renderReply({
+      rpc: {
+        ...eligible,
+        lazy_reply_load: async () => {
+          loads += 1;
+          return loads === 1
+            ? {
+                status: "storage_error" as const,
+                reason: "write_failed" as const,
+              }
+            : {
+                status: "loaded" as const,
+                contributionBody: "Agent contribution",
+                draftBody: null,
+                draftSha256: null,
+              };
+        },
+        lazy_reply_save: async () => {
+          saves += 1;
+          return { status: "saved" as const, sha256: "c".repeat(64) };
+        },
+      },
+      context: { threadId: message.threadId },
+      composer: {
+        text: "",
+        scope: { kind: "thread", threadId: message.threadId },
+      },
+    });
+    const editor = await screen.findByRole("textbox", { name: "Reply draft" });
+    await screen.findByText(
+      "Saved reply could not be loaded. Your text is preserved locally.",
+    );
+    fireEvent.change(editor, { target: { value: "keep this local text" } });
+    expect(screen.getByRole("status").textContent).toMatch(
+      /could not be loaded/i,
+    );
+    expect(saves).toBe(0);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retry thread-storage load" }),
+    );
+    await screen.findByText("Saved to thread storage.");
+    expect(loads).toBe(2);
+    expect(saves).toBe(1);
+    expect((editor as HTMLTextAreaElement).value).toBe("keep this local text");
+    slot.lifecycle.unmount();
+  });
+
   it("preserves local and disk versions after a CAS conflict", async () => {
     let attempts = 0;
     const slot = await renderReply({

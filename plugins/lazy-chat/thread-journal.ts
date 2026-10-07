@@ -53,6 +53,13 @@ function digest(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
+function storageFilePath(rootPath: string, relativePath: string): string {
+  const separator = rootPath.includes("\\") ? "\\" : "/";
+  const root = rootPath.replace(/[\\/]+$/u, "");
+  const relative = relativePath.replaceAll("/", separator);
+  return `${root}${separator}${relative}`;
+}
+
 function validateIdentity(threadId: string, turnId: string, messageId: string) {
   if (!THREAD_ID.test(threadId) || !RECORD_ID.test(turnId))
     throw new TypeError("Invalid thread journal identity");
@@ -397,7 +404,10 @@ export function createThreadJournalStore(
   };
   async function read(path: string) {
     try {
-      const response = await files.read({ ...fileArgs, path });
+      const response = await files.read({
+        ...fileArgs,
+        path: storageFilePath(location.storageRootPath, path),
+      });
       if (
         response.contentEncoding !== "utf8" ||
         digest(response.content) !== response.sha256
@@ -426,7 +436,7 @@ export function createThreadJournalStore(
   ) {
     const response = await files.write({
       ...fileArgs,
-      path,
+      path: storageFilePath(location.storageRootPath, path),
       content,
       contentEncoding: "utf8",
       createParents: true,
@@ -547,7 +557,10 @@ export function createThreadJournalStore(
         reread.content !== tombstone
       )
         return { status: "error" };
-      const removed = await files.remove({ ...fileArgs, path: CURRENT });
+      const removed = await files.remove({
+        ...fileArgs,
+        path: storageFilePath(location.storageRootPath, CURRENT),
+      });
       if (!removed.ok) return { status: "error" };
       return verified;
     }

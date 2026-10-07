@@ -42,6 +42,10 @@ function createHost({
     legacyRecords.map(({ path, content }) => [path, content]),
   );
   const storageCalls: string[] = [];
+  const storageFileKey = (path: string) => {
+    const prefix = `${storageRootPath}/`;
+    return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+  };
   const sha256 = (content: string) =>
     createHash("sha256").update(content, "utf8").digest("hex");
   const events = [
@@ -196,7 +200,9 @@ function createHost({
       },
       files: {
         read: async ({ path }: FileReadArgs) => {
-          const content = fileEntries.get(path);
+          expect(path).toMatch(/^\//u);
+          const key = storageFileKey(path);
+          const content = fileEntries.get(key);
           if (content === undefined)
             throw Object.assign(new Error("missing"), {
               status: 404,
@@ -207,16 +213,18 @@ function createHost({
             content,
             contentEncoding: "utf8",
             sizeBytes: Buffer.byteLength(content),
-            sha256: path === badHashPath ? "0".repeat(64) : sha256(content),
+            sha256: key === badHashPath ? "0".repeat(64) : sha256(content),
           };
         },
         write: async ({ path, content, expectedSha256 }: FileWriteArgs) => {
-          const existing = fileEntries.get(path);
+          expect(path).toMatch(/^\//u);
+          const key = storageFileKey(path);
+          const existing = fileEntries.get(key);
           const currentSha256 =
             existing === undefined ? null : sha256(existing);
           if (expectedSha256 !== undefined && expectedSha256 !== currentSha256)
             return { outcome: "conflict", currentSha256 };
-          fileEntries.set(path, content);
+          fileEntries.set(key, content);
           return {
             outcome: "written",
             sha256: sha256(content),
@@ -224,7 +232,7 @@ function createHost({
           };
         },
         remove: async ({ path }: { path: string }) => {
-          fileEntries.delete(path);
+          fileEntries.delete(storageFileKey(path));
           return { ok: true };
         },
         list: async ({ path }: { path: string }) => ({

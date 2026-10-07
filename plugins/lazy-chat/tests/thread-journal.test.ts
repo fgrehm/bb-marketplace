@@ -25,13 +25,18 @@ function createFiles() {
   const entries = new Map<string, string>();
   const calls: { operation: string; input: unknown }[] = [];
   let failRemove = false;
+  const relativePath = (path: string) =>
+    path.startsWith(`${location.storageRootPath}/`)
+      ? path.slice(location.storageRootPath.length + 1)
+      : path;
   const { sdk } = createFakeSdk({
     pluginId: "lazy-chat",
     overrides: {
       files: {
         read: async (input) => {
           calls.push({ operation: "read", input });
-          const content = entries.get(input.path);
+          expect(input.path).toMatch(/^\//u);
+          const content = entries.get(relativePath(input.path));
           if (content === undefined)
             throw Object.assign(new Error("missing"), {
               status: 404,
@@ -47,14 +52,16 @@ function createFiles() {
         },
         write: async (input) => {
           calls.push({ operation: "write", input });
-          const current = entries.get(input.path);
+          expect(input.path).toMatch(/^\//u);
+          const key = relativePath(input.path);
+          const current = entries.get(key);
           const currentSha256 = current === undefined ? null : sha256(current);
           if (
             input.expectedSha256 !== undefined &&
             input.expectedSha256 !== currentSha256
           )
             return { outcome: "conflict", currentSha256 };
-          entries.set(input.path, input.content);
+          entries.set(key, input.content);
           return {
             outcome: "written",
             sha256: sha256(input.content),
@@ -67,7 +74,7 @@ function createFiles() {
             failRemove = false;
             return { ok: false };
           }
-          entries.delete(input.path);
+          entries.delete(relativePath(input.path));
           return { ok: true };
         },
         list: async (input) => {
@@ -101,7 +108,7 @@ describe("thread journal persistence", () => {
           input: expect.objectContaining({
             hostId: location.hostId,
             rootPath: location.storageRootPath,
-            path: ".lazyai/bb/current.md",
+            path: `${location.storageRootPath}/.lazyai/bb/current.md`,
           }),
         }),
       ]),

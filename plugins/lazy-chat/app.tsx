@@ -554,6 +554,7 @@ function LazyReplyRound({
       setReplyText(next);
       replyRevisionRef.current += 1;
       draftDirtyRef.current = true;
+      if (!draftLoadedRef.current) return;
       if (!saveBlockedRef.current) {
         setDraftStatusValue("unsaved");
         scheduleSaveRef.current();
@@ -761,12 +762,18 @@ function LazyReplyRound({
   const displayContext = rawContext.slice(0, 4000);
   const statusText = {
     loading: "Loading saved reply…",
-    unsaved: "Reply changes are not yet saved.",
+    unsaved: draftLoaded
+      ? "Reply changes are not yet saved."
+      : "Reply changes are held locally until the saved reply loads.",
     saving: "Saving reply to thread storage…",
     saved: "Saved to thread storage.",
-    error: "Reply save failed. Your text is preserved here.",
+    error: draftLoaded
+      ? "Reply save failed. Your text is preserved here."
+      : "Saved reply could not be loaded. Your text is preserved locally.",
     conflict: "A different saved reply exists. Choose which version to keep.",
-    unavailable: "Thread storage is unavailable. This reply is not persisted.",
+    unavailable: draftLoaded
+      ? "Thread storage is unavailable. This reply is not persisted."
+      : "Thread storage is unavailable; the saved reply could not be loaded.",
     invalid: "This contribution cannot own a reply draft.",
     paused:
       "Autosave paused after local submission. Provider delivery is not confirmed.",
