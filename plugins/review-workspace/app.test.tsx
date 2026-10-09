@@ -18,6 +18,7 @@ vi.mock("@pierre/diffs/react", () => ({
         data-testid="pierre-diff"
         data-expand-unchanged={String(props.options.expandUnchanged)}
         data-hunk-separators={props.options.hunkSeparators}
+        data-line-diff-type={props.options.lineDiffType}
       />
       <div
         onPointerUp={() =>
@@ -1150,6 +1151,7 @@ describe("Review Workspace app", () => {
     const diff = await slot.findByTestId("pierre-diff");
     expect(diff.getAttribute("data-expand-unchanged")).toBe("false");
     expect(diff.getAttribute("data-hunk-separators")).toBe("line-info");
+    expect(diff.getAttribute("data-line-diff-type")).toBe("word-alt");
     slot.getByRole("button", { name: "Load context" }).click();
     await vi.waitFor(() => {
       expect(slot.inspection.rpcCalls).toContainEqual({

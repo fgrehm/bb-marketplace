@@ -321,6 +321,7 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
   const options = useMemo(
     () => ({
       diffStyle: "unified" as const,
+      lineDiffType: "word-alt" as const,
       overflow: wrapLines ? ("wrap" as const) : ("scroll" as const),
       enableLineSelection: true,
       disableFileHeader: true,
