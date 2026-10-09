@@ -51,6 +51,8 @@ The host worker reads Pi's `auth.json` from `$PI_CODING_AGENT_DIR/auth.json`, or
 
 Pi's `openai` sign-in uses Sign in with ChatGPT (SIWC) to authorize eligible Responses API inference. OpenAI's public SIWC docs do not provide an API for reading Codex usage totals or reset times, and the SIWC access token is not accepted by the ChatGPT backend usage endpoint. When this credential is present without a usable legacy Codex credential, the Codex card explains that usage is unavailable and links users to ChatGPT settings. The plugin does not send the SIWC token to the Codex usage endpoint.
 
+Ollama Cloud quota polling uses `https://ollama.com/api/balance`, not the activity statistics returned by `/api/usage`. The card converts session, weekly, and monthly remaining percentages into usage bars. When those windows are absent, it derives usage from the included balance and allowance, with renewal from the billing period's end. Purchased credits alone do not define a quota percentage, so purchased-only responses cannot populate the current card.
+
 Codex usage polling therefore requires Pi's legacy `openai-codex` OAuth credential, including its account ID. If Pi no longer supports obtaining that credential, Codex's live usage card cannot be populated by this plugin until OpenAI or Pi provides a supported usage API. The Codex and Ollama usage endpoints are undocumented and may change. Missing credentials are shown as "not configured"; unreadable or malformed auth data is reported as an error. Codex authentication failures from its legacy endpoint are shown as expired.
 
 </details>

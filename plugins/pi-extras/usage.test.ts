@@ -61,21 +61,63 @@ test("parses all OpenCode Go quota windows", () => {
   ]);
 });
 
-test("parses Ollama's fractional monthly quota", () => {
-  assert.deepEqual(parseOllamaUsage({ limits: { monthly: { usage: 0.08 } } }), [
-    { label: "Monthly (30d)", usedPercent: 8, resetsAt: null },
+test("parses Ollama balance windows as percent used with quota resets", () => {
+  assert.deepEqual(parseOllamaUsage({ included: {
+    session: { remaining_percent: 60, resets_at: "2026-10-07T08:00:00Z" },
+    weekly: { remaining_percent: 93 },
+    monthly: { remaining_percent: 66 },
+    balance_usd: 66.74607,
+    allowance_usd: 300,
+    period: { until: "2026-10-12T09:32:38Z" },
+  } }), [
+    { label: "5 hours", usedPercent: 40, resetsAt: "2026-10-07T08:00:00.000Z" },
+    { label: "Weekly", usedPercent: 7, resetsAt: null },
+    { label: "Monthly (30d)", usedPercent: 34, resetsAt: null },
   ]);
 });
 
-test("ignores Ollama's rolling activity period as a reset time", () => {
-  // activity.period is a rolling "last 4 weeks" window (ending_at ≈ now),
-  // not a quota reset - it must never surface as a reset timestamp.
-  assert.deepEqual(parseOllamaUsage({
-    activity: { cost: "0.00000", period: { type: "last_4_weeks", starting_at: "2026-08-09T00:00:00Z", ending_at: "2026-09-08T23:59:59Z" }, models: [] },
-    limits: { monthly: { usage: 0.08, models: [{ name: "glm-5.3", request_count: 3 }] } },
-  }), [
-    { label: "Monthly (30d)", usedPercent: 8, resetsAt: null },
+test("uses Ollama's included allowance and billing renewal when quota windows are absent", () => {
+  assert.deepEqual(parseOllamaUsage({ included: {
+    balance_usd: 55.5, allowance_usd: 60,
+    period: { from: "2026-09-12T09:32:38Z", until: "2026-10-12T09:32:38Z" },
+  }, purchased: { balance_usd: 0 } }), [
+    { label: "Included allowance", usedPercent: 8, resetsAt: "2026-10-12T09:32:38.000Z" },
   ]);
+});
+
+test("clamps finite Ollama usage to the progress bar range", () => {
+  for (const [remaining, usedPercent] of [[-5, 100], [105, 0]] as const) {
+    assert.deepEqual(parseOllamaUsage({ included: { monthly: { remaining_percent: remaining } } }), [
+      { label: "Monthly (30d)", usedPercent, resetsAt: null },
+    ]);
+  }
+});
+
+test("rejects malformed Ollama balances rather than showing misleading quota usage", () => {
+  for (const payload of [
+    null, {}, { limits: { monthly: { usage: 0.08 } } },
+    { totals: { request_count: 12 } },
+    { included: { balance_usd: 55.5 } },
+    { included: { balance_usd: "55.5", allowance_usd: 60 } },
+    { included: { balance_usd: 0, allowance_usd: 0 } },
+    { included: { monthly: { remaining_percent: NaN } } },
+    { included: { monthly: { remaining_percent: Infinity } } },
+    { included: { monthly: { remaining_percent: 80, resets_at: 7 } } },
+    { included: { monthly: { remaining_percent: 80 }, weekly: {} } },
+    { included: { monthly: { remaining_percent: 80 }, balance_usd: "bad", allowance_usd: 60 } },
+    { included: { balance_usd: 55.5, allowance_usd: 60, period: null } },
+    { included: { balance_usd: 55.5, allowance_usd: 60, period: { until: {} } } },
+    { included: { balance_usd: 55.5, allowance_usd: 60, period: { from: 7 } } },
+    { included: { monthly: { remaining_percent: 80 } }, purchased: {} },
+    { purchased: { balance_usd: 1.25 } },
+  ]) assert.equal(parseOllamaUsage(payload), null);
+});
+
+test("does not use activity dates or invalid date strings as Ollama quota resets", () => {
+  assert.deepEqual(parseOllamaUsage({
+    included: { monthly: { remaining_percent: 92, resets_at: "not a date" } },
+    activity: { period: { ending_at: "2026-09-08T23:59:59Z" } },
+  }), [{ label: "Monthly (30d)", usedPercent: 8, resetsAt: null }]);
 });
 
 test("fails open when Pi has no credential file", async () => {
@@ -135,7 +177,8 @@ test("uses fake HTTP responses and marks only rejected credentials as expired", 
       const hostname = new URL(url).hostname;
       if (hostname === "chatgpt.com") return new Response("", { status: 401 });
       if (hostname === "opencode.ai") return Response.json({ usage: { rolling: { percent: 12, resetsAt: "2026-09-03T15:00:00Z" } } });
-      return Response.json({ limits: { monthly: { usage: 0.25 } } });
+      assert.equal(url, "https://ollama.com/api/balance");
+      return Response.json({ included: { monthly: { remaining_percent: 75 } } });
     },
   });
 
@@ -143,6 +186,9 @@ test("uses fake HTTP responses and marks only rejected credentials as expired", 
     { id: "codex", status: "expired" },
     { id: "opencode-go", status: "ok" },
     { id: "ollama-cloud", status: "ok" },
+  ]);
+  assert.deepEqual(usage.sources[2].windows, [
+    { label: "Monthly (30d)", usedPercent: 25, resetsAt: null },
   ]);
   assert.deepEqual(calls.map(({ authorization }) => authorization), [
     "Bearer codex-token", "Bearer go-token", "Bearer ollama-token",

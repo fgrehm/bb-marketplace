@@ -42,7 +42,7 @@ export interface UsageReaderDependencies {
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
-const OLLAMA_USAGE_URL = "https://ollama.com/api/usage";
+const OLLAMA_USAGE_URL = "https://ollama.com/api/balance";
 
 function asRecord(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -131,13 +131,41 @@ export function parseOpenCodeGoUsage(payload: unknown): UsageWindow[] | null {
 }
 
 export function parseOllamaUsage(payload: unknown): UsageWindow[] | null {
-  const monthly = asRecord(asRecord(payload)?.limits)?.monthly;
-  const usage = numberValue(asRecord(monthly)?.usage);
-  if (usage === null || usage < 0 || usage > 1) return null;
-  // Ollama's API exposes no quota reset time. Its activity.period is a
-  // rolling "last 4 weeks" window (ending_at ≈ now), not a reset date, so
-  // resetsAt stays null rather than showing a bogus "resets now".
-  return [{ label: "Monthly (30d)", usedPercent: Math.round(usage * 100), resetsAt: null }];
+  const root = asRecord(payload);
+  const included = asRecord(root?.included);
+  if (included === null) return null;
+  if (root?.purchased !== undefined && numberValue(asRecord(root.purchased)?.balance_usd) === null) return null;
+
+  const balance = numberValue(included.balance_usd);
+  const allowance = numberValue(included.allowance_usd);
+  const hasAllowance = included.balance_usd !== undefined || included.allowance_usd !== undefined;
+  if (hasAllowance && (balance === null || allowance === null)) return null;
+  const period = asRecord(included.period);
+  if (included.period !== undefined && (
+    period === null ||
+    (period.from !== undefined && typeof period.from !== "string") ||
+    (period.until !== undefined && typeof period.until !== "string")
+  )) return null;
+
+  // /api/usage reports activity, not quota. Only balance windows and the
+  // included billing period provide quota reset or allowance renewal dates.
+  const windows: UsageWindow[] = [];
+  const clamp = (used: number) => Math.round(Math.min(100, Math.max(0, used)));
+  for (const [key, label] of [["session", "5 hours"], ["weekly", "Weekly"], ["monthly", "Monthly (30d)"]] as const) {
+    if (included[key] === undefined) continue;
+    const window = asRecord(included[key]);
+    const remaining = numberValue(window?.remaining_percent);
+    if (remaining === null || (window?.resets_at !== undefined && typeof window.resets_at !== "string")) return null;
+    windows.push({ label, usedPercent: clamp(100 - remaining), resetsAt: resetTime(window?.resets_at) });
+  }
+  if (windows.length === 0 && balance !== null && allowance !== null && allowance > 0) {
+    windows.push({
+      label: "Included allowance",
+      usedPercent: clamp(((allowance - balance) / allowance) * 100),
+      resetsAt: resetTime(period?.until),
+    });
+  }
+  return windows.length === 0 ? null : windows;
 }
 
 const SOURCES = [
