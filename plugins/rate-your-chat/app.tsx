@@ -9,7 +9,14 @@ import {
 import * as Dialog from "@radix-ui/react-dialog";
 import { Button } from "./components/ui/button";
 import { Icon } from "./components/ui/icon";
-import { SCORE_LABELS, USE_CASES, type Prompt, type Rating } from "./model";
+import {
+  SCORE_LABELS,
+  USE_CASES,
+  useCaseLabel,
+  type Prompt,
+  type Rating,
+  type UseCase,
+} from "./model";
 import type { rpcContract, RatingSummary } from "./server";
 
 const errorText = (error: unknown) =>
@@ -36,22 +43,30 @@ function FeedbackForm({
   pending: boolean;
   onSubmit: (feedback: {
     score: number;
-    useCase: (typeof USE_CASES)[number];
+    useCases: UseCase[];
     note: string;
   }) => Promise<void>;
 }) {
   const id = useId();
   const [score, setScore] = useState(rating?.score ?? 0);
-  const [useCase, setUseCase] = useState<(typeof USE_CASES)[number]>(
-    rating?.useCase ?? "coding",
+  const [useCases, setUseCases] = useState<UseCase[]>(
+    rating?.useCases ?? ["coding"],
   );
   const [note, setNote] = useState(rating?.note ?? "");
+  const toggleUseCase = (value: UseCase) =>
+    setUseCases((current) => {
+      const next = current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value];
+      return USE_CASES.filter((item) => next.includes(item));
+    });
   return (
     <form
       className="space-y-5"
       onSubmit={(event) => {
         event.preventDefault();
-        if (score && !pending) void onSubmit({ score, useCase, note });
+        if (score && useCases.length && !pending)
+          void onSubmit({ score, useCases, note });
       }}
     >
       <fieldset disabled={pending} className="space-y-2">
@@ -85,24 +100,42 @@ function FeedbackForm({
           <span>Very useful</span>
         </div>
       </fieldset>
-      <div className="space-y-2">
-        <label htmlFor={`${id}-case`} className="text-sm font-medium">
-          What was it for?
-        </label>
-        <select
-          id={`${id}-case`}
-          value={useCase}
-          disabled={pending}
-          className={fieldClass}
-          onChange={(event) => setUseCase(event.target.value as typeof useCase)}
-        >
-          {USE_CASES.map((value) => (
-            <option key={value} value={value}>
-              {value[0]!.toUpperCase() + value.slice(1)}
-            </option>
-          ))}
-        </select>
-      </div>
+      <fieldset disabled={pending} className="space-y-2">
+        <legend className="mb-2 text-sm font-medium">
+          What was it for?{" "}
+          <span className="font-normal text-muted-foreground">
+            (select all that apply)
+          </span>
+        </legend>
+        <div className="flex flex-wrap gap-2">
+          {USE_CASES.map((value) => {
+            const selected = useCases.includes(value);
+            return (
+              <label
+                key={value}
+                className={`cursor-pointer rounded-lg border px-3 py-1.5 text-sm ${selected ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-muted"}`}
+              >
+                <input
+                  className="sr-only peer"
+                  type="checkbox"
+                  name={`${id}-use-case`}
+                  value={value}
+                  checked={selected}
+                  onChange={() => toggleUseCase(value)}
+                />
+                <span className="peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
+                  {useCaseLabel(value)}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        {useCases.length === 0 ? (
+          <p role="alert" className="text-xs text-destructive">
+            Choose at least one purpose.
+          </p>
+        ) : null}
+      </fieldset>
       <div className="space-y-2">
         <label htmlFor={`${id}-note`} className="text-sm font-medium">
           What worked or didn't?{" "}
@@ -121,7 +154,7 @@ function FeedbackForm({
       </div>
       <Button
         type="submit"
-        disabled={pending || score === 0}
+        disabled={pending || score === 0 || useCases.length === 0}
         className="w-full"
       >
         {pending ? "Saving locally…" : "Save rating"}
@@ -432,7 +465,7 @@ function RatingsPage() {
           [
             JSON.stringify(
               {
-                schemaVersion: 1,
+                schemaVersion: 2,
                 exportedAt: new Date().toISOString(),
                 ratings,
               },
@@ -510,8 +543,8 @@ function RatingsPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h2 className="font-medium break-words">{rating.title}</h2>
-                  <p className="mt-1 text-xs text-muted-foreground capitalize">
-                    {rating.useCase} ·{" "}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {rating.useCases.map(useCaseLabel).join(", ")} ·{" "}
                     {new Date(rating.updatedAt).toLocaleDateString()}
                   </p>
                 </div>

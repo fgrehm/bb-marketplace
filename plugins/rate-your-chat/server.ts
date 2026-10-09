@@ -3,16 +3,17 @@ import { z } from "zod";
 import { captureHistory, HISTORY_TYPES, summarizeVariations } from "./history";
 import {
   historySchema,
+  normalizeStoredRating,
   promptSchema,
   ratingSchema,
-  USE_CASES,
+  useCasesSchema,
   type Rating,
 } from "./model";
 
 const threadIdSchema = z.string().min(1).max(200);
 const feedbackSchema = z.object({
   score: z.number().int().min(1).max(5),
-  useCase: z.enum(USE_CASES),
+  useCases: useCasesSchema,
   note: z.string().trim().max(4000),
 });
 const variationSchema = z.object({
@@ -101,7 +102,9 @@ export default function plugin(bb: BbPluginApi) {
     const row = db
       .prepare("SELECT record FROM ratings WHERE thread_id = ?")
       .get(threadId) as { record: string } | undefined;
-    return row ? ratingSchema.parse(JSON.parse(row.record)) : null;
+    return row
+      ? ratingSchema.parse(normalizeStoredRating(JSON.parse(row.record)))
+      : null;
   };
   const checkRevision = (threadId: string, expected: number | null) => {
     const current = get(threadId);
@@ -252,7 +255,7 @@ export default function plugin(bb: BbPluginApi) {
       archivedAt,
       expectedRevision,
       score,
-      useCase,
+      useCases,
       note,
     }) {
       if (!hasPrompt(threadId, archivedAt))
@@ -293,7 +296,7 @@ export default function plugin(bb: BbPluginApi) {
           title: thread.title ?? thread.titleFallback ?? threadId,
           archivedAt,
           score,
-          useCase,
+          useCases,
           note,
           history,
           revision: nextRevision(),
@@ -309,14 +312,14 @@ export default function plugin(bb: BbPluginApi) {
       changed();
       return rating;
     },
-    editRating({ threadId, expectedRevision, score, useCase, note }) {
+    editRating({ threadId, expectedRevision, score, useCases, note }) {
       const next = db.transaction(() => {
         const current = checkRevision(threadId, expectedRevision);
         if (!current) throw new Error("Rating not found.");
         const rating = {
           ...current,
           score,
-          useCase,
+          useCases,
           note,
           revision: nextRevision(),
           updatedAt: Date.now(),
@@ -348,7 +351,9 @@ export default function plugin(bb: BbPluginApi) {
         )
         .all(offset) as { record: string }[];
       const ratings = rows.map((row) => {
-        const rating = ratingSchema.parse(JSON.parse(row.record));
+        const rating = ratingSchema.parse(
+          normalizeStoredRating(JSON.parse(row.record)),
+        );
         const { observations, ...history } = rating.history;
         const variations = summarizeVariations(observations);
         return {

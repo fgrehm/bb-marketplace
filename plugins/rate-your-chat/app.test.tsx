@@ -29,6 +29,75 @@ describe("archive-only UI", () => {
     expect(slot.queryByRole("dialog")).toBe(null);
     slot.lifecycle.unmount();
   });
+  it("allows multiple purposes and requires at least one", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    let archived = false;
+    const saves: Array<Record<string, unknown>> = [];
+    const slot = renderSlot<{}, typeof rpcContract>(
+      app.appOverlays[0]!,
+      {},
+      {
+        rpc: {
+          pending: () => ({
+            prompt: archived ? prompt : null,
+            count: archived ? 1 : 0,
+          }),
+          getRating: () => null,
+          savePrompt: (input) => {
+            saves.push(input);
+            return {
+              ...input,
+              projectId: "proj_a",
+              title: prompt.title,
+              providerId: "pi",
+              archivedAt: prompt.archivedAt,
+              createdAt: 1000,
+              updatedAt: 1000,
+              revision: 1,
+              history: {
+                capturedAt: 1000,
+                throughSeq: 0,
+                status: "partial",
+                warnings: [],
+                observations: [],
+              },
+            };
+          },
+          dismiss: () => ({ removed: true }),
+          editRating: () => {
+            throw new Error("Unexpected edit");
+          },
+          deleteRating: () => {
+            throw new Error("Unexpected delete");
+          },
+          list: () => ({ ratings: [], total: 0 }),
+          exportPage: () => ({ rating: null }),
+        },
+      },
+    );
+    await waitFor(() => expect(slot.inspection.rpcCalls).toHaveLength(1));
+    archived = true;
+    await slot.behavior.emitRealtime("changed", null);
+    await slot.findByRole("dialog");
+    const coding = slot.getByRole("checkbox", { name: "Coding" });
+    expect((coding as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(slot.getByRole("checkbox", { name: "Review" }));
+    fireEvent.click(coding);
+    fireEvent.click(slot.getByRole("checkbox", { name: "Review" }));
+    fireEvent.click(slot.getByRole("radio", { name: "4, Useful" }));
+    const save = slot.getByRole("button", { name: "Save rating" });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(slot.getByRole("checkbox", { name: "Coding" }));
+    fireEvent.click(slot.getByRole("checkbox", { name: "Review" }));
+    expect((save as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]).toMatchObject({
+      score: 4,
+      useCases: ["coding", "review"],
+    });
+    slot.lifecycle.unmount();
+  });
   it("opens on archive, preserves failed-save drafts, then saves or skips without sending chat messages", async () => {
     const app = await loadPluginApp(() => import("./app"));
     let archived = false;
@@ -177,7 +246,7 @@ describe("archive-only UI", () => {
       title: prompt.title,
       providerId: "pi",
       score: 4,
-      useCase: "debugging",
+      useCases: ["debugging"],
       note: "Original note",
       archivedAt: prompt.archivedAt,
       createdAt: 1000,
@@ -248,7 +317,7 @@ describe("archive-only UI", () => {
             threadId: string;
             expectedRevision: number;
             score: number;
-            useCase: Rating["useCase"];
+            useCases: Rating["useCases"];
             note: string;
           }) => {
             records = records.map((record) =>
@@ -281,7 +350,7 @@ describe("archive-only UI", () => {
       reader.readAsText(downloads[0]!);
     });
     expect(JSON.parse(blobText)).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       ratings: [first, second],
     });
     expect(click).toHaveBeenCalledOnce();

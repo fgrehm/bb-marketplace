@@ -7,11 +7,11 @@ This is an uncatalogued experiment for [BB](https://github.com/get-bb/bb). It ne
 ## Workflow
 
 1. Archive a visible chat normally. Once the archive completes, a skippable rating dialog appears. There is no always-visible rating button, and archiving is never blocked by the plugin.
-2. Choose usefulness from **1 (Not useful)** to **5 (Very useful)**, select a use case, and optionally leave a note.
+2. Choose usefulness from **1 (Not useful)** to **5 (Very useful)**, select one or more use cases (for example coding and review for a mixed chat), and optionally leave a note.
 3. **Save rating** captures the chat's recorded model and reasoning variations and saves feedback locally. **Skip this chat**, Escape, or clicking outside dismisses this archive's prompt without storing a rating.
 4. Open **Chat ratings** in the sidebar to review, edit, delete, or export saved feedback as JSON. Editing feedback preserves its captured history; archiving the chat again offers another prompt and saving updates that history.
 
-There is one editable rating per chat, shared across BB clients. Concurrent stale edits are refused instead of overwriting newer feedback, including after deletion and recreation. Failed saves retain the draft. Skipped prompts stay dismissed across reloads. Multiple archives, including cascade archives, are queued oldest first; hidden threads are ignored. Pending prompts survive plugin reloads. Before offering a prompt, the plugin checks current local thread metadata and removes obsolete prompts, including when an unarchive or delete event was missed while disabled. Reconciliation checks up to 20 queued prompts per request with a 10-second deadline; lookup failures retain prompts for retry. Archives made while the plugin is disabled or before installation are not backfilled.
+There is one editable rating per chat, shared across BB clients. Ratings saved before multiple purposes were supported are read as a single-item use-case list and rewritten in the new shape when edited. Concurrent stale edits are refused instead of overwriting newer feedback, including after deletion and recreation. Failed saves retain the draft. Skipped prompts stay dismissed across reloads. Multiple archives, including cascade archives, are queued oldest first; hidden threads are ignored. Pending prompts survive plugin reloads. Before offering a prompt, the plugin checks current local thread metadata and removes obsolete prompts, including when an unarchive or delete event was missed while disabled. Reconciliation checks up to 20 queued prompts per request with a 10-second deadline; lookup failures retain prompts for retry. Archives made while the plugin is disabled or before installation are not backfilled.
 
 ## Screenshots
 
@@ -25,7 +25,7 @@ A short, optional whole-chat rating, shown only after an archive.
 
 ### Review your feedback
 
-Saved ratings show the use case and recorded model/reasoning variations, with edit, delete, and export controls.
+Saved ratings show the use cases and recorded model/reasoning variations, with edit, delete, and export controls.
 
 ![Local chat ratings with model and reasoning variations](assets/screenshots/chat-ratings.png)
 
@@ -43,7 +43,7 @@ Each save has a 30-second read deadline and captures up to 10,000 relevant event
 
 Uses BB's plugin-owned SQLite database at `<BB dataDir>/plugins/rate-your-chat/data.db`, on the **BB server**, not necessarily the device running your browser. The `ratings` table holds the feedback and captured history, and `observations` has SQL-queryable model/reasoning evidence. The `prompts` table tracks pending archive prompts, and `revision_clock` retains a counter to prevent stale writes after feedback deletion. The database is not encrypted by this plugin.
 
-Feedback includes thread/project identifiers, a thread title snapshot, provider ID, archive/save times, usefulness, use case, notes, and execution metadata. Filtered request events can contain prompt content in memory, but only execution metadata is extracted: prompt text, replies, tool output, credentials, and raw event payloads are never copied into the feedback database or export. Notes and titles may still be sensitive.
+Feedback includes thread/project identifiers, a thread title snapshot, provider ID, archive/save times, usefulness, use cases, notes, and execution metadata. Filtered request events can contain prompt content in memory, but only execution metadata is extracted: prompt text, replies, tool output, credentials, and raw event payloads are never copied into the feedback database or export. Notes and titles may still be sensitive.
 
 No feedback is added to chat messages, thread metadata, instructions, logs, agent tools, or bundled skills. No external service, telemetry, API key, or account is used. BB plugins and local agents are full-trust code; lack of an agent-facing tool is not an access-control boundary. All clients connected to the same BB server share this dataset.
 

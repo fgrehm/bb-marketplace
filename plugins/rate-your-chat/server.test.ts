@@ -55,7 +55,7 @@ const save = {
   archivedAt: 1000,
   expectedRevision: null,
   score: 4,
-  useCase: "coding",
+  useCases: ["coding"],
   note: "Worked well",
 };
 
@@ -179,16 +179,29 @@ describe("archive feedback", () => {
         note: "x".repeat(4001),
       }),
     ).rejects.toThrow();
+    await expect(
+      harness.behavior.callRpc("savePrompt", { ...save, useCases: [] }),
+    ).rejects.toThrow();
+    await expect(
+      harness.behavior.callRpc("savePrompt", {
+        ...save,
+        useCases: ["coding", "coding"],
+      }),
+    ).rejects.toThrow();
     await harness.behavior.callRpc("savePrompt", save);
     const reads = harness.inspection.sdk.calls.length;
     const edited = await harness.behavior.callRpc("editRating", {
       threadId: thread.id,
       score: 5,
-      useCase: "coding",
+      useCases: ["coding", "review"],
       note: save.note,
       expectedRevision: 1,
     });
-    expect(edited).toMatchObject({ revision: 2, score: 5 });
+    expect(edited).toMatchObject({
+      revision: 2,
+      score: 5,
+      useCases: ["coding", "review"],
+    });
     expect(harness.inspection.sdk.calls).toHaveLength(reads);
     await expect(
       harness.behavior.callRpc("deleteRating", {
@@ -201,7 +214,7 @@ describe("archive feedback", () => {
         threadId: thread.id,
         expectedRevision: 1,
         score: 2,
-        useCase: "other",
+        useCases: ["other"],
         note: "stale",
       }),
     ).rejects.toThrow(/changed/);
@@ -400,7 +413,7 @@ describe("archive feedback", () => {
         threadId: thread.id,
         expectedRevision: 1,
         score: 1,
-        useCase: "other",
+        useCases: ["other"],
         note: "Stale editor",
       }),
     ).rejects.toThrow(/changed/);
@@ -431,10 +444,30 @@ describe("archive feedback", () => {
       threadId: thread.id,
       expectedRevision: 50,
       score: 5,
-      useCase: "coding",
+      useCases: ["coding"],
       note: "Updated",
     });
     expect(next).toMatchObject({ revision: 51 });
+  });
+  it("reads legacy single-purpose records as one-element use cases", async () => {
+    const { bb, harness } = await setup();
+    await harness.behavior.emitThreadEvent("thread.archived", { thread });
+    const saved = (await harness.behavior.callRpc(
+      "savePrompt",
+      save,
+    )) as Record<string, unknown>;
+    const legacy = { ...saved };
+    delete legacy.useCases;
+    bb.storage
+      .database()
+      .prepare("UPDATE ratings SET record = ? WHERE thread_id = ?")
+      .run(JSON.stringify({ ...legacy, useCase: "review" }), thread.id);
+    expect(
+      await harness.behavior.callRpc("getRating", { threadId: thread.id }),
+    ).toMatchObject({ useCases: ["review"] });
+    expect(await harness.behavior.callRpc("list", { offset: 0 })).toMatchObject(
+      { ratings: [{ useCases: ["review"] }] },
+    );
   });
   it.each([
     { name: "unarchive", overrides: { archivedAt: null } },
