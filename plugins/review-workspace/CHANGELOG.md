@@ -2,8 +2,6 @@
 
 ## [Unreleased]
 
-Not released yet; this is the initial feature set of the plugin.
-
 - Create immutable review snapshots of uncommitted changes, a single commit, or committed changes against a base branch, and compare each file against its latest explicitly marked viewed revision.
 - Read changes in two modes: Files, one continuous document with jump navigation and per-file collapse/viewed controls, or Tour, agent-authored sections that interleave explanation with exact code excerpts across files.
 - Leave inline or whole-file comments, a review note, and replies to AI comments; edit or delete your own unsent feedback, and send everything unsent and unresolved in one explicit batch to the owning thread.

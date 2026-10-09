@@ -207,6 +207,116 @@ describe("Review Workspace app", () => {
     }
   });
 
+  it("collapses a file after marking it viewed and preserves viewed state when expanded", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        rpc: {
+          review: () => ({ review: reviewFixture() }),
+          revisions: () => ({ revisions: [] }),
+          markFileViewed: () => ({ viewedCount: 1 }),
+        } as any,
+      },
+    );
+    await slot.findByRole("navigation", { name: "Changed files" });
+    const section = slot.container.querySelector(
+      '[data-review-file="src/example.ts"]',
+    )!;
+    fireEvent.click(
+      within(section as HTMLElement).getByRole("button", {
+        name: "Mark viewed",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        within(section as HTMLElement).queryByTestId("pierre-diff"),
+      ).toBeNull(),
+    );
+    expect(
+      within(section as HTMLElement).getByText(
+        "Diff collapsed. Expand to review the changes.",
+      ),
+    ).toBeTruthy();
+    expect(
+      within(section as HTMLElement)
+        .getByRole("button", { name: "Viewed ✓" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    fireEvent.click(
+      within(section as HTMLElement).getByRole("button", {
+        name: "Expand src/example.ts",
+      }),
+    );
+    expect(
+      within(section as HTMLElement).getByTestId("pierre-diff"),
+    ).toBeTruthy();
+    expect(
+      within(section as HTMLElement)
+        .getByRole("button", { name: "Viewed ✓" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    slot.lifecycle.unmount();
+  });
+
+  it("scrolls the mobile review document to the next file below its sticky toolbar", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const base = reviewFixture();
+    const review = {
+      ...base,
+      files: [
+        ...base.files,
+        {
+          ...base.files[0]!,
+          path: "docs/guide.md",
+          patch: patch.replaceAll("src/example.ts", "docs/guide.md"),
+        },
+      ],
+    };
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        rpc: {
+          review: () => ({ review }),
+          revisions: () => ({ revisions: [] }),
+          markFileViewed: () => ({ viewedCount: 1 }),
+        } as any,
+      },
+    );
+    const fileSelect = await slot.findByLabelText("Changed file", {
+      exact: true,
+    });
+    const container = slot.getByRole("region", { name: "Review document" });
+    const nextSection = slot.container.querySelector(
+      '[data-review-file="docs/guide.md"]',
+    )!;
+    const scrollTo = vi.fn();
+    Object.defineProperty(container, "scrollTop", {
+      configurable: true,
+      value: 20,
+    });
+    Object.defineProperty(container, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    container.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    nextSection.getBoundingClientRect = () => ({ top: 500 }) as DOMRect;
+    const sticky = container.querySelector<HTMLElement>(".sticky")!;
+    Object.defineProperty(sticky, "offsetHeight", {
+      configurable: true,
+      value: 40,
+    });
+
+    fireEvent.click(slot.getByRole("button", { name: "Viewed & next" }));
+    await vi.waitFor(() => {
+      expect((fileSelect as HTMLSelectElement).value).toBe("docs/guide.md");
+      expect(scrollTo).toHaveBeenCalledWith({ top: 380, behavior: "auto" });
+    });
+    slot.lifecycle.unmount();
+  });
+
   it("keeps a continuous document and saves inline feedback against the selected file rather than stale active navigation", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const base = reviewFixture();
@@ -1100,6 +1210,12 @@ describe("Review Workspace app", () => {
     expect(dialog.getAttribute("data-bb-plugin")).toBe("test-plugin");
     expect(dialog.hasAttribute("data-bb-plugin-root")).toBe(true);
     expect(dialog.hasAttribute("data-bb-portaled-overlay")).toBe(true);
+    expect((dialog as HTMLElement).style.paddingTop).toBe(
+      "calc(1rem + env(safe-area-inset-top))",
+    );
+    expect((dialog as HTMLElement).style.paddingBottom).toBe(
+      "calc(1rem + env(safe-area-inset-bottom))",
+    );
     expect(slot.getByRole("heading", { name: "Review feedback" })).toBeTruthy();
 
     fireEvent.click(
@@ -1939,7 +2055,7 @@ describe("Review Workspace app", () => {
       expect((fileSelect as HTMLSelectElement).disabled).toBe(true);
     });
     expect(slot.getByText("No matching files.")).toBeTruthy();
-    expect(slot.getAllByTestId("pierre-diff")).toHaveLength(2);
+    expect(slot.getAllByTestId("pierre-diff")).toHaveLength(1);
     expect(slot.queryByRole("dialog")).toBeNull();
     slot.lifecycle.unmount();
   });

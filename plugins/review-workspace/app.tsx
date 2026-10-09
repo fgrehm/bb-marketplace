@@ -2241,8 +2241,21 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         setSelectionSurface(`file:${selectionPath}`);
       setActiveSurface(`file:${path}`);
       requestAnimationFrame(() => {
+        const container = scrollSectionRef.current;
         const surface = surfaceRefs.current.get(`file:${path}`);
-        surface?.scrollIntoView({ block: "start" });
+        if (container && surface) {
+          const stickyBar = container.querySelector<HTMLElement>(".sticky");
+          const containerTop = container.getBoundingClientRect().top;
+          const surfaceTop = surface.getBoundingClientRect().top;
+          const targetTop =
+            container.scrollTop +
+            surfaceTop -
+            containerTop -
+            (stickyBar?.offsetHeight ?? 0);
+          if (typeof container.scrollTo === "function")
+            container.scrollTo({ top: targetTop, behavior: "auto" });
+          else container.scrollTop = targetTop;
+        }
         surface?.focus({ preventScroll: true });
       });
     },
@@ -2662,7 +2675,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         ),
       );
       setError(null);
-      // Viewed state is explicit and independent of collapse and reading position.
+      if (readingMode === "files") {
+        setCollapsedPaths((current) => {
+          const next = new Set(current);
+          if (viewed) next.add(path);
+          else next.delete(path);
+          return next;
+        });
+      }
       return true;
     } catch (cause) {
       setError(
@@ -3333,12 +3353,18 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 viewedPaths.has(candidate.path) ? "secondary" : "outline"
               }
               aria-pressed={viewedPaths.has(candidate.path)}
-              onClick={() =>
-                void markViewed(
-                  !viewedPaths.has(candidate.path),
-                  candidate.path,
-                )
-              }
+              onClick={() => {
+                if (viewedPaths.has(candidate.path)) {
+                  setCollapsedPaths((current) => {
+                    const next = new Set(current);
+                    next.delete(candidate.path);
+                    return next;
+                  });
+                  void markViewed(false, candidate.path);
+                } else {
+                  void markViewed(true, candidate.path);
+                }
+              }}
             >
               {viewedPaths.has(candidate.path) ? "Viewed ✓" : "Mark viewed"}
             </Button>
@@ -3346,7 +3372,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         </div>
         {collapsed ? (
           <p className="p-3 text-xs text-muted-foreground">
-            Diff collapsed. Viewed state is unchanged.
+            Diff collapsed. Expand to review the changes.
           </p>
         ) : (
           <div className="p-2 sm:p-3">
@@ -4515,6 +4541,10 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                   feedbackOpenerRef.current?.focus();
                 }}
                 className="fixed inset-0 z-50 flex max-h-dvh w-full flex-col overflow-auto border bg-card p-4 shadow-2xl focus:outline-none lg:inset-y-0 lg:left-auto lg:right-0 lg:max-w-lg"
+                style={{
+                  paddingTop: "calc(env(safe-area-inset-top) + 1rem)",
+                  paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)",
+                }}
               >
                 <Dialog.Description className="sr-only">
                   {pendingCount} pending/unsent comments. Review and send
