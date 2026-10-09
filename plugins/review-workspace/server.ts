@@ -162,6 +162,13 @@ const tourCardShape = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
+const tourBlockShape = z.discriminatedUnion("kind", [
+  z
+    .object({ kind: z.literal("narrative"), body: z.string().min(1).max(4000) })
+    .strict(),
+  z.object({ kind: z.literal("diff"), anchor: tourAnchorShape }).strict(),
+  z.object({ kind: z.literal("evidence"), card: tourCardShape }).strict(),
+]);
 const tourInputShape = z
   .object({
     title: z.string().trim().min(1).max(200),
@@ -172,14 +179,38 @@ const tourInputShape = z
           .object({
             id: z.string().min(1).max(100),
             title: z.string().trim().min(1).max(200),
-            body: z.string().max(4000),
-            anchors: z.array(tourAnchorShape).max(100),
-            card: tourCardShape.optional(),
+            blocks: z
+              .array(tourBlockShape)
+              .min(1)
+              .max(201)
+              .superRefine((blocks, context) => {
+                const text = blocks.reduce(
+                  (total, block) =>
+                    total +
+                    (block.kind === "narrative" ? block.body.length : 0),
+                  0,
+                );
+                if (
+                  text > 4000 ||
+                  blocks.filter((block) => block.kind === "diff").length >
+                    100 ||
+                  blocks.filter((block) => block.kind === "evidence").length > 1
+                )
+                  context.addIssue({
+                    code: "custom",
+                    message:
+                      "Each step allows 4000 narrative characters, 100 diff blocks, and one evidence block.",
+                  });
+              }),
           })
           .strict(),
       )
       .min(1)
-      .max(50),
+      .max(50)
+      .refine(
+        (steps) => new Set(steps.map((step) => step.id)).size === steps.length,
+        "Step IDs must be unique.",
+      ),
   })
   .strict();
 const tourAnchorResultShape = tourAnchorShape.extend({
@@ -197,9 +228,23 @@ const tourShape = z
         .object({
           id: z.string(),
           title: z.string(),
-          body: z.string(),
+          blocks: z.array(
+            z.discriminatedUnion("kind", [
+              z
+                .object({ kind: z.literal("narrative"), body: z.string() })
+                .strict(),
+              z
+                .object({
+                  kind: z.literal("diff"),
+                  anchor: tourAnchorResultShape,
+                })
+                .strict(),
+              z
+                .object({ kind: z.literal("evidence"), card: tourCardShape })
+                .strict(),
+            ]),
+          ),
           anchors: z.array(tourAnchorResultShape),
-          card: tourCardShape.optional(),
         })
         .strict(),
     ),
@@ -220,6 +265,8 @@ const tourShape = z
       .strict(),
   })
   .strict();
+export type ReviewTour = z.infer<typeof tourShape>;
+
 const reviewShape = z
   .object({
     id: z.string(),
@@ -718,7 +765,13 @@ export default async function plugin(bb: BbPluginApi) {
       .prepare("SELECT payload FROM review_tours WHERE review_id = ?")
       .get(reviewId) as { payload: string } | undefined;
     if (!row) return null;
-    return tourShape.parse(JSON.parse(row.payload));
+    // Older tour payloads are retained, but do not prevent reviewing their files.
+    try {
+      const result = tourShape.safeParse(JSON.parse(row.payload));
+      return result.success ? result.data : null;
+    } catch {
+      return null;
+    }
   }
   function buildTour(review: Review, input: z.infer<typeof tourInputShape>) {
     const tourFiles = db
@@ -737,17 +790,33 @@ export default async function plugin(bb: BbPluginApi) {
         binary: Boolean(file.binary),
         truncated: Boolean(file.truncated),
       })),
-      input.steps as TourStep[],
+      input.steps.map((step) => ({
+        id: step.id,
+        title: step.title,
+        body: "",
+        anchors: step.blocks.flatMap((block) =>
+          block.kind === "diff" ? [block.anchor] : [],
+        ),
+      })) as TourStep[],
     );
     return tourShape.parse({
       reviewId: review.id,
       title: input.title,
       overview: input.overview ?? null,
       createdAt: Date.now(),
-      steps: input.steps.map((step, index) => ({
-        ...step,
-        anchors: validation.anchors[index] ?? [],
-      })),
+      steps: input.steps.map((step, index) => {
+        const anchors = validation.anchors[index] ?? [];
+        let anchorIndex = 0;
+        return {
+          ...step,
+          blocks: step.blocks.map((block) =>
+            block.kind === "diff"
+              ? { ...block, anchor: anchors[anchorIndex++] }
+              : block,
+          ),
+          anchors,
+        };
+      }),
       coverage: validation.coverage,
     });
   }
@@ -1891,7 +1960,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "review_workspace_tour",
     description:
-      "Author or replace the tour for one immutable Review Workspace revision. Provide ordered steps with any number of exact file/side/line anchors across files. Cards are agent-authored explanations, not verified graph or risk facts. The result keeps invalid anchors visible with reasons and reports uncovered raw changed lines; fix invalid anchors and gaps intentionally. Tours are not carried forward to new revisions.",
+      "Author or replace the tour for one immutable Review Workspace revision. Each ordered step has blocks: narrative (body), diff (one exact file/side/startLine/endLine anchor), or evidence (an explanatory card). Interleave prose and diff blocks across files in logical reading order. Each step allows 4000 narrative characters, 100 diff blocks, and one evidence block. Cards are agent-authored, not runtime-verified. Invalid anchors remain visible with reasons; the result reports uncovered raw changed lines. Tours do not carry forward to new revisions.",
     parameters: z
       .object({
         reviewId: z.string().uuid().optional(),

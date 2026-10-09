@@ -92,6 +92,85 @@ export function isVisiblePatchRange(
   return true;
 }
 
+/** Build a bounded, syntactically valid patch excerpt from immutable hunks. */
+export function excerptPatch(
+  patch: string,
+  anchor: TourAnchor,
+  context = 3,
+): string | null {
+  if (
+    !isVisiblePatchRange(patch, anchor.side, anchor.startLine, anchor.endLine)
+  )
+    return null;
+  const source = patch.split("\n");
+  const firstHunk = source.findIndex((line) => line.startsWith("@@ "));
+  if (firstHunk < 0) return null;
+  const output = source.slice(0, firstHunk);
+  let included = false;
+  for (let i = firstHunk; i < source.length;) {
+    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(
+      source[i] ?? "",
+    );
+    if (!header) {
+      i++;
+      continue;
+    }
+    let old = Number(header[1]),
+      next = Number(header[2]);
+    const rows: Array<{
+      text: string;
+      old: number;
+      next: number;
+      oldCount: number;
+      newCount: number;
+      match: boolean;
+    }> = [];
+    for (i++; i < source.length && !source[i]?.startsWith("@@ "); i++) {
+      const text = source[i]!;
+      if (text.startsWith("\\ No newline") && rows.length) {
+        rows[rows.length - 1]!.text += "\n" + text;
+        continue;
+      }
+      if (![" ", "+", "-"].includes(text[0] ?? "")) continue;
+      const oldCount = text[0] === "+" ? 0 : 1;
+      const newCount = text[0] === "-" ? 0 : 1;
+      const number = anchor.side === "old" ? old : next;
+      const exists = anchor.side === "old" ? oldCount : newCount;
+      rows.push({
+        text,
+        old,
+        next,
+        oldCount,
+        newCount,
+        match: Boolean(
+          exists && number >= anchor.startLine && number <= anchor.endLine,
+        ),
+      });
+      old += oldCount;
+      next += newCount;
+    }
+    const start = rows.findIndex((row) => row.match);
+    if (start < 0) continue;
+    const end = rows
+      .map((row, index) => (row.match ? index : -1))
+      .filter((index) => index >= 0)
+      .at(-1)!;
+    const selected = rows.slice(
+      Math.max(0, start - context),
+      end + context + 1,
+    );
+    const first = selected[0]!;
+    const oldCount = selected.reduce((count, row) => count + row.oldCount, 0);
+    const newCount = selected.reduce((count, row) => count + row.newCount, 0);
+    output.push(
+      `@@ -${oldCount ? first.old : Math.max(0, first.old - 1)},${oldCount} +${newCount ? first.next : Math.max(0, first.next - 1)},${newCount} @@`,
+      ...selected.map((row) => row.text),
+    );
+    included = true;
+  }
+  return included ? output.join("\n") + "\n" : null;
+}
+
 export function validateTour(
   files: TourFile[],
   steps: TourStep[],

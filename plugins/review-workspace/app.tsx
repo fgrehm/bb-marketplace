@@ -22,7 +22,7 @@ import {
   type FileDiffMetadata,
   type SelectedLineRange,
 } from "@pierre/diffs";
-import type { rpcContract, RecentReview } from "./server";
+import type { rpcContract, RecentReview, ReviewTour } from "./server";
 import { Button } from "@/components/ui/button";
 import {
   COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
@@ -37,9 +37,10 @@ import {
   unresolvedRootThreadCounts,
   type FileFilterMode,
 } from "./lib/review-navigation";
-import { compactPath, normalizeChangeKind } from "./lib/utils";
+import { normalizeChangeKind } from "./lib/utils";
 import {
   isVisiblePatchRange,
+  excerptPatch,
   patchHunkStarts,
   patchSourceLines,
 } from "./lib/tours";
@@ -117,39 +118,10 @@ type ReviewTourAnchor = {
   valid: boolean;
   reason: string | null;
 };
-type ReviewTour = {
-  reviewId: string;
-  title: string;
-  overview: string | null;
-  createdAt: number;
-  steps: Array<{
-    id: string;
-    title: string;
-    body: string;
-    anchors: ReviewTourAnchor[];
-    card?:
-      | {
-          kind: "call-graph";
-          symbol: string;
-          callers: Array<{ label: string; detail: string }>;
-          callees: Array<{ label: string; detail: string }>;
-        }
-      | {
-          kind: "impact";
-          tests: Array<{
-            label: string;
-            status: "added" | "updated" | "missing";
-          }>;
-          modules: Array<{ label: string; detail: string }>;
-        }
-      | { kind: "before-after"; before: string; after: string; note: string };
-  }>;
-  coverage: {
-    totalChangedLines: number;
-    coveredChangedLines: number;
-    uncovered: Array<{ filePath: string; side: "old" | "new"; line: number }>;
-  };
-};
+type ReviewTourCard = Extract<
+  ReviewTour["steps"][number]["blocks"][number],
+  { kind: "evidence" }
+>["card"];
 type Review = {
   id: string;
   threadId: string;
@@ -190,8 +162,8 @@ type Selection = {
   endLine: number;
 };
 type ComposerMarker = { composer: true; selection: Selection };
-type TourMarker = { tourMarker: true };
-type DiffAnnotation = Annotation | ComposerMarker | TourMarker;
+type KeyboardMarker = { keyboardMarker: true };
+type DiffAnnotation = Annotation | ComposerMarker | KeyboardMarker;
 
 function rangeToAnchor(range: SelectedLineRange): Selection | null {
   const side =
@@ -290,6 +262,21 @@ function AnnotationMeta({
   );
 }
 
+/**
+ * Shared no-op composer for surfaces that have no open draft. A stable
+ * identity here keeps the memoized diff from re-rendering whenever an
+ * unrelated file's draft changes.
+ */
+const INACTIVE_COMPOSER = {
+  file: null,
+  selection: null,
+  body: "",
+  busy: false,
+  onBody: () => {},
+  onAdd: async () => {},
+  onCancel: () => {},
+};
+
 const PierreReviewDiff = memo(function PierreReviewDiff({
   fileDiff,
   lineAnnotations,
@@ -305,7 +292,6 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
   wrapLines,
   loadDiffFiles,
   onSelect,
-  tourAnchor,
   keyboardSelection,
 }: {
   fileDiff: FileDiffMetadata;
@@ -330,7 +316,6 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
     onCancel: () => void;
   };
   onSelect: (range: SelectedLineRange | null) => void;
-  tourAnchor: ReviewTourAnchor | null;
   keyboardSelection: SelectedLineRange | null;
 }) {
   const options = useMemo(
@@ -338,6 +323,7 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
       diffStyle: "unified" as const,
       overflow: wrapLines ? ("wrap" as const) : ("scroll" as const),
       enableLineSelection: true,
+      disableFileHeader: true,
       enableGutterUtility: true,
       lineHoverHighlight: "both" as const,
       hunkSeparators: "line-info" as const,
@@ -352,32 +338,14 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
     <FileDiff<DiffAnnotation>
       fileDiff={fileDiff}
       lineAnnotations={lineAnnotations}
-      selectedLines={
-        keyboardSelection ??
-        (tourAnchor
-          ? {
-              start: tourAnchor.startLine,
-              end: tourAnchor.endLine,
-              side: tourAnchor.side === "old" ? "deletions" : "additions",
-              endSide: tourAnchor.side === "old" ? "deletions" : "additions",
-            }
-          : null)
-      }
+      selectedLines={keyboardSelection}
       disableWorkerPool
       options={options}
       renderAnnotation={(line) => {
         const annotation = line.metadata;
         if (!annotation) return null;
-        if ("tourMarker" in annotation) {
-          return (
-            <div
-              data-active-tour-anchor=""
-              className="rounded border border-primary bg-primary/10 px-3 py-2 text-xs font-semibold text-primary"
-            >
-              Tour anchor · exact range
-            </div>
-          );
-        }
+        if ("keyboardMarker" in annotation)
+          return <div data-keyboard-cursor="" className="h-px" />;
         if ("composer" in annotation) {
           return composer.selection ? (
             <div className="hidden lg:block">
@@ -490,6 +458,130 @@ const PierreReviewDiff = memo(function PierreReviewDiff({
           +
         </button>
       )}
+    />
+  );
+});
+
+/**
+ * Mounts a file's diff only when it approaches the viewport. Rendering every
+ * changed file at once made large reviews unusable on phones, so off-screen
+ * surfaces stay as a light placeholder until the reader scrolls near them.
+ * Once mounted they stay mounted, so scrolling back never re-tokenizes code.
+ */
+function LazyDiffSurface({
+  rootMargin = "700px",
+  placeholder,
+  onMount,
+  children,
+}: {
+  rootMargin?: string;
+  placeholder: React.ReactNode;
+  onMount?: () => void;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [near, setNear] = useState(false);
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (near) return;
+    const node = ref.current;
+    if (!node) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setNear(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNear(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [near, rootMargin]);
+  useEffect(() => {
+    // Fire once. The parent's callback may have a fresh identity each render,
+    // and notifying on every render would loop.
+    if (near && !mountedRef.current) {
+      mountedRef.current = true;
+      onMount?.();
+    }
+  }, [near, onMount]);
+  return <div ref={ref}>{near ? children : placeholder}</div>;
+}
+
+/**
+ * Parses and renders one diff. Kept separate so patch parsing only happens
+ * for surfaces that are actually mounted, instead of every changed file.
+ */
+const MountedDiff = memo(function MountedDiff({
+  patch,
+  lineAnnotations,
+  annotations,
+  replyDrafts,
+  onReply,
+  onReplyDraft,
+  editDrafts,
+  onEdit,
+  onEditDraft,
+  onRemove,
+  wrapLines,
+  loadDiffFiles,
+  composer,
+  onSelect,
+  keyboardSelection,
+}: {
+  patch: string;
+  lineAnnotations: DiffLineAnnotation<DiffAnnotation>[];
+  annotations: Annotation[];
+  replyDrafts: Map<string, string>;
+  onReply: (parent: Annotation, body: string) => Promise<void>;
+  onReplyDraft: (id: string, value: string | null) => void;
+  editDrafts: Map<string, string>;
+  onEdit: (annotation: Annotation, body: string) => Promise<void>;
+  onEditDraft: (id: string, value: string | null) => void;
+  onRemove: (id: string) => void;
+  wrapLines: boolean;
+  loadDiffFiles?: FileDiffContentsLoader;
+  composer: React.ComponentProps<typeof PierreReviewDiff>["composer"];
+  onSelect: (range: SelectedLineRange | null) => void;
+  keyboardSelection: SelectedLineRange | null;
+}) {
+  const parsed = useMemo(() => {
+    if (!patch) return null;
+    try {
+      return getSingularPatch(patch);
+    } catch {
+      return null;
+    }
+  }, [patch]);
+  if (!parsed)
+    return (
+      <p className="rounded border border-dashed p-4 text-xs text-muted-foreground">
+        This stored patch could not be parsed. File-level feedback is still
+        available.
+      </p>
+    );
+  return (
+    <PierreReviewDiff
+      fileDiff={parsed}
+      lineAnnotations={lineAnnotations}
+      annotations={annotations}
+      replyDrafts={replyDrafts}
+      onReply={onReply}
+      onReplyDraft={onReplyDraft}
+      editDrafts={editDrafts}
+      onEdit={onEdit}
+      onEditDraft={onEditDraft}
+      onRemove={onRemove}
+      wrapLines={wrapLines}
+      loadDiffFiles={loadDiffFiles}
+      composer={composer}
+      onSelect={onSelect}
+      keyboardSelection={keyboardSelection}
     />
   );
 });
@@ -607,11 +699,7 @@ function BinaryImagePreview({
   );
 }
 
-function TourCardView({
-  card,
-}: {
-  card: NonNullable<ReviewTour["steps"][number]["card"]>;
-}) {
+function TourCardView({ card }: { card: ReviewTourCard }) {
   if (card.kind === "before-after")
     return (
       <div className="grid gap-2 text-xs">
@@ -674,239 +762,6 @@ function TourCardView({
         </p>
       ))}
     </div>
-  );
-}
-
-function TourRail({
-  tour,
-  activeStepId,
-  scopePaths,
-  annotations,
-  onStep,
-  onAnchor,
-  onLocate,
-  mobile = false,
-  mobileOpen = false,
-  onMobileOpenChange,
-}: {
-  tour: ReviewTour | null;
-  annotations: Annotation[];
-  activeStepId: string | null;
-  scopePaths: Set<string> | null;
-  onStep: (step: ReviewTour["steps"][number]) => void;
-  onAnchor: (stepId: string, anchor: ReviewTourAnchor) => void;
-  onLocate: (annotation: Annotation) => void;
-  mobile?: boolean;
-  mobileOpen?: boolean;
-  onMobileOpenChange?: (open: boolean) => void;
-}) {
-  const content = (
-    <div className={mobile ? "space-y-2 p-2" : "space-y-3 p-3"}>
-      {tour ? (
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Revision tour
-          </p>
-          <h2 className="mt-1 text-sm font-semibold">{tour.title}</h2>
-          {tour.overview ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {tour.overview}
-            </p>
-          ) : null}
-        </div>
-      ) : (
-        <p className="rounded-lg border bg-card p-2 text-xs text-muted-foreground">
-          No tour is authored for this immutable revision. Navigate changed
-          files from the file list and review their diffs directly.
-        </p>
-      )}
-      {tour ? (
-        <>
-          {tour.steps.map((step, index) => {
-            const selected = step.id === activeStepId;
-            const anchors = step.anchors.filter(
-              (anchor) => !scopePaths || scopePaths.has(anchor.filePath),
-            );
-            const matchingAnchors = anchors.filter((anchor) => anchor.valid);
-            const threads = annotations
-              .filter((annotation) => !annotation.parentId)
-              .filter((annotation) =>
-                matchingAnchors.some(
-                  (anchor) =>
-                    anchor.filePath === annotation.filePath &&
-                    (annotation.fileLevel ||
-                      (anchor.side === annotation.side &&
-                        annotation.startLine <= anchor.endLine &&
-                        anchor.startLine <= annotation.endLine)),
-                ),
-              )
-              .map((root) => ({
-                root,
-                replies: annotations.filter(
-                  (annotation) => annotation.parentId === root.id,
-                ),
-              }));
-            return (
-              <section
-                key={step.id}
-                className={`rounded-lg border p-2 ${selected ? "border-primary/50 bg-primary/5" : "bg-card"}`}
-              >
-                <button
-                  className="w-full text-left text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-pressed={selected}
-                  onClick={() => onStep(step)}
-                >
-                  {index + 1}. {step.title}
-                </button>
-                <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
-                  {step.body}
-                </p>
-                <div
-                  aria-label={`Comments on ${step.title}`}
-                  className="mt-2 space-y-1.5"
-                >
-                  <p className="text-[10px] font-semibold text-muted-foreground">
-                    {threads.length
-                      ? `Comments (${threads.length})`
-                      : "No comments on this step yet."}
-                  </p>
-                  {threads.map(({ root, replies }) => (
-                    <article
-                      key={root.id}
-                      className="rounded border bg-background p-2"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-mono text-[10px] text-muted-foreground [overflow-wrap:anywhere]">
-                            {annotationLabel(root)}
-                          </p>
-                          <AnnotationMeta annotation={root} />
-                        </div>
-                        <button
-                          type="button"
-                          className="shrink-0 text-[10px] text-muted-foreground underline"
-                          aria-label={`Show ${annotationLabel(root)} in diff`}
-                          onClick={() => {
-                            onStep(step);
-                            onLocate(root);
-                          }}
-                        >
-                          Show in diff
-                        </button>
-                      </div>
-                      <p className="mt-1 whitespace-pre-wrap text-[11px] [overflow-wrap:anywhere]">
-                        {root.body}
-                      </p>
-                      {replies.length ? (
-                        <details className="mt-1 border-l pl-2">
-                          <summary className="cursor-pointer text-[10px] text-muted-foreground">
-                            {replies.length}{" "}
-                            {replies.length === 1 ? "reply" : "replies"}
-                          </summary>
-                          <div className="mt-1 space-y-1">
-                            {replies.map((reply) => (
-                              <div
-                                key={reply.id}
-                                className="rounded bg-muted/50 p-1.5"
-                              >
-                                <AnnotationMeta annotation={reply} />
-                                <p className="mt-1 whitespace-pre-wrap text-[11px] [overflow-wrap:anywhere]">
-                                  {reply.body}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-                {step.card ? (
-                  <details className="mt-2 rounded border p-2">
-                    <summary className="cursor-pointer text-[11px] font-semibold">
-                      Evidence card
-                    </summary>
-                    <div className="mt-2">
-                      <TourCardView card={step.card} />
-                    </div>
-                  </details>
-                ) : null}
-                <details className="mt-2 rounded border p-2" open={selected}>
-                  <summary className="cursor-pointer text-[11px] font-semibold">
-                    Anchors ({anchors.length})
-                  </summary>
-                  <ul className="mt-1 space-y-1">
-                    {anchors.map((anchor, anchorIndex) => (
-                      <li
-                        key={`${anchor.filePath}-${anchor.side}-${anchor.startLine}-${anchorIndex}`}
-                      >
-                        <button
-                          disabled={!anchor.valid}
-                          className="w-full rounded px-1 py-1 text-left font-mono text-[10px] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={() => onAnchor(step.id, anchor)}
-                        >
-                          {anchor.filePath} · {anchor.side}:{anchor.startLine}
-                          {anchor.endLine !== anchor.startLine
-                            ? `-${anchor.endLine}`
-                            : ""}
-                          {!anchor.valid
-                            ? ` · unavailable (${anchor.reason})`
-                            : ""}
-                        </button>
-                      </li>
-                    ))}
-                    {!anchors.length ? (
-                      <li className="text-[10px] text-muted-foreground">
-                        No anchors in this scope.
-                      </li>
-                    ) : null}
-                  </ul>
-                </details>
-              </section>
-            );
-          })}
-          <details className="rounded-lg border bg-card p-2">
-            <summary className="cursor-pointer text-xs font-semibold">
-              Raw-change coverage
-            </summary>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {tour.coverage.coveredChangedLines} of{" "}
-              {tour.coverage.totalChangedLines} added/deleted lines have tour
-              anchors.
-            </p>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {tour.coverage.uncovered.length} raw changed lines remain
-              unanchored. Coverage is informational; inspect the full diff in
-              the center pane.
-            </p>
-          </details>
-          <p className="text-[10px] text-muted-foreground">
-            The full immutable diff remains available in the center pane. Step
-            cards are explanatory; exact anchored lines and raw changes are
-            separate evidence.
-          </p>
-        </>
-      ) : null}
-    </div>
-  );
-  return mobile ? (
-    <details
-      open={mobileOpen}
-      onToggle={(event) => onMobileOpenChange?.(event.currentTarget.open)}
-      className="shrink-0 max-h-[min(25dvh,22rem)] overflow-y-auto overscroll-contain border-b bg-card lg:hidden"
-    >
-      <summary className="sticky top-0 z-10 cursor-pointer bg-card px-3 py-2 text-xs font-semibold">
-        Tour · {tour?.title ?? "none authored"}
-      </summary>
-      {content}
-    </details>
-  ) : (
-    <aside
-      aria-label="Review tour"
-      className="hidden min-h-0 overflow-auto border-l bg-muted/30 lg:block"
-    >
-      {content}
-    </aside>
   );
 }
 
@@ -1373,6 +1228,7 @@ function CommentList({
   onEditDraft: (id: string, value: string | null) => void;
   editDrafts: Map<string, string>;
 }) {
+  const [showDone, setShowDone] = useState(false);
   if (!annotations.length)
     return (
       <div className="rounded-lg border border-dashed px-4 py-8 text-center">
@@ -1406,7 +1262,6 @@ function CommentList({
     );
   }
   const [openRoots, doneRoots] = partitionByResolved(roots);
-  const [showDone, setShowDone] = useState(false);
   const renderThread = (root: Annotation) => (
     <div key={root.id}>
       <CommentCard
@@ -1478,7 +1333,6 @@ function FileCommentsBar({
   composerOpen,
   composerBody,
   onComposerBody,
-  onOpenComposer,
   onCloseComposer,
   onAdd,
   onRemove,
@@ -1496,7 +1350,6 @@ function FileCommentsBar({
   composerOpen: boolean;
   composerBody: string;
   onComposerBody: (value: string) => void;
-  onOpenComposer: () => void;
   onCloseComposer: () => void;
   onAdd: () => Promise<void>;
   onRemove: (id: string) => void;
@@ -1518,14 +1371,9 @@ function FileCommentsBar({
     list.push(annotation);
     repliesByRoot.set(annotation.parentId, list);
   }
+  if (compactEmpty) return null;
   return (
-    <div
-      className={
-        compactEmpty
-          ? "hidden lg:mb-3 lg:block lg:rounded-lg lg:border lg:bg-card lg:px-3 lg:py-2 lg:shadow-sm"
-          : "mb-3 rounded-lg border bg-card px-3 py-2 shadow-sm"
-      }
-    >
+    <div className="mb-3 rounded-lg border bg-card px-3 py-2 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <p
           className={`flex items-center gap-2 text-xs font-medium ${compactEmpty ? "sr-only lg:not-sr-only" : ""}`}
@@ -1541,11 +1389,6 @@ function FileCommentsBar({
             </span>
           ) : null}
         </p>
-        {!composerOpen ? (
-          <Button size="sm" variant="outline" onClick={onOpenComposer}>
-            Comment on file
-          </Button>
-        ) : null}
       </div>
       {composerOpen ? (
         <CommentEditor
@@ -1874,6 +1717,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
   const [review, setReview] = useState<Review | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
+  const [readingMode, setReadingMode] = useState<"files" | "tour">("files");
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
+  // Bumped when a lazy surface mounts, so keyboard scrolling can retry.
+  const [mountedTick, setMountedTick] = useState(0);
+  const surfaceRefs = useRef(new Map<string, HTMLElement>());
+  const [activeSurface, setActiveSurface] = useState<string | null>(null);
+  const [selectionSurface, setSelectionSurface] = useState<string | null>(null);
+  const [fileCommentPath, setFileCommentPath] = useState<string | null>(null);
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [reviewScope, setReviewScope] = useState<"all" | "since-viewed">("all");
   const [revisionDelta, setRevisionDelta] = useState<RevisionDelta | null>(
@@ -1883,8 +1734,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const [selectionPath, setSelectionPath] = useState<string | null>(null);
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const [activeTourStepId, setActiveTourStepId] = useState<string | null>(null);
-  const [activeTourAnchor, setActiveTourAnchor] =
-    useState<ReviewTourAnchor | null>(null);
   const [deferredPatches, setDeferredPatches] = useState<Map<string, string>>(
     new Map(),
   );
@@ -1919,7 +1768,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const feedbackOpenerRef = useRef<HTMLElement | null>(null);
   const mobileMoreRef = useRef<HTMLDetailsElement | null>(null);
-  const [mobileTourOpen, setMobileTourOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"compose" | null>(null);
   const [fileQuery, setFileQuery] = useState("");
   const [fileFilterMode, setFileFilterMode] = useState<FileFilterMode>("all");
@@ -1986,6 +1834,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   const [fileComposerOpen, setFileComposerOpen] = useState(false);
   const [fileCommentBody, setFileCommentBody] = useState("");
   const scrollSectionRef = useRef<HTMLElement>(null);
+  const fileScrollFrameRef = useRef<number | null>(null);
 
   function buildRefreshTarget(): ReviewTarget | undefined {
     if (targetKind === "commit" && targetValue.trim())
@@ -2027,6 +1876,13 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       setRevisions(history.revisions as Revision[]);
       setSelection(null);
       setSelectionPath(null);
+      setSelectionSurface(null);
+      setActiveSurface(null);
+      setCollapsedPaths(new Set());
+      setFileComposerOpen(false);
+      setFileCommentPath(null);
+      setFileCommentBody("");
+      setKeyboardCursor(null);
       setKeyboardRangeStart(null);
       setKeyboardRangeValue(null);
       setBody("");
@@ -2092,52 +1948,203 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     [fileFilterMode, fileQuery, openThreadCounts, scopedFiles, viewedPaths],
   );
   useEffect(() => {
-    if (visibleFiles.some((candidate) => candidate.path === filePath)) return;
-    setFilePath(visibleFiles[0]?.path ?? null);
-  }, [filePath, visibleFiles]);
+    if (scopedFiles.some((candidate) => candidate.path === filePath)) return;
+    setFilePath(scopedFiles[0]?.path ?? null);
+  }, [filePath, scopedFiles]);
   const file =
     review?.files.find((candidate) => candidate.path === filePath) ?? null;
   const patchCacheKey = review && file ? `${review.id}\\0${file.path}` : "";
   const currentPatch = file
     ? (deferredPatches.get(patchCacheKey) ?? file.patch)
     : "";
-  const parsed = useMemo(
-    () => (currentPatch ? getSingularPatch(currentPatch) : null),
-    [currentPatch],
-  );
-  const loadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
-    if (
-      !review ||
-      !file ||
-      file.binary ||
-      file.truncated ||
-      ["added", "deleted"].includes(normalizeChangeKind(file.status)) ||
-      !parsed
-    )
-      return undefined;
-    return async () => {
-      const result = await rpc.call("reviewFileContents", {
-        reviewId: review.id,
-        filePath: file.path,
+  const preparedDiffs = useMemo(() => {
+    const prepared = new Map<
+      string,
+      {
+        patch: string;
+        oldLines: number[];
+        newLines: number[];
+        loader?: FileDiffContentsLoader;
+      }
+    >();
+    if (!review) return prepared;
+    const prepare = (
+      candidate: File,
+      key: string,
+      anchor?: ReviewTourAnchor,
+    ) => {
+      const stored =
+        deferredPatches.get(`${review.id}\\0${candidate.path}`) ??
+        candidate.patch;
+      const patch = anchor ? (excerptPatch(stored, anchor) ?? "") : stored;
+      const loader: FileDiffContentsLoader | undefined =
+        !anchor &&
+        !candidate.binary &&
+        !candidate.truncated &&
+        !["added", "deleted"].includes(normalizeChangeKind(candidate.status))
+          ? async () => {
+              const result = await rpc.call("reviewFileContents", {
+                reviewId: review.id,
+                filePath: candidate.path,
+              });
+              if (!result.old || !result.new)
+                throw new Error(
+                  "Full file contents are not available for this snapshot.",
+                );
+              return {
+                oldFile: {
+                  name: result.old.path,
+                  contents: result.old.content,
+                  cacheKey: `${review.id}:old:${candidate.path}`,
+                },
+                newFile: {
+                  name: result.new.path,
+                  contents: result.new.content,
+                  cacheKey: `${review.id}:new:${candidate.path}`,
+                },
+              };
+            }
+          : undefined;
+      prepared.set(key, {
+        patch,
+        oldLines: patchSourceLines(patch, "old"),
+        newLines: patchSourceLines(patch, "new"),
+        loader,
       });
-      if (!result.old || !result.new)
-        throw new Error(
-          "Full file contents are not available for this snapshot.",
-        );
-      return {
-        oldFile: {
-          name: result.old.path,
-          contents: result.old.content,
-          cacheKey: `${review.snapshot}:old:${result.old.path}`,
-        },
-        newFile: {
-          name: result.new.path,
-          contents: result.new.content,
-          cacheKey: `${review.snapshot}:new:${result.new.path}`,
-        },
-      };
     };
-  }, [file, parsed, review, rpc]);
+    review.files.forEach((candidate) =>
+      prepare(candidate, `file:${candidate.path}`),
+    );
+    const step =
+      review.tour?.steps.find((step) => step.id === activeTourStepId) ??
+      review.tour?.steps[0];
+    step?.blocks.forEach((block, index) => {
+      if (block.kind !== "diff" || !block.anchor.valid) return;
+      const candidate = review.files.find(
+        (file) => file.path === block.anchor.filePath,
+      );
+      if (candidate)
+        prepare(candidate, `tour:${step.id}:${index}`, block.anchor);
+    });
+    return prepared;
+  }, [
+    review?.id,
+    review?.files,
+    review?.tour,
+    activeTourStepId,
+    deferredPatches,
+    rpc,
+  ]);
+
+  // Per-surface annotation arrays are rebuilt only when something that can
+  // change an anchor changes (not while typing a draft), so the memoized diff
+  // keeps its identity and off-screen or unrelated files do not re-render.
+  const surfaceAnnotations = useMemo(() => {
+    const map = new Map<string, DiffLineAnnotation<DiffAnnotation>[]>();
+    if (!review) return map;
+    const build = (
+      candidate: File,
+      key: string,
+      prepared?: { patch: string; oldLines: number[]; newLines: number[] },
+    ) => {
+      const list: DiffLineAnnotation<DiffAnnotation>[] = review.annotations
+        .filter(
+          (annotation) =>
+            annotation.filePath === candidate.path && !annotation.fileLevel,
+        )
+        .flatMap((annotation) => {
+          const lines =
+            annotation.side === "old" ? prepared?.oldLines : prepared?.newLines;
+          const visible = (lines ?? []).find(
+            (line) =>
+              line >= annotation.startLine && line <= annotation.endLine,
+          );
+          return visible === undefined
+            ? []
+            : [
+                {
+                  side:
+                    annotation.side === "old"
+                      ? ("deletions" as const)
+                      : ("additions" as const),
+                  lineNumber: visible,
+                  metadata: annotation,
+                },
+              ];
+        });
+      if (
+        activeSurface === key &&
+        keyboardCursor?.path === candidate.path &&
+        isVisiblePatchRange(
+          prepared?.patch ?? "",
+          keyboardCursor.side,
+          keyboardCursor.line,
+          keyboardCursor.line,
+        )
+      )
+        list.push({
+          side: keyboardCursor.side === "old" ? "deletions" : "additions",
+          lineNumber: keyboardCursor.line,
+          metadata: { keyboardMarker: true },
+        });
+      if (
+        selection &&
+        selectionPath === candidate.path &&
+        selectionSurface === key
+      )
+        list.push({
+          side: selection.side === "old" ? "deletions" : "additions",
+          lineNumber: selection.endLine,
+          metadata: { composer: true, selection },
+        });
+      map.set(key, list);
+    };
+    review.files.forEach((candidate) =>
+      build(
+        candidate,
+        `file:${candidate.path}`,
+        preparedDiffs.get(`file:${candidate.path}`),
+      ),
+    );
+    const step =
+      review.tour?.steps.find((step) => step.id === activeTourStepId) ??
+      review.tour?.steps[0];
+    step?.blocks.forEach((block, index) => {
+      if (block.kind !== "diff" || !block.anchor.valid) return;
+      const key = `tour:${step.id}:${index}`;
+      const candidate = review.files.find(
+        (file) => file.path === block.anchor.filePath,
+      );
+      if (candidate) build(candidate, key, preparedDiffs.get(key));
+    });
+    return map;
+  }, [
+    activeSurface,
+    activeTourStepId,
+    keyboardCursor,
+    preparedDiffs,
+    review,
+    selection,
+    selectionPath,
+    selectionSurface,
+  ]);
+
+  // Stable per-surface selection handlers keep the diff memo intact.
+  const selectionHandlerRef = useRef<
+    (range: SelectedLineRange | null, path: string, surface: string) => void
+  >(() => {});
+  const selectionHandlers = useRef(
+    new Map<string, (range: SelectedLineRange | null) => void>(),
+  );
+  const surfaceSelectHandler = (path: string, surfaceKey: string) => {
+    const existing = selectionHandlers.current.get(surfaceKey);
+    if (existing) return existing;
+    const handler = (range: SelectedLineRange | null) =>
+      selectionHandlerRef.current(range, path, surfaceKey);
+    selectionHandlers.current.set(surfaceKey, handler);
+    return handler;
+  };
+
   const currentIndex = file
     ? (visibleFiles.findIndex((candidate) => candidate.path === file.path) ??
         0) + 1
@@ -2170,45 +2177,6 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     keyboardCursor,
     keyboardRangeStart,
     keyboardRangeValue,
-    selection,
-    selectionPath,
-  ]);
-  const currentAnnotations = useMemo<
-    DiffLineAnnotation<DiffAnnotation>[]
-  >(() => {
-    const annotations: DiffLineAnnotation<DiffAnnotation>[] = (
-      review?.annotations ?? []
-    )
-      // File-level comments (and their replies) have no in-diff anchor;
-      // they render in the File comments bar instead.
-      .filter(
-        (annotation) =>
-          annotation.filePath === file?.path && !annotation.fileLevel,
-      )
-      .map((annotation) => ({
-        side: annotation.side === "old" ? "deletions" : "additions",
-        lineNumber: annotation.startLine,
-        metadata: annotation,
-      }));
-    if (activeTourAnchor?.valid && activeTourAnchor.filePath === file?.path) {
-      annotations.push({
-        side: activeTourAnchor.side === "old" ? "deletions" : "additions",
-        lineNumber: activeTourAnchor.startLine,
-        metadata: { tourMarker: true },
-      });
-    }
-    if (selection && selectionPath === file?.path) {
-      annotations.push({
-        side: selection.side === "old" ? "deletions" : "additions",
-        lineNumber: selection.startLine,
-        metadata: { composer: true, selection },
-      });
-    }
-    return annotations;
-  }, [
-    activeTourAnchor,
-    file?.path,
-    review?.annotations,
     selection,
     selectionPath,
   ]);
@@ -2253,6 +2221,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       if (!body.trim()) {
         setSelection(null);
         setSelectionPath(null);
+        setKeyboardRangeStart(null);
+        setKeyboardRangeValue(null);
         setDraftNotice(null);
       } else if (selection && selectionPath && selectionPath !== path) {
         setDraftNotice(
@@ -2260,14 +2230,27 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         );
       }
       setMobilePanel(null);
-      setFileComposerOpen(false);
-      scrollSectionRef.current?.scrollTo?.({ top: 0 });
+      // File-level drafts remain visible on their original file in the document.
+      setCollapsedPaths((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+      setReadingMode("files");
+      if (body.trim() && selectionPath)
+        setSelectionSurface(`file:${selectionPath}`);
+      setActiveSurface(`file:${path}`);
+      requestAnimationFrame(() => {
+        const surface = surfaceRefs.current.get(`file:${path}`);
+        surface?.scrollIntoView({ block: "start" });
+        surface?.focus({ preventScroll: true });
+      });
     },
     [body, selection, selectionPath],
   );
   const tourScopePaths = useMemo(
     () =>
-      reviewScope === "all"
+      reviewScope === "all" || !revisionDelta
         ? null
         : new Set([
             ...(revisionDelta?.changedPaths ?? []),
@@ -2275,76 +2258,40 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           ]),
     [reviewScope, revisionDelta],
   );
-  const activateTourAnchor = useCallback(
-    (anchor: ReviewTourAnchor) => {
-      if (
-        !anchor.valid ||
-        !review ||
-        (review.tour && review.tour.reviewId !== review.id)
-      )
-        return;
-      setActiveTourAnchor(anchor);
-      chooseFile(anchor.filePath);
-      void loadDeferredDiff(anchor.filePath);
-    },
-    [chooseFile, loadDeferredDiff, review],
-  );
-  const activateTourStep = useCallback(
-    (step: ReviewTour["steps"][number]) => {
-      setActiveTourStepId(step.id);
-      const anchor = step.anchors.find(
-        (candidate) =>
-          candidate.valid &&
-          (!tourScopePaths || tourScopePaths.has(candidate.filePath)),
-      );
-      if (anchor) activateTourAnchor(anchor);
-    },
-    [activateTourAnchor, tourScopePaths],
-  );
-  const selectTourAnchor = useCallback(
-    (stepId: string, anchor: ReviewTourAnchor) => {
-      setActiveTourStepId(stepId);
-      activateTourAnchor(anchor);
-    },
-    [activateTourAnchor],
-  );
+  const fileDraftVisible =
+    readingMode === "files"
+      ? scopedFiles.some((file) => file.path === fileCommentPath) &&
+        !collapsedPaths.has(fileCommentPath ?? "")
+      : (
+          review?.tour?.steps.find((step) => step.id === activeTourStepId) ??
+          review?.tour?.steps[0]
+        )?.anchors.some(
+          (anchor) =>
+            anchor.valid &&
+            anchor.filePath === fileCommentPath &&
+            (!tourScopePaths || tourScopePaths.has(anchor.filePath)),
+        );
   useEffect(() => {
-    setActiveTourAnchor(null);
     setActiveTourStepId(review?.tour?.steps[0]?.id ?? null);
   }, [review?.id]);
   useEffect(() => {
-    if (!activeTourAnchor || file?.path !== activeTourAnchor.filePath) return;
-    let attempts = 0;
-    let timer: ReturnType<typeof setTimeout>;
-    const locate = () => {
-      const target = scrollSectionRef.current?.querySelector(
-        "[data-active-tour-anchor]",
-      );
-      if (target)
-        target.scrollIntoView({ block: "center", behavior: "smooth" });
-      else if (attempts++ < 20) timer = setTimeout(locate, 50);
-    };
-    timer = setTimeout(locate, 0);
-    return () => clearTimeout(timer);
-  }, [activeTourAnchor, file?.path, parsed]);
-  useEffect(() => {
     const steps = review?.tour?.steps ?? [];
     const step = steps.find((candidate) => candidate.id === activeTourStepId);
-    if (step && step.anchors.some((anchor) => anchor.valid)) return;
-    setActiveTourStepId(
-      steps.find((candidate) =>
-        candidate.anchors.some((anchor) => anchor.valid),
-      )?.id ?? null,
-    );
+    if (step) return;
+    setActiveTourStepId(steps[0]?.id ?? null);
   }, [activeTourStepId, review?.tour]);
   const handleDiffSelection = useCallback(
-    (range: SelectedLineRange | null) => {
+    (
+      range: SelectedLineRange | null,
+      path = file?.path ?? null,
+      surface = activeSurface,
+    ) => {
       const next = range ? rangeToAnchor(range) : null;
       if (
         next &&
         body.trim() &&
         selection &&
-        (selectionPath !== file?.path ||
+        (selectionPath !== path ||
           JSON.stringify(next) !== JSON.stringify(selection))
       ) {
         setDraftNotice(
@@ -2353,7 +2300,10 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         return;
       }
       setSelection(next);
-      setSelectionPath(next ? (file?.path ?? null) : null);
+      setSelectionPath(next ? path : null);
+      setSelectionSurface(surface);
+      setActiveSurface(surface);
+      if (path) setFilePath(path);
       if (next) {
         setKeyboardRangeStart(null);
         setKeyboardRangeValue(null);
@@ -2361,8 +2311,17 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       setDraftNotice(null);
       setMobilePanel(next ? "compose" : null);
     },
-    [body, file?.path, selection, selectionPath],
+    [activeSurface, body, file?.path, selection, selectionPath],
   );
+  // The stable per-surface handlers read the latest selection logic through a
+  // ref, so the memoized diffs keep their props between renders.
+  useEffect(() => {
+    selectionHandlerRef.current = (
+      range: SelectedLineRange | null,
+      path: string,
+      surface: string,
+    ) => handleDiffSelection(range, path, surface);
+  });
   function selectExactRange() {
     if (!file || !currentPatch) return;
     const startLine = Number(rangeStartInput);
@@ -2388,6 +2347,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     }
     setSelection({ side: rangeSide, startLine, endLine });
     setSelectionPath(file.path);
+    setSelectionSurface(activeSurface ?? `file:${file.path}`);
     setKeyboardRangeStart(null);
     setKeyboardRangeValue(null);
     setKeyboardCursor({ path: file.path, side: rangeSide, line: startLine });
@@ -2396,16 +2356,37 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     setMobilePanel("compose");
   }
   const handleDiffKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLElement>) => {
+    (
+      event: React.KeyboardEvent<HTMLElement>,
+      candidate = file,
+      patch = currentPatch,
+      surface = activeSurface,
+    ) => {
+      const file = candidate;
+      const currentPatch = patch;
       if (
         event.target !== event.currentTarget ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
         event.nativeEvent.isComposing ||
         !file ||
         file.binary ||
         !currentPatch
       )
         return;
+      setFilePath(file.path);
+      setActiveSurface(surface);
       const key = event.key;
+      if (
+        readingMode === "files" &&
+        collapsedPaths.has(file.path) &&
+        ![",", ".", "m", "?"].includes(key)
+      ) {
+        if (["j", "k", "h", "l", "V", "c", "[", "]"].includes(key))
+          setDraftNotice("Expand this file before navigating its code.");
+        return;
+      }
       const side =
         keyboardCursor?.path === file.path ? keyboardCursor.side : "new";
       const lines = patchSourceLines(currentPatch, side);
@@ -2486,15 +2467,45 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           `Selecting ${side} lines from ${line}. Use j/k to extend, c to comment, Escape to clear.`,
         );
       } else if (key === "c") {
-        if (!keyboardRangeValue || keyboardRangeStart?.path !== file.path) {
+        const line = cursorLine ?? lines[0];
+        const range =
+          keyboardRangeStart?.path === file.path && keyboardRangeValue
+            ? keyboardRangeValue
+            : line === undefined
+              ? null
+              : { side, startLine: line, endLine: line };
+        if (!range) {
+          setDraftNotice("No visible source line is selected.");
+          return;
+        }
+        if (
+          body.trim() &&
+          selection &&
+          (selectionPath !== file.path ||
+            JSON.stringify(selection) !== JSON.stringify(range))
+        ) {
           setDraftNotice(
-            "Press V to start an exact line range before opening a comment.",
+            `Save or discard the draft on ${selectionPath} first.`,
           );
           return;
         }
         event.preventDefault();
-        setSelection(keyboardRangeValue);
+        if (
+          !isVisiblePatchRange(
+            currentPatch,
+            range.side,
+            range.startLine,
+            range.endLine,
+          )
+        ) {
+          setDraftNotice(
+            "That range includes lines outside this excerpt. Open the full file to comment on it.",
+          );
+          return;
+        }
+        setSelection(range);
         setSelectionPath(file.path);
+        setSelectionSurface(surface);
         setMobilePanel("compose");
       } else if (key === "Escape" && keyboardRangeStart) {
         event.preventDefault();
@@ -2539,7 +2550,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         if (next) chooseFile(next);
       } else if (key === "m") {
         event.preventDefault();
-        void markViewed(false);
+        if (readingMode === "files")
+          void markViewed(!viewedPaths.has(file.path), file.path);
       } else if (key === "?") {
         event.preventDefault();
         setKeyboardHelpOpen((open) => !open);
@@ -2547,10 +2559,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       }
     },
     [
+      activeSurface,
       body,
+      collapsedPaths,
       chooseFile,
       currentPatch,
       file,
+      readingMode,
+      viewedPaths,
       keyboardCursor,
       keyboardRangeStart,
       keyboardRangeValue,
@@ -2560,6 +2576,21 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       visibleFiles,
     ],
   );
+  useEffect(() => {
+    if (!keyboardCursor || !activeSurface) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const scroll = () => {
+      const marker = surfaceRefs.current
+        .get(activeSurface)
+        ?.querySelector("[data-keyboard-cursor]");
+      if (marker) marker.scrollIntoView({ block: "nearest" });
+      else if (attempts++ < 20) timer = setTimeout(scroll, 25);
+    };
+    timer = setTimeout(scroll, 0);
+    return () => clearTimeout(timer);
+  }, [activeSurface, keyboardCursor, mountedTick]);
+
   const updateReplyDraft = useCallback((id: string, value: string | null) => {
     setReplyDrafts((current) => {
       const next = new Map(current);
@@ -2578,21 +2609,51 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       return next;
     });
   }, []);
+  // Stable identities for the memoized diff. The implementations read the
+  // latest state through a ref, so memo does not break on every render.
+  const liveCommentHandlers = useRef({
+    reply: async (_parent: Annotation, _body: string) => {},
+    edit: async (_annotation: Annotation, _body: string) => {},
+    remove: async (_id: string) => {},
+  });
+  const replyAnnotation = useCallback(
+    (parent: Annotation, body: string) =>
+      liveCommentHandlers.current.reply(parent, body),
+    [],
+  );
+  const editAnnotation = useCallback(
+    (annotation: Annotation, body: string) =>
+      liveCommentHandlers.current.edit(annotation, body),
+    [],
+  );
+  const removeAnnotationById = useCallback((id: string) => {
+    void liveCommentHandlers.current.remove(id);
+  }, []);
+  const notifyMounted = useCallback(() => {
+    setMountedTick((tick) => tick + 1);
+  }, []);
 
-  async function markViewed(viewed: boolean): Promise<boolean> {
-    if (!review || !file) return false;
+  async function markViewed(
+    viewed: boolean,
+    path = file?.path,
+  ): Promise<boolean> {
+    if (!review || !path) return false;
     try {
       const result = await rpc.call("markFileViewed", {
         reviewId: review.id,
-        filePath: file.path,
+        filePath: path,
         viewed,
       });
-      setReview({
-        ...review,
-        viewedPaths: viewed
-          ? [...new Set([...review.viewedPaths, file.path])]
-          : review.viewedPaths.filter((path) => path !== file.path),
-      });
+      setReview((current) =>
+        current?.id === review.id
+          ? {
+              ...current,
+              viewedPaths: viewed
+                ? [...new Set([...current.viewedPaths, path])]
+                : current.viewedPaths.filter((candidate) => candidate !== path),
+            }
+          : current,
+      );
       setRevisions((current) =>
         current.map((revision) =>
           revision.id === review.id
@@ -2601,9 +2662,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         ),
       );
       setError(null);
-      // The reviewed diff stays on screen; snap back to its top so the
-      // reading position resets after the viewed toggle.
-      scrollSectionRef.current?.scrollTo?.({ top: 0 });
+      // Viewed state is explicit and independent of collapse and reading position.
       return true;
     } catch (cause) {
       setError(
@@ -2683,10 +2742,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       setFeedbackOpen(false);
       setFileQuery("");
       setFileFilterMode("all");
-      if (annotation.filePath !== filePath) chooseFile(annotation.filePath);
+      setReadingMode("files");
+      setReviewScope("all");
+      chooseFile(annotation.filePath);
       if (annotation.fileLevel) {
         // Whole-file comments have no in-diff anchor; snap to the top bar.
-        scrollSectionRef.current?.scrollTo?.({ top: 0 });
+        surfaceRefs.current
+          .get(`file:${annotation.filePath}`)
+          ?.scrollIntoView({ block: "start" });
         return;
       }
       setPendingLocate({ id: annotation.id, fileLevel: false });
@@ -2724,12 +2787,12 @@ function ReviewPanel({ threadId }: { threadId: string }) {
   }, [pendingLocate]);
 
   async function addFileComment() {
-    if (!review || !file || !fileCommentBody.trim()) return;
+    if (!review || !fileCommentPath || !fileCommentBody.trim()) return;
     setBusy(true);
     try {
       const result = await rpc.call("addAnnotation", {
         reviewId: review.id,
-        filePath: file.path,
+        filePath: fileCommentPath,
         body: fileCommentBody.trim(),
         fileLevel: true,
       });
@@ -2741,25 +2804,23 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       );
       setFileCommentBody("");
       setFileComposerOpen(false);
+      requestAnimationFrame(() =>
+        surfaceRefs.current
+          .get(activeSurface ?? `file:${fileCommentPath}`)
+          ?.focus(),
+      );
       setError(null);
     } finally {
       setBusy(false);
     }
   }
   async function add() {
-    if (
-      !review ||
-      !file ||
-      !selection ||
-      selectionPath !== file.path ||
-      !body.trim()
-    )
-      return;
+    if (!review || !selectionPath || !selection || !body.trim()) return;
     setBusy(true);
     try {
       const result = await rpc.call("addAnnotation", {
         reviewId: review.id,
-        filePath: file.path,
+        filePath: selectionPath,
         ...selection,
         body: body.trim(),
       });
@@ -2776,8 +2837,11 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       setKeyboardRangeValue(null);
       setDraftNotice(null);
       setMobilePanel(null);
-      if (keyboardRangeStart)
-        requestAnimationFrame(() => scrollSectionRef.current?.focus());
+      requestAnimationFrame(() =>
+        surfaceRefs.current
+          .get(selectionSurface ?? `file:${selectionPath}`)
+          ?.focus(),
+      );
       setError(null);
     } finally {
       setBusy(false);
@@ -2999,6 +3063,11 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     }
   }
 
+  // The stable wrappers above call the latest implementations through this ref.
+  useEffect(() => {
+    liveCommentHandlers.current = { reply, edit, remove };
+  });
+
   const keyboardShortcutContent = (
     <>
       <p>
@@ -3079,21 +3148,74 @@ function ReviewPanel({ threadId }: { threadId: string }) {
     </details>
   );
 
-  const fileCommentsBar =
-    file && review ? (
+  function switchReadingMode(mode: "files" | "tour") {
+    setReadingMode(mode);
+    if (mode === "files") {
+      if (selectionPath && body.trim()) {
+        setSelectionSurface(`file:${selectionPath}`);
+        setCollapsedPaths((current) => {
+          const next = new Set(current);
+          next.delete(selectionPath);
+          return next;
+        });
+      }
+      if (fileCommentPath && fileCommentBody.trim())
+        setCollapsedPaths((current) => {
+          const next = new Set(current);
+          next.delete(fileCommentPath);
+          return next;
+        });
+    } else if (selectionPath && selection && body.trim()) {
+      const step =
+        review?.tour?.steps.find((step) => step.id === activeTourStepId) ??
+        review?.tour?.steps[0];
+      const index = step?.blocks.findIndex(
+        (block, index) =>
+          block.kind === "diff" &&
+          block.anchor.filePath === selectionPath &&
+          isVisiblePatchRange(
+            preparedDiffs.get(`tour:${step.id}:${index}`)?.patch ?? "",
+            selection.side,
+            selection.startLine,
+            selection.endLine,
+          ),
+      );
+      if (step && index !== undefined && index >= 0)
+        setSelectionSurface(`tour:${step.id}:${index}`);
+    }
+    setKeyboardRangeStart(null);
+    setKeyboardRangeValue(null);
+  }
+
+  function openFileComment(path: string, surfaceKey: string) {
+    if (fileCommentBody.trim() && fileCommentPath !== path) {
+      setDraftNotice(
+        `Save or discard the file comment on ${fileCommentPath} first.`,
+      );
+      return;
+    }
+    setFilePath(path);
+    setActiveSurface(surfaceKey);
+    setCollapsedPaths((current) => {
+      const next = new Set(current);
+      next.delete(path);
+      return next;
+    });
+    setFileCommentPath(path);
+    setFileComposerOpen(true);
+  }
+
+  function renderFileComments(file: File) {
+    return review ? (
       <FileCommentsBar
         annotations={review.annotations.filter(
           (annotation) =>
             annotation.fileLevel && annotation.filePath === file.path,
         )}
         busy={busy}
-        composerOpen={fileComposerOpen}
-        composerBody={fileCommentBody}
+        composerOpen={fileComposerOpen && fileCommentPath === file.path}
+        composerBody={fileCommentPath === file.path ? fileCommentBody : ""}
         onComposerBody={setFileCommentBody}
-        onOpenComposer={() => {
-          setFileCommentBody("");
-          setFileComposerOpen(true);
-        }}
         onCloseComposer={() => {
           setFileCommentBody("");
           setFileComposerOpen(false);
@@ -3112,6 +3234,326 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         editDrafts={editDrafts}
       />
     ) : null;
+  }
+
+  function renderFile(
+    candidate: File,
+    anchor?: ReviewTourAnchor,
+    surfaceKey = `file:${candidate.path}`,
+  ) {
+    if (!review) return null;
+    const storedPatch =
+      deferredPatches.get(`${review.id}\\0${candidate.path}`) ??
+      candidate.patch;
+    const prepared = preparedDiffs.get(surfaceKey);
+    const patch = prepared?.patch ?? "";
+    const collapsed = !anchor && collapsedPaths.has(candidate.path);
+    const inlineAnnotations = surfaceAnnotations.get(surfaceKey) ?? [];
+    const selected =
+      selectionPath === candidate.path && selectionSurface === surfaceKey
+        ? selection
+        : null;
+    return (
+      <section
+        key={surfaceKey}
+        ref={(node) => {
+          if (node) surfaceRefs.current.set(surfaceKey, node);
+          else surfaceRefs.current.delete(surfaceKey);
+        }}
+        data-review-file={candidate.path}
+        data-review-surface={surfaceKey}
+        aria-label={
+          candidate.path === filePath
+            ? "File diff"
+            : `Diff for ${candidate.path}`
+        }
+        tabIndex={0}
+        onFocus={(event) => {
+          if (event.target === event.currentTarget) {
+            setFilePath(candidate.path);
+            setActiveSurface(surfaceKey);
+          }
+        }}
+        onKeyDown={(event) =>
+          handleDiffKeyDown(event, candidate, patch, surfaceKey)
+        }
+        className="mb-6 scroll-mt-16 rounded-lg border bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        <div className="flex flex-wrap items-center gap-2 border-b bg-card px-3 py-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2 max-sm:basis-full">
+            {!anchor ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`${collapsed ? "Expand" : "Collapse"} ${candidate.path}`}
+                aria-expanded={!collapsed}
+                onClick={() =>
+                  setCollapsedPaths((current) => {
+                    const next = new Set(current);
+                    if (next.has(candidate.path)) next.delete(candidate.path);
+                    else next.add(candidate.path);
+                    return next;
+                  })
+                }
+              >
+                {collapsed ? "▸" : "▾"}
+              </Button>
+            ) : null}
+            <h3 className="min-w-0 flex-1 break-all font-mono text-xs font-semibold">
+              {candidate.path}
+              {anchor
+                ? ` · ${anchor.side}:${anchor.startLine}-${anchor.endLine}`
+                : ""}
+            </h3>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openFileComment(candidate.path, surfaceKey)}
+          >
+            Comment on file
+          </Button>
+          {anchor ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setFileQuery("");
+                setFileFilterMode("all");
+                setReviewScope("all");
+                chooseFile(candidate.path);
+              }}
+            >
+              Full file →
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant={
+                viewedPaths.has(candidate.path) ? "secondary" : "outline"
+              }
+              aria-pressed={viewedPaths.has(candidate.path)}
+              onClick={() =>
+                void markViewed(
+                  !viewedPaths.has(candidate.path),
+                  candidate.path,
+                )
+              }
+            >
+              {viewedPaths.has(candidate.path) ? "Viewed ✓" : "Mark viewed"}
+            </Button>
+          )}
+        </div>
+        {collapsed ? (
+          <p className="p-3 text-xs text-muted-foreground">
+            Diff collapsed. Viewed state is unchanged.
+          </p>
+        ) : (
+          <div className="p-2 sm:p-3">
+            {renderFileComments(candidate)}
+            {candidate.binary ? (
+              <BinaryImagePreview file={candidate} reviewId={review.id} />
+            ) : !patch ? (
+              <div className="space-y-2 rounded border border-dashed p-4 text-xs">
+                <p>
+                  {candidate.deferredReason
+                    ? `${candidate.deferredReason} is deferred until requested.`
+                    : anchor
+                      ? "This excerpt is unavailable in the immutable snapshot."
+                      : "No patch is available for this file."}
+                </p>
+                {candidate.deferredReason && !storedPatch ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void loadDeferredDiff(candidate.path)}
+                    disabled={deferredLoading}
+                  >
+                    {deferredLoading ? "Loading diff…" : "Load diff"}
+                  </Button>
+                ) : null}
+                {deferredError ? (
+                  <p role="alert" className="text-destructive">
+                    {deferredError}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <LazyDiffSurface
+                placeholder={
+                  <p className="rounded border border-dashed p-4 text-center text-xs text-muted-foreground">
+                    Diff renders as it scrolls into view.
+                  </p>
+                }
+                onMount={notifyMounted}
+              >
+                {anchor ? (
+                  <p className="mb-2 text-[11px] text-muted-foreground">
+                    Excerpt with nearby context, not the complete file diff.
+                  </p>
+                ) : null}
+                {candidate.truncated ? (
+                  <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">
+                    This patch is truncated. Comments refer only to visible
+                    snapshot lines.
+                  </p>
+                ) : null}
+                <MountedDiff
+                  patch={patch}
+                  lineAnnotations={inlineAnnotations}
+                  annotations={review.annotations}
+                  replyDrafts={replyDrafts}
+                  onReply={replyAnnotation}
+                  onReplyDraft={updateReplyDraft}
+                  editDrafts={editDrafts}
+                  onEdit={editAnnotation}
+                  onEditDraft={updateEditDraft}
+                  onRemove={removeAnnotationById}
+                  wrapLines={wrapLines}
+                  loadDiffFiles={prepared?.loader}
+                  composer={
+                    selected
+                      ? {
+                          file: candidate,
+                          selection: selected,
+                          body,
+                          busy,
+                          onBody: setBody,
+                          onAdd: add,
+                          onCancel: () => {
+                            setSelection(null);
+                            setSelectionPath(null);
+                            setSelectionSurface(null);
+                            setBody("");
+                            setKeyboardRangeStart(null);
+                            setKeyboardRangeValue(null);
+                            setMobilePanel(null);
+                            setDraftNotice(null);
+                            requestAnimationFrame(() =>
+                              surfaceRefs.current.get(surfaceKey)?.focus(),
+                            );
+                          },
+                        }
+                      : INACTIVE_COMPOSER
+                  }
+                  onSelect={surfaceSelectHandler(candidate.path, surfaceKey)}
+                  keyboardSelection={
+                    activeSurface === surfaceKey ? keyboardSelection : null
+                  }
+                />
+              </LazyDiffSurface>
+            )}
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function renderTour() {
+    const tour = review?.tour;
+    if (!tour)
+      return (
+        <p className="rounded border bg-card p-4 text-sm text-muted-foreground">
+          No tour is authored for this immutable revision. Review changes in
+          Files mode.
+        </p>
+      );
+    const step =
+      tour.steps.find((candidate) => candidate.id === activeTourStepId) ??
+      tour.steps[0];
+    return (
+      <div className="mx-auto max-w-5xl">
+        <h2 className="text-lg font-semibold">{tour.title}</h2>
+        {tour.overview ? (
+          <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+            {tour.overview}
+          </p>
+        ) : null}
+        <p className="my-3 text-[11px] text-muted-foreground">
+          Agent-authored explanation, not runtime-verified. Tour reading does
+          not mark files viewed.
+        </p>
+        {step ? (
+          <article aria-label={step.title}>
+            <h3 className="mb-4 text-base font-semibold">{step.title}</h3>
+            {step.blocks.map((block, index) => {
+              if (block.kind === "narrative")
+                return (
+                  <p
+                    key={index}
+                    className="my-4 whitespace-pre-wrap text-sm leading-relaxed"
+                  >
+                    {block.body}
+                  </p>
+                );
+              if (block.kind === "evidence")
+                return (
+                  <div key={index} className="my-4 rounded border bg-card p-3">
+                    <TourCardView card={block.card} />
+                  </div>
+                );
+              const anchor = block.anchor;
+              if (tourScopePaths && !tourScopePaths.has(anchor.filePath))
+                return (
+                  <p key={index} className="my-3 text-xs text-muted-foreground">
+                    {anchor.filePath}: excerpt outside Since viewed scope.{" "}
+                    <button
+                      className="underline"
+                      onClick={() => setReviewScope("all")}
+                    >
+                      Show all changes
+                    </button>
+                  </p>
+                );
+              const candidate = review?.files.find(
+                (file) => file.path === anchor.filePath,
+              );
+              if (!anchor.valid || !candidate)
+                return (
+                  <p
+                    key={index}
+                    role="status"
+                    className="my-3 rounded border border-amber-500/30 p-3 text-xs"
+                  >
+                    {anchor.filePath} · {anchor.side}:{anchor.startLine}-
+                    {anchor.endLine} · unavailable (
+                    {anchor.reason ?? "file-not-in-revision"})
+                  </p>
+                );
+              return renderFile(candidate, anchor, `tour:${step.id}:${index}`);
+            })}
+          </article>
+        ) : null}
+        <details className="mt-4 rounded border p-3 text-xs">
+          <summary className="cursor-pointer font-semibold">
+            Outside the tour / raw-change coverage
+          </summary>
+          <p className="mt-2">
+            {tour.coverage.coveredChangedLines} of{" "}
+            {tour.coverage.totalChangedLines} added/deleted lines have tour
+            anchors. {tour.coverage.uncovered.length} remain unanchored. This is
+            not a reading or correctness verdict.
+          </p>
+          {[
+            ...new Set(tour.coverage.uncovered.map((line) => line.filePath)),
+          ].map((path) => (
+            <button
+              key={path}
+              className="mt-2 block break-all text-left font-mono underline"
+              onClick={() => {
+                setReviewScope("all");
+                setFileQuery("");
+                setFileFilterMode("all");
+                chooseFile(path);
+              }}
+            >
+              {path} →
+            </button>
+          ))}
+        </details>
+      </div>
+    );
+  }
 
   return (
     <main
@@ -3135,7 +3577,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
           </span>
           <div className="min-w-0">
             <h1 className="truncate text-sm font-semibold">Review changes</h1>
-            <p className="hidden truncate text-[11px] text-muted-foreground sm:block">
+            <p className="truncate text-[11px] text-muted-foreground">
               {review ? describeTarget(review.target) : "No snapshot yet"}
               {review ? (
                 <span className="ml-2 font-mono">
@@ -3196,85 +3638,90 @@ function ReviewPanel({ threadId }: { threadId: string }) {
         >
           <Icon name={fullscreen ? "Minimize2" : "Maximize2"} />
         </Button>
-        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1 p-1 rounded-lg border bg-muted/40 sm:gap-2 sm:p-1.5 max-sm:w-full">
-          <select
-            aria-label="Review target"
-            value={targetKind}
-            onChange={(event) =>
-              setTargetKind(event.target.value as typeof targetKind)
-            }
-            className="h-8 max-w-48 rounded-md border bg-background px-1 text-xs max-sm:w-44 sm:w-auto"
-          >
-            <option value="uncommitted">Uncommitted changes</option>
-            <option value="commit">Specific commit</option>
-            <option value="branch">Committed vs base</option>
-            <option value="all">Everything vs base</option>
-          </select>
-          {targetKind === "commit" ? (
-            recentCommits === null ? (
-              <span className="text-[11px] text-muted-foreground">
-                Loading commits...
-              </span>
-            ) : recentCommits.status === "ok" &&
-              recentCommits.commits.length ? (
-              <select
-                aria-label="Recent commits"
-                value={
-                  recentCommits.commits.some(
-                    (commit) => commit.sha === targetValue,
-                  )
-                    ? targetValue
-                    : ""
-                }
+        <details className="relative" open={!review}>
+          <summary className="flex h-8 cursor-pointer list-none items-center rounded-md border px-2 text-xs hover:bg-muted">
+            Compare / refresh
+          </summary>
+          <div className="absolute right-0 top-full z-30 mt-2 flex w-[min(28rem,calc(100vw-2rem))] flex-wrap items-center gap-2 rounded-lg border bg-popover p-3 shadow-lg">
+            <select
+              aria-label="Review target"
+              value={targetKind}
+              onChange={(event) =>
+                setTargetKind(event.target.value as typeof targetKind)
+              }
+              className="h-8 max-w-48 rounded-md border bg-background px-1 text-xs max-sm:w-44 sm:w-auto"
+            >
+              <option value="uncommitted">Uncommitted changes</option>
+              <option value="commit">Specific commit</option>
+              <option value="branch">Committed vs base</option>
+              <option value="all">Everything vs base</option>
+            </select>
+            {targetKind === "commit" ? (
+              recentCommits === null ? (
+                <span className="text-[11px] text-muted-foreground">
+                  Loading commits...
+                </span>
+              ) : recentCommits.status === "ok" &&
+                recentCommits.commits.length ? (
+                <select
+                  aria-label="Recent commits"
+                  value={
+                    recentCommits.commits.some(
+                      (commit) => commit.sha === targetValue,
+                    )
+                      ? targetValue
+                      : ""
+                  }
+                  onChange={(event) => setTargetValue(event.target.value)}
+                  className="h-8 min-w-0 max-w-64 flex-1 basis-44 rounded-md border bg-background px-1 text-xs max-sm:basis-24"
+                >
+                  <option value="">Pick a commit...</option>
+                  {recentCommits.commits.map((commit) => (
+                    <option
+                      key={commit.sha}
+                      value={commit.sha}
+                      title={`${commit.author} · ${commit.date}`}
+                    >
+                      {`${commit.short} · ${commit.subject.slice(0, 60)} (${commit.date})`}
+                    </option>
+                  ))}
+                </select>
+              ) : null
+            ) : null}
+            {targetKind !== "uncommitted" ? (
+              <input
+                value={targetValue}
                 onChange={(event) => setTargetValue(event.target.value)}
-                className="h-8 min-w-0 max-w-64 flex-1 basis-44 rounded-md border bg-background px-1 text-xs max-sm:basis-24"
-              >
-                <option value="">Pick a commit...</option>
-                {recentCommits.commits.map((commit) => (
-                  <option
-                    key={commit.sha}
-                    value={commit.sha}
-                    title={`${commit.author} · ${commit.date}`}
-                  >
-                    {`${commit.short} · ${commit.subject.slice(0, 60)} (${commit.date})`}
-                  </option>
-                ))}
-              </select>
-            ) : null
-          ) : null}
-          {targetKind !== "uncommitted" ? (
-            <input
-              value={targetValue}
-              onChange={(event) => setTargetValue(event.target.value)}
-              placeholder={
-                targetKind === "commit" ? "paste commit sha" : "base branch"
+                placeholder={
+                  targetKind === "commit" ? "paste commit sha" : "base branch"
+                }
+                aria-label={
+                  targetKind === "commit" ? "Commit sha" : "Base branch"
+                }
+                className="h-8 w-44 rounded-md border bg-background px-2 font-mono text-xs max-sm:min-w-0 max-sm:w-auto max-sm:flex-1 max-sm:basis-24"
+              />
+            ) : null}
+            <Button
+              size="sm"
+              onClick={() => void refresh({ target: buildRefreshTarget() })}
+              disabled={
+                busy || (targetKind !== "uncommitted" && !targetValue.trim())
               }
-              aria-label={
-                targetKind === "commit" ? "Commit sha" : "Base branch"
-              }
-              className="h-8 w-44 rounded-md border bg-background px-2 font-mono text-xs max-sm:min-w-0 max-sm:w-auto max-sm:flex-1 max-sm:basis-24"
-            />
-          ) : null}
-          <Button
-            size="sm"
-            onClick={() => void refresh({ target: buildRefreshTarget() })}
-            disabled={
-              busy || (targetKind !== "uncommitted" && !targetValue.trim())
-            }
-          >
-            {busy
-              ? "Working..."
-              : targetKind === "commit"
-                ? "Review commit"
-                : targetKind === "branch"
-                  ? "Review committed"
-                  : targetKind === "all"
-                    ? "Review everything"
-                    : review
-                      ? "Refresh"
-                      : "Open review"}
-          </Button>
-        </div>
+            >
+              {busy
+                ? "Working..."
+                : targetKind === "commit"
+                  ? "Review commit"
+                  : targetKind === "branch"
+                    ? "Review committed"
+                    : targetKind === "all"
+                      ? "Review everything"
+                      : review
+                        ? "Refresh"
+                        : "Open review"}
+            </Button>
+          </div>
+        </details>
       </header>
       {review && revisions[0] && review.id !== revisions[0].id ? (
         <p
@@ -3301,7 +3748,65 @@ function ReviewPanel({ threadId }: { threadId: string }) {
       ) : (
         <>
           <Dialog.Root open={feedbackOpen} onOpenChange={setFeedbackOpen}>
-            <div className="shrink-0 border-b bg-muted/40 p-1.5 lg:hidden">
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b bg-card px-3 py-1.5 sm:gap-2 sm:py-2">
+              <Button
+                size="sm"
+                variant={readingMode === "files" ? "secondary" : "ghost"}
+                aria-pressed={readingMode === "files"}
+                onClick={() => switchReadingMode("files")}
+              >
+                Files
+              </Button>
+              <Button
+                size="sm"
+                variant={readingMode === "tour" ? "secondary" : "ghost"}
+                aria-pressed={readingMode === "tour"}
+                onClick={() => switchReadingMode("tour")}
+              >
+                Tour
+              </Button>
+              {readingMode === "tour" ? (
+                <select
+                  aria-label="Review scope"
+                  value={reviewScope}
+                  onChange={(event) =>
+                    setReviewScope(event.target.value as "all" | "since-viewed")
+                  }
+                  className="h-8 rounded-md border bg-background px-2 text-xs"
+                >
+                  <option value="all">All changes</option>
+                  <option value="since-viewed">Since viewed</option>
+                </select>
+              ) : null}
+              <div className="flex-1" />
+              <Button
+                size="sm"
+                variant="ghost"
+                className="hidden sm:inline-flex"
+                aria-expanded={keyboardHelpOpen}
+                onClick={() => setKeyboardHelpOpen((open) => !open)}
+              >
+                Keyboard ?
+              </Button>
+              <Dialog.Trigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label={`Review feedback, ${pendingCount} pending/unsent comments`}
+                  onClick={(event) => {
+                    feedbackOpenerRef.current = event.currentTarget;
+                  }}
+                >
+                  Review feedback{" "}
+                  {pendingCount ? (
+                    <span className="rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground">
+                      {pendingCount}
+                    </span>
+                  ) : null}
+                </Button>
+              </Dialog.Trigger>
+            </div>
+            <div className="shrink-0 border-b bg-muted/40 p-1 lg:hidden">
               <div className="flex min-w-0 items-center gap-1.5">
                 <select
                   aria-label="Review revision"
@@ -3317,27 +3822,48 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     </option>
                   ))}
                 </select>
-                <select
-                  aria-label="Changed file"
-                  value={filePath ?? ""}
-                  disabled={!visibleFiles.length}
-                  onChange={(event) => chooseFile(event.target.value)}
-                  className="min-w-0 flex-[1.5] rounded-md border bg-background px-2 py-2 text-xs"
-                >
-                  {visibleFiles.length ? null : (
-                    <option value="" disabled>
-                      No matching files
-                    </option>
-                  )}
-                  {visibleFiles.map((candidate, index) => (
-                    <option key={candidate.path} value={candidate.path}>
-                      {index + 1}/{visibleFiles.length} · {candidate.path}
-                      {openThreadCounts.has(candidate.path)
-                        ? ` · ${openThreadCounts.get(candidate.path)} open`
-                        : ""}
-                    </option>
-                  ))}
-                </select>
+                {readingMode === "tour" ? (
+                  <select
+                    aria-label="Tour section"
+                    value={activeTourStepId ?? review.tour?.steps[0]?.id ?? ""}
+                    onChange={(event) => {
+                      setActiveTourStepId(event.target.value);
+                      setActiveSurface(null);
+                      setKeyboardRangeStart(null);
+                      setKeyboardRangeValue(null);
+                      scrollSectionRef.current?.scrollTo?.({ top: 0 });
+                    }}
+                    className="min-w-0 flex-[1.5] rounded-md border bg-background px-2 py-2 text-xs"
+                  >
+                    {review.tour?.steps.map((step) => (
+                      <option key={step.id} value={step.id}>
+                        {step.title}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    aria-label="Changed file"
+                    value={filePath ?? ""}
+                    disabled={!visibleFiles.length}
+                    onChange={(event) => chooseFile(event.target.value)}
+                    className="min-w-0 flex-[1.5] rounded-md border bg-background px-2 py-2 text-xs"
+                  >
+                    {visibleFiles.length ? null : (
+                      <option value="" disabled>
+                        No matching files
+                      </option>
+                    )}
+                    {visibleFiles.map((candidate, index) => (
+                      <option key={candidate.path} value={candidate.path}>
+                        {index + 1}/{visibleFiles.length} · {candidate.path}
+                        {openThreadCounts.has(candidate.path)
+                          ? ` · ${openThreadCounts.get(candidate.path)} open`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <details className="relative shrink-0">
                   <summary
                     aria-label="File filters"
@@ -3357,7 +3883,7 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                 </details>
               </div>
             </div>
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)_18rem]">
+            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)]">
               <aside className="hidden min-h-0 overflow-auto border-r bg-muted/30 lg:block">
                 <div className="border-b p-3">
                   <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -3378,91 +3904,129 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     ))}
                   </select>
                 </div>
-                <div className="border-b p-3">
-                  <div className="flex justify-between text-xs font-medium">
-                    <span>Files changed</span>
-                    <span className="text-muted-foreground">
-                      {review.viewedPaths.length} of {review.files.length}{" "}
-                      viewed
-                    </span>
-                  </div>
-                  <div
-                    role="progressbar"
-                    aria-label="Files viewed"
-                    aria-valuemin={0}
-                    aria-valuemax={review.files.length || 1}
-                    aria-valuenow={review.viewedPaths.length}
-                    aria-valuetext={`${review.viewedPaths.length} of ${review.files.length} files viewed`}
-                    className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
-                  >
-                    <i
-                      className="block h-full rounded-full bg-primary"
-                      style={{
-                        width: `${review.files.length ? (review.viewedPaths.length / review.files.length) * 100 : 0}%`,
-                      }}
-                    />
-                  </div>
-                  <div className="mt-3">
-                    <FileFilterControls
-                      query={fileQuery}
-                      onQuery={setFileQuery}
-                      mode={fileFilterMode}
-                      onModeChange={setFileFilterMode}
-                    />
-                  </div>
-                </div>
-                <nav className="p-2" aria-label="Changed files">
-                  {visibleFiles.map((candidate) => (
-                    <button
-                      key={candidate.path}
-                      onClick={() => chooseFile(candidate.path)}
-                      aria-current={
-                        candidate.path === filePath ? "true" : undefined
-                      }
-                      className={`mb-1 flex w-full items-center gap-2 rounded-lg border border-l-2 px-2 py-2.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${candidate.path === filePath ? "border-primary/30 border-l-primary bg-primary/10 font-semibold text-foreground hover:bg-primary/15" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                {readingMode === "files" ? (
+                  <div className="border-b p-3">
+                    <div className="flex justify-between text-xs font-medium">
+                      <span>Files changed</span>
+                      <span className="text-muted-foreground">
+                        {review.viewedPaths.length} of {review.files.length}{" "}
+                        viewed
+                      </span>
+                    </div>
+                    <div
+                      role="progressbar"
+                      aria-label="Files viewed"
+                      aria-valuemin={0}
+                      aria-valuemax={review.files.length || 1}
+                      aria-valuenow={review.viewedPaths.length}
+                      aria-valuetext={`${review.viewedPaths.length} of ${review.files.length} files viewed`}
+                      className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
                     >
-                      <span
-                        className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${(() => {
-                          const kind = normalizeChangeKind(candidate.status);
-                          return kind === "added"
-                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                            : kind === "deleted"
-                              ? "bg-red-500/15 text-red-700 dark:text-red-400"
-                              : "bg-amber-500/15 text-amber-700 dark:text-amber-400";
-                        })()}`}
-                      >
-                        {candidate.status[0]?.toUpperCase()}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate" title={candidate.path}>
-                          {compactPath(candidate.path, 32)}
-                        </span>
-                        <span className="mt-0.5 flex gap-2 text-[11px] font-normal tabular-nums">
-                          <span className="text-emerald-700 dark:text-emerald-400">
-                            +{candidate.additions}
-                          </span>
-                          <span className="text-red-700 dark:text-red-400">
-                            -{candidate.deletions}
-                          </span>
-                        </span>
-                      </span>
-                      {review.viewedPaths.includes(candidate.path) ? (
-                        <span aria-label="Viewed" className="text-primary">
-                          ✓
-                        </span>
-                      ) : null}
-                      {openThreadCounts.get(candidate.path) ? (
-                        <span
-                          aria-label={`${openThreadCounts.get(candidate.path)} open comment threads`}
-                          title={`${openThreadCounts.get(candidate.path)} open comment threads`}
-                          className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                      <i
+                        className="block h-full rounded-full bg-primary"
+                        style={{
+                          width: `${review.files.length ? (review.viewedPaths.length / review.files.length) * 100 : 0}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="mt-3">
+                      <FileFilterControls
+                        query={fileQuery}
+                        onQuery={setFileQuery}
+                        mode={fileFilterMode}
+                        onModeChange={setFileFilterMode}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+                <nav
+                  className="p-2"
+                  aria-label={
+                    readingMode === "files" ? "Changed files" : "Tour contents"
+                  }
+                >
+                  {readingMode === "files"
+                    ? visibleFiles.map((candidate) => (
+                        <button
+                          key={candidate.path}
+                          aria-label={candidate.path}
+                          onClick={() => chooseFile(candidate.path)}
+                          aria-current={
+                            candidate.path === filePath ? "true" : undefined
+                          }
+                          className={`mb-1 flex w-full items-center gap-2 rounded-lg border border-l-2 px-2 py-2.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${candidate.path === filePath ? "border-primary/30 border-l-primary bg-primary/10 font-semibold text-foreground hover:bg-primary/15" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"}`}
                         >
-                          {openThreadCounts.get(candidate.path)}
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
-                  {!visibleFiles.length ? (
+                          <span
+                            className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${(() => {
+                              const kind = normalizeChangeKind(
+                                candidate.status,
+                              );
+                              return kind === "added"
+                                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                                : kind === "deleted"
+                                  ? "bg-red-500/15 text-red-700 dark:text-red-400"
+                                  : "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+                            })()}`}
+                          >
+                            {candidate.status[0]?.toUpperCase()}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className="block truncate"
+                              title={candidate.path}
+                            >
+                              {candidate.path.split("/").pop()}
+                              <span className="block truncate text-[10px] font-normal text-muted-foreground">
+                                {candidate.path.slice(
+                                  0,
+                                  candidate.path.lastIndexOf("/"),
+                                )}
+                              </span>
+                            </span>
+                            <span className="mt-0.5 flex gap-2 text-[11px] font-normal tabular-nums">
+                              <span className="text-emerald-700 dark:text-emerald-400">
+                                +{candidate.additions}
+                              </span>
+                              <span className="text-red-700 dark:text-red-400">
+                                -{candidate.deletions}
+                              </span>
+                            </span>
+                          </span>
+                          {review.viewedPaths.includes(candidate.path) ? (
+                            <span aria-label="Viewed" className="text-primary">
+                              ✓
+                            </span>
+                          ) : null}
+                          {openThreadCounts.get(candidate.path) ? (
+                            <span
+                              aria-label={`${openThreadCounts.get(candidate.path)} open comment threads`}
+                              title={`${openThreadCounts.get(candidate.path)} open comment threads`}
+                              className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                            >
+                              {openThreadCounts.get(candidate.path)}
+                            </span>
+                          ) : null}
+                        </button>
+                      ))
+                    : (review.tour?.steps ?? []).map((step, index) => (
+                        <button
+                          key={step.id}
+                          aria-current={
+                            step.id === activeTourStepId ? "step" : undefined
+                          }
+                          className={`mb-1 w-full rounded border px-3 py-2 text-left text-xs ${step.id === activeTourStepId ? "bg-primary/10 border-primary/30" : "border-transparent hover:bg-muted"}`}
+                          onClick={() => {
+                            setActiveTourStepId(step.id);
+                            setActiveSurface(null);
+                            setKeyboardRangeStart(null);
+                            setKeyboardRangeValue(null);
+                            scrollSectionRef.current?.scrollTo?.({ top: 0 });
+                          }}
+                        >
+                          {index + 1}. {step.title}
+                        </button>
+                      ))}
+                  {readingMode === "files" && !visibleFiles.length ? (
                     <p className="p-2 text-xs text-muted-foreground">
                       No matching files.
                     </p>
@@ -3471,12 +4035,44 @@ function ReviewPanel({ threadId }: { threadId: string }) {
               </aside>
               <section
                 ref={scrollSectionRef}
-                aria-label="File diff"
-                tabIndex={0}
-                onKeyDown={handleDiffKeyDown}
+                onScroll={(event) => {
+                  if (readingMode !== "files") return;
+                  if (fileScrollFrameRef.current !== null)
+                    cancelAnimationFrame(fileScrollFrameRef.current);
+                  fileScrollFrameRef.current = requestAnimationFrame(() => {
+                    fileScrollFrameRef.current = null;
+                    const container = scrollSectionRef.current;
+                    if (!container) return;
+                    const containerTop = container.getBoundingClientRect().top;
+                    const sections = Array.from(
+                      container.querySelectorAll<HTMLElement>(
+                        "[data-review-surface^='file:']",
+                      ),
+                    );
+                    let current: HTMLElement | undefined;
+                    for (const section of sections) {
+                      if (
+                        section.getBoundingClientRect().top <=
+                        containerTop + 96
+                      )
+                        current = section;
+                      else break;
+                    }
+                    current ??= sections[0];
+                    const path = current?.dataset.reviewFile;
+                    if (path)
+                      setFilePath((previous) =>
+                        previous === path ? previous : path,
+                      );
+                  });
+                }}
+                aria-label="Review document"
                 className="min-h-0 overflow-auto bg-muted/60 pb-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary lg:pb-3"
               >
-                <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1 border-b bg-card px-2 py-1 shadow-sm sm:gap-2 sm:px-3 sm:py-2 lg:px-4">
+                <div
+                  hidden={readingMode === "tour"}
+                  className="sticky top-0 z-10 flex flex-wrap items-center gap-1 border-b bg-card px-2 py-1 shadow-sm sm:gap-2 sm:px-3 sm:py-2 lg:px-4"
+                >
                   <div className="relative flex min-w-0 flex-1 basis-full items-center gap-1 lg:basis-40">
                     <Button
                       size="sm"
@@ -3514,27 +4110,8 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     >
                       {file?.path ?? "No changed files"}
                     </span>
-                    <Button
-                      className="lg:hidden max-sm:px-2 max-sm:text-[11px]"
-                      size="sm"
-                      variant={mobileTourOpen ? "secondary" : "outline"}
-                      aria-controls="mobile-tour-panel"
-                      aria-expanded={mobileTourOpen}
-                      aria-label={mobileTourOpen ? "Close tour" : "Open tour"}
-                      onClick={() => {
-                        setMobileTourOpen((open) => !open);
-                        if (mobileMoreRef.current)
-                          mobileMoreRef.current.open = false;
-                      }}
-                    >
-                      Tour
-                      <Icon
-                        name={mobileTourOpen ? "ChevronUp" : "ChevronDown"}
-                      />
-                    </Button>
                     <details ref={mobileMoreRef} className="shrink-0 lg:hidden">
                       <summary
-                        onClick={() => setMobileTourOpen(false)}
                         aria-label="More diff controls"
                         className="flex h-8 cursor-pointer list-none items-center rounded-md border px-2 text-[11px]"
                       >
@@ -3546,7 +4123,16 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                           variant="outline"
                           className="mb-2 w-full justify-start"
                           onClick={() => {
-                            setFileCommentBody("");
+                            if (
+                              fileCommentBody.trim() &&
+                              fileCommentPath !== file?.path
+                            ) {
+                              setDraftNotice(
+                                `Save or discard the file comment on ${fileCommentPath} first.`,
+                              );
+                              return;
+                            }
+                            setFileCommentPath(file?.path ?? null);
                             setFileComposerOpen(true);
                             if (mobileMoreRef.current)
                               mobileMoreRef.current.open = false;
@@ -3786,84 +4372,14 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                     >
                       <Icon name="TextWrap" />
                     </Button>
-                    <Dialog.Trigger asChild>
-                      <Button
-                        className="hidden lg:inline-flex"
-                        size="sm"
-                        variant="outline"
-                        aria-label={`Review feedback, ${pendingCount} pending/unsent comments`}
-                        onClick={(event) => {
-                          feedbackOpenerRef.current = event.currentTarget;
-                        }}
-                      >
-                        <Icon name="MessageSquare" className="size-3.5" />
-                        Review feedback
-                        {pendingCount > 0 ? (
-                          <span
-                            aria-hidden="true"
-                            className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground tabular-nums"
-                          >
-                            {pendingCount}
-                          </span>
-                        ) : null}
-                      </Button>
-                    </Dialog.Trigger>
-                    <Button
-                      className="hidden lg:inline-flex"
-                      size="sm"
-                      variant={isViewed ? "secondary" : "outline"}
-                      onClick={() =>
-                        void (isViewed
-                          ? markViewed(false)
-                          : markViewedAndNext(false))
-                      }
-                      disabled={!file}
-                    >
-                      {isViewed ? "Viewed ✓" : "Mark viewed"}
-                    </Button>
                   </div>
-                </div>
-                <div
-                  id="mobile-tour-panel"
-                  hidden={!mobileTourOpen}
-                  className="lg:hidden"
-                >
-                  {mobileTourOpen ? (
-                    <TourRail
-                      tour={review.tour}
-                      annotations={review.annotations}
-                      activeStepId={activeTourStepId}
-                      scopePaths={tourScopePaths}
-                      onStep={(step) => {
-                        activateTourStep(step);
-                        if (
-                          step.anchors.some(
-                            (anchor) =>
-                              anchor.valid &&
-                              (!tourScopePaths ||
-                                tourScopePaths.has(anchor.filePath)),
-                          )
-                        )
-                          setMobileTourOpen(false);
-                      }}
-                      onAnchor={(stepId, anchor) => {
-                        selectTourAnchor(stepId, anchor);
-                        setMobileTourOpen(false);
-                      }}
-                      onLocate={(annotation) => {
-                        locateComment(annotation);
-                        setMobileTourOpen(false);
-                      }}
-                      mobile
-                      mobileOpen
-                      onMobileOpenChange={setMobileTourOpen}
-                    />
-                  ) : null}
                 </div>
                 <div className="p-1.5 sm:p-2 lg:p-4">
-                  <div className="mb-3 hidden rounded border bg-background px-3 py-2 text-[11px] text-muted-foreground lg:block">
-                    {keyboardShortcutContent}
-                  </div>
+                  {keyboardHelpOpen ? (
+                    <div className="mb-3 rounded border bg-background px-3 py-2 text-[11px] text-muted-foreground">
+                      {keyboardShortcutContent}
+                    </div>
+                  ) : null}
                   {draftNotice ? (
                     <p
                       role="status"
@@ -3873,7 +4389,33 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                       {draftNotice}
                     </p>
                   ) : null}
-                  {selection && body.trim() && selectionPath !== file?.path ? (
+                  {fileComposerOpen &&
+                  fileCommentBody.trim() &&
+                  !fileDraftVisible ? (
+                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded border border-amber-500/30 p-2 text-xs">
+                      <span>
+                        Whole-file draft remains on{" "}
+                        <code>{fileCommentPath}</code>.
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setReviewScope("all");
+                          if (fileCommentPath) chooseFile(fileCommentPath);
+                        }}
+                      >
+                        Return to file draft
+                      </Button>
+                    </div>
+                  ) : null}
+                  {selection &&
+                  body.trim() &&
+                  (selectionPath !== file?.path ||
+                    (readingMode === "tour" &&
+                      !selectionSurface?.startsWith(
+                        `tour:${activeTourStepId}:`,
+                      ))) ? (
                     <div className="mb-3 flex flex-wrap items-center gap-2 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
                       <span>
                         Unsent draft remains anchored to{" "}
@@ -3905,8 +4447,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                       </Button>
                     </div>
                   ) : null}
-                  {file ? fileCommentsBar : null}
-                  {!file ? (
+                  {readingMode === "tour" ? (
+                    renderTour()
+                  ) : !scopedFiles.length ? (
                     <div className="space-y-2 text-sm text-muted-foreground">
                       <p>
                         {reviewScope === "since-viewed" &&
@@ -3949,99 +4492,11 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                         </div>
                       ) : null}
                     </div>
-                  ) : file.binary ? (
-                    <BinaryImagePreview file={file} reviewId={review.id} />
-                  ) : !parsed ? (
-                    <div className="space-y-2 rounded-lg border border-dashed bg-background p-4 text-sm">
-                      <p>
-                        {file.deferredReason
-                          ? `${file.deferredReason} is deferred until requested.`
-                          : `No patch is available for ${file.path}.`}
-                      </p>
-                      {file.deferredReason ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void loadDeferredDiff(file.path)}
-                          disabled={deferredLoading}
-                        >
-                          {deferredLoading ? "Loading diff…" : "Load diff"}
-                        </Button>
-                      ) : null}
-                      {deferredError ? (
-                        <p role="alert" className="text-xs text-destructive">
-                          {deferredError}
-                        </p>
-                      ) : null}
-                    </div>
                   ) : (
-                    <>
-                      {file.truncated ? (
-                        <p className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
-                          This patch is truncated. Comments still refer only to
-                          the visible immutable snapshot.
-                        </p>
-                      ) : null}
-                      <div className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
-                        <PierreReviewDiff
-                          fileDiff={parsed}
-                          lineAnnotations={currentAnnotations}
-                          annotations={review.annotations}
-                          replyDrafts={replyDrafts}
-                          onReply={reply}
-                          onReplyDraft={updateReplyDraft}
-                          editDrafts={editDrafts}
-                          onEdit={(annotation, body) => edit(annotation, body)}
-                          onEditDraft={updateEditDraft}
-                          onRemove={(id) => void remove(id)}
-                          wrapLines={wrapLines}
-                          loadDiffFiles={loadDiffFiles}
-                          composer={{
-                            file,
-                            selection:
-                              selectionPath === file.path ? selection : null,
-                            body,
-                            busy,
-                            onBody: setBody,
-                            onAdd: add,
-                            onCancel: () => {
-                              const restoreKeyboardFocus =
-                                Boolean(keyboardRangeStart);
-                              setSelection(null);
-                              setSelectionPath(null);
-                              setKeyboardRangeStart(null);
-                              setKeyboardRangeValue(null);
-                              setBody("");
-                              setDraftNotice(null);
-                              if (restoreKeyboardFocus)
-                                requestAnimationFrame(() =>
-                                  scrollSectionRef.current?.focus(),
-                                );
-                            },
-                          }}
-                          onSelect={handleDiffSelection}
-                          tourAnchor={
-                            activeTourAnchor?.valid &&
-                            activeTourAnchor.filePath === file.path
-                              ? activeTourAnchor
-                              : null
-                          }
-                          keyboardSelection={keyboardSelection}
-                        />
-                      </div>
-                    </>
+                    scopedFiles.map((candidate) => renderFile(candidate))
                   )}
                 </div>
               </section>
-              <TourRail
-                tour={review.tour}
-                annotations={review.annotations}
-                activeStepId={activeTourStepId}
-                scopePaths={tourScopePaths}
-                onStep={activateTourStep}
-                onAnchor={selectTourAnchor}
-                onLocate={locateComment}
-              />
             </div>
             <Dialog.Portal>
               <Dialog.Overlay
@@ -4098,7 +4553,10 @@ function ReviewPanel({ threadId }: { threadId: string }) {
             >
               <button
                 type="button"
-                onClick={() => setMobilePanel(null)}
+                onClick={() => {
+                  setReadingMode("files");
+                  setMobilePanel(null);
+                }}
                 aria-current={mobilePanel === null ? "page" : undefined}
                 className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${mobilePanel === null ? "text-foreground" : "text-muted-foreground"}`}
               >
@@ -4153,7 +4611,9 @@ function ReviewPanel({ threadId }: { threadId: string }) {
                       setMobilePanel(null);
                       if (restoreKeyboardFocus)
                         requestAnimationFrame(() =>
-                          scrollSectionRef.current?.focus(),
+                          surfaceRefs.current
+                            .get(selectionSurface ?? "")
+                            ?.focus(),
                         );
                     }}
                   />

@@ -487,33 +487,46 @@ describe("Review Workspace server", () => {
           {
             id: "step-1",
             title: "Update both call sites",
-            body: "Read both replacements.",
-            anchors: [
+            blocks: [
+              { kind: "narrative", body: "Read the first replacement." },
               {
-                filePath: "src/example.ts",
-                side: "new",
-                startLine: 1,
-                endLine: 1,
+                kind: "diff",
+                anchor: {
+                  filePath: "src/example.ts",
+                  side: "new",
+                  startLine: 1,
+                  endLine: 1,
+                },
+              },
+              { kind: "narrative", body: "Then follow the other call site." },
+              {
+                kind: "diff",
+                anchor: {
+                  filePath: "src/other.ts",
+                  side: "new",
+                  startLine: 1,
+                  endLine: 1,
+                },
               },
               {
-                filePath: "src/other.ts",
-                side: "new",
-                startLine: 1,
-                endLine: 1,
+                kind: "diff",
+                anchor: {
+                  filePath: "src/missing.ts",
+                  side: "new",
+                  startLine: 1,
+                  endLine: 1,
+                },
               },
               {
-                filePath: "src/missing.ts",
-                side: "new",
-                startLine: 1,
-                endLine: 1,
+                kind: "evidence",
+                card: {
+                  kind: "before-after",
+                  before: "old contract",
+                  after: "new contract",
+                  note: "Agent-authored explanation",
+                },
               },
             ],
-            card: {
-              kind: "before-after",
-              before: "old contract",
-              after: "new contract",
-              note: "Agent-authored explanation",
-            },
           },
         ],
       },
@@ -563,6 +576,105 @@ describe("Review Workspace server", () => {
         .prepare("SELECT review_id FROM review_tours WHERE review_id = ?")
         .get(reviewId),
     ).toBeUndefined();
+  });
+
+  it("bounds ordered tour blocks, rejects competing legacy input, and retains old saved data without breaking file review", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "review-workspace",
+    });
+    await plugin(bb);
+    const reviewId = randomUUID();
+    const db = seedReview(bb, {
+      id: reviewId,
+      threadId: "thread-blocks",
+      createdAt: 1,
+    });
+    const base = {
+      title: "Tour",
+      steps: [
+        {
+          id: "one",
+          title: "Section",
+          blocks: [{ kind: "narrative", body: "Explain the change." }],
+        },
+      ],
+    };
+    await harness.behavior.callAgentTool("review_workspace_tour", base, {
+      threadId: "thread-blocks",
+    });
+    const loaded = (await harness.behavior.callRpc("review", {
+      threadId: "thread-blocks",
+    })) as any;
+    expect(loaded.review.tour.steps[0].blocks).toEqual(base.steps[0].blocks);
+    expect(loaded.review.tour.steps[0].anchors).toEqual([]);
+    for (const input of [
+      {
+        ...base,
+        steps: [{ id: "old", title: "Old", body: "Legacy", anchors: [] }],
+      },
+      {
+        ...base,
+        steps: [
+          {
+            ...base.steps[0],
+            blocks: [
+              { kind: "narrative", body: "a".repeat(2001) },
+              { kind: "narrative", body: "b".repeat(2000) },
+            ],
+          },
+        ],
+      },
+      { ...base, steps: [base.steps[0], base.steps[0]] },
+      {
+        ...base,
+        steps: [
+          {
+            ...base.steps[0],
+            blocks: Array.from({ length: 101 }, () => ({
+              kind: "diff",
+              anchor: {
+                filePath: "src/example.ts",
+                side: "new",
+                startLine: 1,
+                endLine: 1,
+              },
+            })),
+          },
+        ],
+      },
+    ])
+      await expect(
+        harness.behavior.callAgentTool("review_workspace_tour", input, {
+          threadId: "thread-blocks",
+        }),
+      ).rejects.toThrow();
+    await expect(
+      harness.behavior.callAgentTool(
+        "review_workspace_tour",
+        { ...base, reviewId },
+        { threadId: "another-thread" },
+      ),
+    ).rejects.toThrow("No matching review");
+    // Existing payloads are not migrated or removed, even though the clean renderer ignores them.
+    const legacy = JSON.stringify({
+      reviewId,
+      title: "Legacy",
+      steps: [{ body: "old", anchors: [] }],
+    });
+    db.prepare("UPDATE review_tours SET payload = ? WHERE review_id = ?").run(
+      legacy,
+      reviewId,
+    );
+    const retained = (await harness.behavior.callRpc("review", {
+      threadId: "thread-blocks",
+    })) as any;
+    expect(retained.review.files).toHaveLength(1);
+    expect(retained.review.tour).toBeNull();
+    expect(
+      db
+        .prepare("SELECT payload FROM review_tours WHERE review_id = ?")
+        .get(reviewId),
+    ).toEqual({ payload: legacy });
   });
 
   it("defers generated diffs in the initial review response and loads their immutable patch on demand", async () => {

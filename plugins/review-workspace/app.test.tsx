@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 Element.prototype.scrollIntoView =
   Element.prototype.scrollIntoView ?? (() => {});
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+
+afterEach(cleanup);
 
 vi.mock("@/components/ui/icon", () => ({
   Icon: ({ name }: { name: string }) => <span data-icon={name} />,
@@ -104,6 +106,460 @@ describe("Review Workspace app", () => {
     slot.lifecycle.unmount();
   });
 
+  it("mounts file diffs lazily as they approach the viewport", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const base = reviewFixture();
+    const review = {
+      ...base,
+      files: [
+        ...base.files,
+        {
+          ...base.files[0]!,
+          path: "docs/guide.md",
+          patch: patch.replaceAll("src/example.ts", "docs/guide.md"),
+        },
+      ],
+    };
+    // jsdom has no IntersectionObserver, so without this stub every surface
+    // mounts at once. Tracking it here keeps the lazy behavior honest.
+    const observed: Array<{
+      node: Element;
+      trigger: () => void;
+      disconnected: () => boolean;
+    }> = [];
+    class FakeIntersectionObserver {
+      private callback: IntersectionObserverCallback;
+      private targets = new Set<Element>();
+      private stopped = false;
+      constructor(callback: IntersectionObserverCallback) {
+        this.callback = callback;
+      }
+      observe(node: Element) {
+        this.targets.add(node);
+        observed.push({
+          node,
+          trigger: () =>
+            this.callback(
+              [
+                {
+                  isIntersecting: true,
+                  target: node,
+                } as unknown as IntersectionObserverEntry,
+              ],
+              this as unknown as IntersectionObserver,
+            ),
+          disconnected: () => this.stopped,
+        });
+      }
+      disconnect() {
+        this.stopped = true;
+        this.targets.clear();
+      }
+      unobserve(node: Element) {
+        this.targets.delete(node);
+      }
+    }
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+    try {
+      const slot = renderSlot(
+        app.navPanels[0]!,
+        { subPath: "review/thread-ui" },
+        {
+          rpc: {
+            review: () => ({ review }),
+            revisions: () => ({ revisions: [] }),
+          } as any,
+        },
+      );
+      await slot.findByRole("navigation", { name: "Changed files" });
+      // Both file sections exist, but neither diff is parsed or rendered yet.
+      expect(
+        slot.container.querySelectorAll("[data-review-file]"),
+      ).toHaveLength(2);
+      expect(slot.queryAllByTestId("pierre-diff")).toHaveLength(0);
+      expect(
+        slot.getAllByText("Diff renders as it scrolls into view."),
+      ).toHaveLength(2);
+      expect(observed).toHaveLength(2);
+
+      observed[0]!.trigger();
+      await vi.waitFor(() =>
+        expect(slot.queryAllByTestId("pierre-diff")).toHaveLength(1),
+      );
+      const sections = slot.container.querySelectorAll("[data-review-file]");
+      expect(
+        within(sections[0] as HTMLElement).getAllByTestId("pierre-diff"),
+      ).toHaveLength(1);
+      expect(
+        within(sections[1] as HTMLElement).queryAllByTestId("pierre-diff"),
+      ).toHaveLength(0);
+      expect(observed[0]!.disconnected()).toBe(true);
+      expect(observed[1]!.disconnected()).toBe(false);
+
+      // Viewing state and collapse stay independent of laziness.
+      observed[1]!.trigger();
+      await vi.waitFor(() =>
+        expect(slot.queryAllByTestId("pierre-diff")).toHaveLength(2),
+      );
+      slot.lifecycle.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a continuous document and saves inline feedback against the selected file rather than stale active navigation", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const base = reviewFixture();
+    const review = {
+      ...base,
+      files: [
+        ...base.files,
+        {
+          ...base.files[0]!,
+          path: "docs/guide.md",
+          patch: patch.replaceAll("src/example.ts", "docs/guide.md"),
+        },
+      ],
+    };
+    const calls: any[] = [];
+    const viewed: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        rpc: {
+          review: () => ({ review }),
+          revisions: () => ({ revisions: [] }),
+          markFileViewed: (input: any) => {
+            viewed.push(input);
+            return { viewedCount: 1 };
+          },
+          addAnnotation: (input: any) => {
+            calls.push(input);
+            return {
+              annotation: {
+                ...input,
+                id: "saved-inline",
+                createdAt: 1,
+                sentAt: null,
+                resolvedAt: null,
+                author: "human",
+                parentId: null,
+                fileLevel: false,
+                carriedFromAnnotationId: null,
+                resolutionSuggestion: null,
+              },
+            };
+          },
+        } as any,
+      },
+    );
+    await slot.findByRole("navigation", { name: "Changed files" });
+    expect(slot.getAllByTestId("pierre-diff")).toHaveLength(2);
+    const docs = slot.container.querySelector(
+      '[data-review-file="docs/guide.md"]',
+    )!;
+    fireEvent.pointerUp(
+      within(docs as HTMLElement).getByTestId("pierre-diff")
+        .nextElementSibling!,
+    );
+    const box = (
+      await slot.findAllByLabelText("Comment", { exact: true })
+    ).find((node) => node === document.activeElement)!;
+    fireEvent.change(box, {
+      target: { value: "Keep the guide wording precise." },
+    });
+    // Another navigation action must not change the draft's immutable anchor.
+    fireEvent.click(
+      within(slot.getByRole("navigation", { name: "Changed files" })).getByRole(
+        "button",
+        { name: "src/example.ts" },
+      ),
+    );
+    const retained = slot.getAllByLabelText("Comment", { exact: true })[0]!;
+    expect((retained as HTMLTextAreaElement).value).toBe(
+      "Keep the guide wording precise.",
+    );
+    fireEvent.keyDown(retained, { key: "Enter", ctrlKey: true });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({
+      filePath: "docs/guide.md",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "Keep the guide wording precise.",
+    });
+    expect(slot.getAllByTestId("pierre-diff")).toHaveLength(2);
+    expect(viewed).toEqual([]);
+    fireEvent.click(
+      within(docs as HTMLElement).getByRole("button", {
+        name: "Collapse docs/guide.md",
+      }),
+    );
+    expect(within(docs as HTMLElement).queryByTestId("pierre-diff")).toBeNull();
+    expect(viewed).toEqual([]);
+    fireEvent.click(
+      within(docs as HTMLElement).getByRole("button", {
+        name: "Comment on file",
+      }),
+    );
+    expect(within(docs as HTMLElement).getByTestId("pierre-diff")).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+
+  it("preserves code and whole-file drafts when switching reading modes", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const base = reviewFixture();
+    const anchor = {
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 2,
+      endLine: 2,
+      valid: true,
+      reason: null,
+    };
+    const review = {
+      ...base,
+      tour: {
+        reviewId: base.id,
+        title: "Tour",
+        overview: null,
+        createdAt: 1,
+        steps: [
+          {
+            id: "draft",
+            title: "Section",
+            anchors: [anchor],
+            blocks: [
+              { kind: "narrative", body: "Explain the change." },
+              { kind: "diff", anchor },
+            ],
+          },
+        ],
+        coverage: {
+          totalChangedLines: 2,
+          coveredChangedLines: 1,
+          uncovered: [],
+        },
+      },
+    };
+    const calls: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        rpc: {
+          review: () => ({ review }),
+          revisions: () => ({ revisions: [] }),
+          addAnnotation: (input: any) => {
+            calls.push(input);
+            return {
+              annotation: {
+                ...input,
+                id: "mode-draft",
+                createdAt: 1,
+                sentAt: null,
+                resolvedAt: null,
+                author: "human",
+                parentId: null,
+                fileLevel: false,
+                carriedFromAnnotationId: null,
+                resolutionSuggestion: null,
+              },
+            };
+          },
+        } as any,
+      },
+    );
+    const diff = await slot.findByTestId("pierre-diff");
+    fireEvent.pointerUp(diff.nextElementSibling!);
+    const box = (await slot.findAllByLabelText("Comment", { exact: true }))[0]!;
+    fireEvent.change(box, {
+      target: { value: "Keep this draft across modes." },
+    });
+    fireEvent.click(slot.getByRole("button", { name: "Tour" }));
+    expect(
+      (
+        slot.getAllByLabelText("Comment", {
+          exact: true,
+        })[0] as HTMLTextAreaElement
+      ).value,
+    ).toBe("Keep this draft across modes.");
+    fireEvent.click(slot.getByRole("button", { name: "Files" }));
+    const retained = slot.getAllByLabelText("Comment", { exact: true })[0]!;
+    expect((retained as HTMLTextAreaElement).value).toBe(
+      "Keep this draft across modes.",
+    );
+    fireEvent.keyDown(retained, { key: "Enter", ctrlKey: true });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      body: "Keep this draft across modes.",
+    });
+    fireEvent.click(
+      within(
+        slot.container.querySelector(
+          '[data-review-surface="file:src/example.ts"]',
+        ) as HTMLElement,
+      ).getByRole("button", { name: "Comment on file" }),
+    );
+    fireEvent.change(slot.getByLabelText("File comment"), {
+      target: { value: "Whole-file draft across modes." },
+    });
+    fireEvent.click(slot.getByRole("button", { name: "Tour" }));
+    expect(
+      (slot.getByLabelText("File comment") as HTMLTextAreaElement).value,
+    ).toBe("Whole-file draft across modes.");
+    fireEvent.click(slot.getByRole("button", { name: "Files" }));
+    expect(
+      (slot.getByLabelText("File comment") as HTMLTextAreaElement).value,
+    ).toBe("Whole-file draft across modes.");
+    expect(calls).toHaveLength(1);
+    slot.lifecycle.unmount();
+  });
+
+  it("opens a cursor-line editor without requiring a range and leaves input typing and Tab alone", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const viewed: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        rpc: {
+          review: () => ({ review: reviewFixture() }),
+          revisions: () => ({ revisions: [] }),
+          markFileViewed: (input: any) => {
+            viewed.push(input);
+            return { viewedCount: 1 };
+          },
+        } as any,
+      },
+    );
+    const surface = await slot.findByRole("region", { name: "File diff" });
+    fireEvent.keyDown(surface, { key: "c" });
+    const box = (
+      await slot.findAllByLabelText("Comment", { exact: true })
+    ).find((node) => node === document.activeElement)!;
+    expect(box).toBeTruthy();
+    fireEvent.keyDown(box, { key: "m" });
+    expect(viewed).toEqual([]);
+    const tab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    surface.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+    slot.lifecycle.unmount();
+  });
+
+  it("renders cross-file ordered tour blocks and their exact excerpts without advancing viewed state", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const base = reviewFixture();
+    const first = {
+      filePath: "src/example.ts",
+      side: "new",
+      startLine: 2,
+      endLine: 2,
+      valid: true,
+      reason: null,
+    };
+    const second = { ...first, filePath: "docs/guide.md" };
+    const invalid = {
+      ...first,
+      filePath: "missing.ts",
+      valid: false,
+      reason: "file-not-in-revision",
+    };
+    const review = {
+      ...base,
+      files: [
+        ...base.files,
+        {
+          ...base.files[0]!,
+          path: "docs/guide.md",
+          patch: patch.replaceAll("src/example.ts", "docs/guide.md"),
+        },
+      ],
+      tour: {
+        reviewId: base.id,
+        title: "Cross-file tour",
+        overview: null,
+        createdAt: 1,
+        steps: [
+          {
+            id: "cross",
+            title: "One logical change",
+            anchors: [first, second, invalid],
+            blocks: [
+              { kind: "narrative", body: "Start with the implementation." },
+              { kind: "diff", anchor: first },
+              { kind: "narrative", body: "Then follow the documentation." },
+              { kind: "diff", anchor: second },
+              { kind: "diff", anchor: invalid },
+              {
+                kind: "evidence",
+                card: {
+                  kind: "before-after",
+                  before: "old",
+                  after: "new",
+                  note: "Explanation only",
+                },
+              },
+            ],
+          },
+        ],
+        coverage: {
+          totalChangedLines: 4,
+          coveredChangedLines: 2,
+          uncovered: [{ filePath: "src/example.ts", side: "old", line: 2 }],
+        },
+      },
+    };
+    const viewed: any[] = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "review/thread-ui" },
+      {
+        rpc: {
+          review: () => ({ review }),
+          revisions: () => ({ revisions: [] }),
+          markFileViewed: (input: any) => {
+            viewed.push(input);
+            return { viewedCount: 1 };
+          },
+        } as any,
+      },
+    );
+    await slot.findByRole("navigation", { name: "Changed files" });
+    fireEvent.click(slot.getByRole("button", { name: "Tour" }));
+    const document = within(
+      slot.getByRole("region", { name: "Review document" }),
+    );
+    expect(document.getAllByTestId("pierre-diff")).toHaveLength(2);
+    expect(document.getByText("Then follow the documentation.")).toBeTruthy();
+    expect(document.getByText(/missing.ts.*unavailable/)).toBeTruthy();
+    expect(document.getByText("Agent-authored before / after")).toBeTruthy();
+    expect(document.queryByRole("button", { name: "Mark viewed" })).toBeNull();
+    const source = slot.container.querySelector(
+      '[data-review-surface="tour:cross:1"]',
+    )!;
+    fireEvent.keyDown(source, { key: "m" });
+    expect(viewed).toEqual([]);
+    fireEvent.click(
+      document.getAllByRole("button", { name: "Full file →" })[1]!,
+    );
+    expect(slot.getAllByTestId("pierre-diff")).toHaveLength(2);
+    expect(
+      slot.getByRole("button", { name: "Files" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(viewed).toEqual([]);
+    slot.lifecycle.unmount();
+  });
+
   it("identifies the active file and exposes viewed progress as navigation changes", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const review = {
@@ -144,13 +600,18 @@ describe("Review Workspace app", () => {
       expect(docs.getAttribute("aria-current")).toBe("true");
       expect(source.hasAttribute("aria-current")).toBe(false);
     });
-    fireEvent.click(slot.getByRole("button", { name: "Mark viewed" }));
+    fireEvent.click(
+      within(slot.getByRole("region", { name: "File diff" })).getByRole(
+        "button",
+        { name: "Mark viewed" },
+      ),
+    );
     await vi.waitFor(() => {
       expect(progress.getAttribute("aria-valuenow")).toBe("1");
       expect(progress.getAttribute("aria-valuetext")).toBe(
         "1 of 2 files viewed",
       );
-      expect(source.getAttribute("aria-current")).toBe("true");
+      expect(docs.getAttribute("aria-current")).toBe("true");
     });
     expect(within(docs).getByLabelText("Viewed")).toBeTruthy();
     expect(slot.getByRole("region", { name: "File diff" })).toBeTruthy();
@@ -1440,7 +1901,7 @@ describe("Review Workspace app", () => {
     slot.lifecycle.unmount();
   });
 
-  it("shows the empty state after viewing the last unviewed file", async () => {
+  it("keeps all diffs visible when unviewed navigation becomes empty", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const review = {
       ...reviewFixture(),
@@ -1477,12 +1938,13 @@ describe("Review Workspace app", () => {
       expect((fileSelect as HTMLSelectElement).value).toBe("");
       expect((fileSelect as HTMLSelectElement).disabled).toBe(true);
     });
-    expect(slot.getByText("No files match this scope or filter.")).toBeTruthy();
+    expect(slot.getByText("No matching files.")).toBeTruthy();
+    expect(slot.getAllByTestId("pierre-diff")).toHaveLength(2);
     expect(slot.queryByRole("dialog")).toBeNull();
     slot.lifecycle.unmount();
   });
 
-  it("keeps the mobile tour empty state in a bounded scrollable disclosure", async () => {
+  it("switches reading modes and keeps the tour empty state in the main document", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -1496,50 +1958,22 @@ describe("Review Workspace app", () => {
       },
     );
 
-    const targetSelect = await slot.findByLabelText("Review target");
-    expect(targetSelect.className).toContain("max-sm:w-44");
-    const filterSummary = slot.getByText("Filters");
-    expect(filterSummary.closest("details")?.open).toBe(false);
-    const tourButton = slot.getByRole("button", {
-      name: "Open tour",
-    });
-    expect(tourButton.getAttribute("aria-expanded")).toBe("false");
-    expect(slot.queryByText("Tour · none authored")).toBeNull();
+    await slot.findByLabelText("Review target");
+    const tourButton = slot.getByRole("button", { name: "Tour" });
     fireEvent.click(tourButton);
-    const openTourButton = slot.getByRole("button", {
-      name: "Close tour",
-    });
-    expect(openTourButton.getAttribute("aria-expanded")).toBe("true");
-    const summary = await slot.findByText("Tour · none authored");
-    const disclosure = summary.closest("details");
-    expect(disclosure?.className).toContain("max-h-[min(25dvh,22rem)]");
-    expect(disclosure?.className).toContain("overflow-y-auto");
-    expect(summary.className).toContain("sticky");
+    expect(tourButton.getAttribute("aria-pressed")).toBe("true");
     expect(
-      within(disclosure!).getByText(
-        /No tour is authored for this immutable revision/,
-      ),
+      await slot.findByText(/No tour is authored for this immutable revision/),
     ).toBeTruthy();
     expect(
-      within(disclosure!).queryByText(/Operations and raw changes/),
+      slot.queryByRole("complementary", { name: "Review tour" }),
     ).toBeNull();
-    fireEvent.click(openTourButton);
-    expect(slot.queryByText("Tour · none authored")).toBeNull();
-    const moreSummary = slot.getByText("More");
-    const moreDetails = moreSummary.closest("details");
-    expect(moreDetails?.open).toBe(false);
-    fireEvent.click(moreSummary);
-    const scope = await slot.findByRole("combobox", { name: "Review scope" });
-    expect(scope.className).toContain("w-full");
-    const shortcuts = await slot.findByRole("button", {
-      name: "Keyboard shortcuts",
-    });
-    expect(shortcuts.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(shortcuts);
-    const hideShortcuts = await slot.findByRole("button", {
-      name: "Hide keyboard shortcuts",
-    });
-    expect(hideShortcuts.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(slot.getByRole("button", { name: "Files" }));
+    expect(await slot.findByTestId("pierre-diff")).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Keyboard ?" }));
+    expect(slot.getAllByText(/Focus this diff surface/).length).toBeGreaterThan(
+      0,
+    );
     slot.lifecycle.unmount();
   });
 
@@ -1565,7 +1999,20 @@ describe("Review Workspace app", () => {
           {
             id: "inspect-guide",
             title: "Inspect the guide",
-            body: "Start with the new guide line.",
+            blocks: [
+              { kind: "narrative", body: "Start with the new guide line." },
+              {
+                kind: "diff",
+                anchor: {
+                  filePath: "docs/guide.md",
+                  side: "new",
+                  startLine: 1,
+                  endLine: 1,
+                  valid: true,
+                  reason: null,
+                },
+              },
+            ],
             anchors: [
               {
                 filePath: "docs/guide.md",
@@ -1597,29 +2044,22 @@ describe("Review Workspace app", () => {
       },
     );
 
-    fireEvent.click(await slot.findByRole("button", { name: "Open tour" }));
-    const mobileTour = within(
-      slot.container.querySelector("#mobile-tour-panel")!,
-    );
-    fireEvent.click(
-      await mobileTour.findByRole("button", {
-        name: "1. Inspect the guide",
-      }),
-    );
+    fireEvent.click(await slot.findByRole("button", { name: "Tour" }));
+    fireEvent.click(await slot.findByRole("button", { name: "Full file →" }));
     await vi.waitFor(() => {
       expect(
         (slot.getByLabelText("Changed file") as HTMLSelectElement).value,
       ).toBe("docs/guide.md");
       expect(
         slot
-          .getByRole("button", { name: "Open tour" })
-          .getAttribute("aria-expanded"),
-      ).toBe("false");
+          .getByRole("button", { name: "Files" })
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
     });
     slot.lifecycle.unmount();
   });
 
-  it("puts tour steps and anchored comments in the tour rail instead of a hunk index", async () => {
+  it("interleaves narrative and code-scoped comments without a tour rail", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const base = reviewFixture();
     const review = {
@@ -1691,7 +2131,23 @@ describe("Review Workspace app", () => {
           {
             id: "inspect-guide",
             title: "Inspect the guide",
-            body: "Start with the changed description.",
+            blocks: [
+              {
+                kind: "narrative",
+                body: "Start with the changed description.",
+              },
+              {
+                kind: "diff",
+                anchor: {
+                  filePath: "docs/guide.md",
+                  side: "new",
+                  startLine: 1,
+                  endLine: 1,
+                  valid: true,
+                  reason: null,
+                },
+              },
+            ],
             anchors: [
               {
                 filePath: "docs/guide.md",
@@ -1723,26 +2179,26 @@ describe("Review Workspace app", () => {
       },
     );
 
-    const rail = within(
-      await slot.findByRole("complementary", { name: "Review tour" }),
+    await slot.findByRole("navigation", { name: "Changed files" });
+    fireEvent.click(slot.getByRole("button", { name: "Tour" }));
+    const document = within(
+      slot.getByRole("region", { name: "Review document" }),
     );
-    expect(rail.queryByText(/Operations and raw changes/)).toBeNull();
-    expect(rail.queryByText(/Hunk \d+/)).toBeNull();
-    const coverage = rail.getByText("Raw-change coverage").closest("details");
-    expect(coverage).toBeTruthy();
-    expect(within(coverage!).queryByRole("button")).toBeNull();
-    fireEvent.click(rail.getByRole("button", { name: "1. Inspect the guide" }));
-    expect(rail.getByText("Comments (1)")).toBeTruthy();
     expect(
-      rail.getByText("Check how the guide describes this change."),
+      slot.queryByRole("complementary", { name: "Review tour" }),
+    ).toBeNull();
+    expect(
+      document.getByText("Start with the changed description."),
     ).toBeTruthy();
-    expect(rail.getByText("I'll clarify that wording.")).toBeTruthy();
-    expect(rail.queryByText("This belongs to another step.")).toBeNull();
-    fireEvent.click(
-      rail.getByRole("button", {
-        name: "Show docs/guide.md:1 (new) in diff",
-      }),
-    );
+    expect(
+      document.getByText("Check how the guide describes this change."),
+    ).toBeTruthy();
+    expect(document.getByText("I'll clarify that wording.")).toBeTruthy();
+    expect(document.queryByText("This belongs to another step.")).toBeNull();
+    expect(
+      document.getByText("Outside the tour / raw-change coverage"),
+    ).toBeTruthy();
+    fireEvent.click(document.getByRole("button", { name: "Full file →" }));
     await vi.waitFor(() => {
       expect(
         (slot.getByLabelText("Changed file") as HTMLSelectElement).value,
@@ -1751,7 +2207,7 @@ describe("Review Workspace app", () => {
     slot.lifecycle.unmount();
   });
 
-  it("filters mobile files and clears the selection when no files match", async () => {
+  it("filters mobile file navigation without hiding the review document", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const review = {
       ...reviewFixture(),
@@ -1843,7 +2299,7 @@ describe("Review Workspace app", () => {
       expect((fileSelect as HTMLSelectElement).value).toBe("");
       expect((fileSelect as HTMLSelectElement).disabled).toBe(true);
     });
-    expect(slot.getByText("No files match this scope or filter.")).toBeTruthy();
+    expect(slot.getByText("No matching files.")).toBeTruthy();
 
     fireEvent.change(slot.getByLabelText("Search files on mobile"), {
       target: { value: "src" },
@@ -2218,6 +2674,7 @@ describe("review target picker (specific commit)", () => {
       },
     );
 
+    fireEvent.click(slot.getByText("Compare / refresh"));
     const select = slot.getAllByRole("combobox", { name: "Review target" })[0]!;
     fireEvent.change(select, { target: { value: "commit" } });
     const reviewButton = slot.getByRole("button", { name: "Review commit" });
